@@ -164,6 +164,10 @@ behind each slug.
    This bundles glibc ERTS so `exqlite`'s NIF loads. Burrito's musl ERTS fails with
    `__memmove_chk: symbol not found`. The binary is native-Linux portable, not Alpine/musl
    portable.
+3. **Burrito caches the extracted payload by app version.** Replacing the binary while
+   keeping `version: "0.1.0"` keeps running the old extracted payload under
+   `$XDG_DATA_HOME/.burrito/gitspace_erts-*_<version>`. Bump `version` in `mix.exs` for each
+   packaged build, or remove that directory after replacing the binary.
 
 Binary: **7.1 MB**, cold start 1.58 s (payload extraction), warm `ls` 0.60 s, warm `co` 0.64 s,
 warm `doctor` 1.37 s.
