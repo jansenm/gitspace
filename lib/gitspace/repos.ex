@@ -209,12 +209,82 @@ defmodule Gitspace.Repos do
         {:ok, %{existing | remote_url: url, bare_path: bare}, true}
 
       existing ->
+        suggestions = suggested_names(url, existing.slug)
+
         {:error,
-         Error.new(:conflict, "repository already exists: #{existing.slug}",
-           hint: "choose another name with --name",
-           details: %{slug: existing.slug, remote_url: existing.remote_url}
+         Error.new(:conflict, "repository name '#{existing.slug}' is already in use",
+           hint: suggestion_hint(suggestions),
+           details: %{
+             slug: existing.slug,
+             existing_remote: existing.remote_url,
+             new_remote: url,
+             suggested_names: suggestions
+           }
          )}
     end
+  end
+
+  @doc false
+  def suggested_names(url, existing_slug \\ nil) do
+    key = Layout.normalize_remote(url)
+    segments = String.split(key, "/", trim: true)
+
+    candidates =
+      if String.starts_with?(key, "/") do
+        local_name_candidates(segments)
+      else
+        remote_name_candidates(segments)
+      end
+
+    candidates
+    |> Enum.map(&slugify_parts/1)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.reject(&(&1 == existing_slug))
+    |> Enum.uniq()
+    |> Enum.take(3)
+  end
+
+  defp remote_name_candidates([host | rest]) do
+    repo = List.last(rest) || host
+    owner = rest |> Enum.drop(-1) |> Enum.join("-")
+
+    if owner == "" do
+      [[repo], [host, repo]]
+    else
+      [[owner, repo], [host, owner, repo]]
+    end
+  end
+
+  defp remote_name_candidates([]), do: []
+
+  defp local_name_candidates(segments) do
+    repo = List.last(segments)
+    parent = Enum.at(segments, -2)
+    grandparent = Enum.at(segments, -3)
+
+    [
+      [parent, repo],
+      [grandparent, parent, repo]
+    ]
+  end
+
+  defp slugify_parts(parts) do
+    parts = Enum.reject(parts, &(&1 in [nil, ""]))
+
+    case Layout.work_slug(Enum.join(parts, "-")) do
+      {:ok, slug} -> slug
+      {:error, _} -> nil
+    end
+  end
+
+  defp suggestion_hint([]), do: "choose another name with --name"
+
+  defp suggestion_hint([one]) do
+    "choose a unique name, e.g. `--name #{one}`"
+  end
+
+  defp suggestion_hint([first, second | _]) do
+    "choose a unique name, e.g. `--name #{first}` or `--name #{second}`"
   end
 
   defp create_or_upgrade(config, repo, url, _slug, upgrade?, opts) do

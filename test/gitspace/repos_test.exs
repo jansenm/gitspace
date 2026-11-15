@@ -1,7 +1,7 @@
 defmodule Gitspace.ReposTest do
   use Gitspace.IndexCase, async: false
 
-  alias Gitspace.{Checkouts, Fixtures, Repos}
+  alias Gitspace.{Checkouts, Fixtures, Git, Repos}
   alias Gitspace.Git.Worktree
   alias Gitspace.Index.Repository
 
@@ -25,6 +25,36 @@ defmodule Gitspace.ReposTest do
     assert {:error, error} = Repos.add(config, source, name: "other")
     assert error.code == :conflict
     assert error.exit_code == 4
+  end
+
+  test "colliding basenames are refused with qualified name suggestions", %{config: config} do
+    root = Fixtures.tmp_dir!("collisions")
+    first = source_named!(root, "one/config")
+    second = source_named!(root, "two/config")
+
+    assert {:ok, repo} = Repos.add(config, first)
+    assert repo.slug == "config"
+    assert File.dir?(Path.join([Config.repos_dir(config), "config.git"]))
+
+    assert {:error, error} = Repos.add(config, second)
+    assert error.code == :conflict
+    assert error.exit_code == 4
+    assert error.message =~ "config"
+    assert error.details.existing_remote == first
+    assert error.details.new_remote == second
+    assert "two-config" in error.details.suggested_names
+    assert error.hint =~ "--name two-config"
+
+    assert {:error, remote_error} =
+             Repos.add(config, "git@github.com:acme/config.git")
+
+    assert "acme-config" in remote_error.details.suggested_names
+    assert "github.com-acme-config" in remote_error.details.suggested_names
+
+    assert {:ok, named} = Repos.add(config, second, name: "two-config")
+    assert named.slug == "two-config"
+
+    assert Enum.map(Repos.list(config), & &1.repo.slug) == ["config", "two-config"]
   end
 
   test "sync imports worktrees and marks vanished ones missing", %{config: config} do
@@ -79,5 +109,15 @@ defmodule Gitspace.ReposTest do
     assert {:ok, repo} = Repos.get(config, "demo")
     assert repo.state == "managed"
     assert File.dir?(repo.bare_path)
+  end
+
+  defp source_named!(root, relative) do
+    dir = Path.join(root, relative)
+    File.mkdir_p!(dir)
+    Git.run!(["init", "--initial-branch=main", dir])
+    Fixtures.configure_user(dir)
+    Fixtures.write(dir, "README.md", "# named fixture\n")
+    Fixtures.commit!(dir, "initial")
+    dir
   end
 end

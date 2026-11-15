@@ -29,7 +29,7 @@ Product scope, CLI contract and acceptance plan live in the planning repository:
 | Recovery | `reindex` — rediscover mirrors from disk, rebuild workspaces from markers |
 | Machine surface | `--json` on every command, exit codes 0–7, `--verbose` prints git argv |
 
-109 checks (105 tests, 3 properties, 1 doctest) in ~11 s.
+110 checks (106 tests, 3 properties, 1 doctest) in ~11 s.
 
 ## Commands
 
@@ -94,6 +94,33 @@ wins at runtime and is reported after the write.
 - Worktrees are created first; the marker is written only for successful members. A missing
   ref or failed member yields exit 7, and re-running the same command completes the workspace.
 - `--fetch` is opt-in and only runs when a requested ref is missing. Warm mirrors work offline.
+
+## Repository names and collisions
+
+The default repository slug is the URL basename: `.../ferroclass.git` becomes `ferroclass`.
+The slug is globally unique because it is both the mirror directory (`<data>/repos/<slug>.git`)
+and the member path segment (`<work>/<repo-slug>`).
+
+A second, different remote with the same basename is **refused** (exit 4). It is never merged,
+silently re-used, or auto-suffixed. The error suggests qualified names derived from the URL:
+
+```
+$ gitspace repo add git@github.com:acme/config.git
+error: repository name 'config' is already in use
+hint: choose a unique name, e.g. `--name acme-config` or `--name github.com-acme-config`
+```
+
+Name it explicitly when the host or namespace matters:
+
+```sh
+gitspace repo add git@github.com:acme/config.git   --name github-acme-config
+gitspace repo add git@gitlab.com:acme/config.git   --name gitlab-acme-config
+gitspace repo add git@github.com:beta/config.git   --name beta-config
+```
+
+The same remote written in another URL form (`git@…`, `https://…`, with or without `.git`) is
+matched by its canonical remote key and is not duplicated. `gitspace repo ls` shows the remote
+behind each slug.
 
 ## Decisions
 
