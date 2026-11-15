@@ -7,6 +7,14 @@ defmodule Gitspace.Application do
 
   @impl true
   def start(_type, _args) do
+    if System.get_env("__BURRITO") == "1" do
+      args =
+        :init.get_plain_arguments()
+        |> Enum.map(&List.to_string/1)
+
+      Gitspace.CLI.main(args)
+    end
+
     children = [
       # Starts a worker by calling: Gitspace.Worker.start_link(arg)
       # {Gitspace.Worker, arg}

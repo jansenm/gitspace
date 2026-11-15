@@ -22,3 +22,6 @@ erl_crash.dump
 # Ignore package tarball (built via "mix hex.build").
 gitspace-*.tar
 
+
+# Standalone binary build output
+/burrito_out/

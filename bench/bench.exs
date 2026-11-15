@@ -31,33 +31,47 @@ synthetic_repo = fn dir ->
   dir
 end
 
-tmp = Path.join(System.tmp_dir!(), "gitspace-bench-#{System.system_time(:millisecond)}")
+tmp_base = System.get_env("GITSPACE_BENCH_DIR") || System.tmp_dir!()
+File.mkdir_p!(tmp_base)
+
+tmp = Path.join(tmp_base, "gitspace-bench-#{System.system_time(:millisecond)}")
 File.rm_rf!(tmp)
 File.mkdir_p!(tmp)
+
+count =
+  System.get_env("GITSPACE_BENCH_WORKTREES", "20")
+  |> String.to_integer()
 
 source =
   case System.get_env("GITSPACE_BENCH_REPO") do
     nil -> synthetic_repo.(Path.join(tmp, "src"))
-    path -> path
+    path -> Path.expand(path)
   end
+
+IO.puts("source: #{source}")
+IO.puts("worktrees: #{count}")
+IO.puts("")
 
 bare = Path.join(tmp, "mirror.git")
 
 time.("mirror init + fetch", fn -> Mirror.init!(bare, source) end)
 
-first = Path.join([tmp, "wts", "first"])
-File.mkdir_p!(Path.dirname(first))
-time.("co (one worktree)", fn -> Worktree.add(bare, first, "origin/main", detach: true) end)
+ref = "origin/#{Mirror.default_branch(bare) || "main"}"
+IO.puts("default ref: #{ref}")
+IO.puts("")
 
 paths =
-  for i <- 1..20 do
+  for i <- 1..max(count, 1) do
     path = Path.join([tmp, "wts", "wt-#{i}"])
     File.mkdir_p!(Path.dirname(path))
-    {:ok, _} = Worktree.add(bare, path, "origin/main", detach: true)
+
+    label = if i == 1, do: "co (one worktree)", else: "co (worktree #{i})"
+
+    {:ok, _} = time.(label, fn -> Worktree.add(bare, path, ref, detach: true) end)
     path
   end
 
-time.("worktree list (20)", fn -> Worktree.list!(bare) end)
-time.("status (20)", fn -> Enum.each(paths, &Status.read!/1) end)
+time.("worktree list (#{count})", fn -> Worktree.list!(bare) end)
+time.("status (#{count})", fn -> Enum.each(paths, &Status.read!/1) end)
 
 File.rm_rf!(tmp)
