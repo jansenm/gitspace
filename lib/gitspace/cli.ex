@@ -2,7 +2,7 @@ defmodule Gitspace.CLI do
   @moduledoc "Command dispatcher, global flags, help and exit codes."
 
   alias Gitspace.Error
-  alias Gitspace.CLI.{Doctor, Inventory, Output, Reindex, Repo, Scan, Setup}
+  alias Gitspace.CLI.{Config, Doctor, Inventory, Output, Reindex, Repo, Scan, Setup}
 
   @global_flags ~w(--json --no-color --verbose --yes --help --version -h)
 
@@ -104,6 +104,9 @@ defmodule Gitspace.CLI do
         "reindex" ->
           Reindex.run(global, command_args)
 
+        "config" ->
+          Config.run(global, command_args)
+
         "help" ->
           help()
 
@@ -142,12 +145,14 @@ defmodule Gitspace.CLI do
   defp help, do: help(nil)
 
   defp help(nil) do
-    {:ok, %{help: top_help()}, &IO.puts/1}
+    {:ok, %{help: top_help()}, &render_help/1}
   end
 
   defp help(command) do
-    {:ok, %{help: command_help(command)}, &IO.puts/1}
+    {:ok, %{help: command_help(command)}, &render_help/1}
   end
+
+  defp render_help(%{help: help}), do: IO.puts(help)
 
   defp top_help do
     """
@@ -167,6 +172,7 @@ defmodule Gitspace.CLI do
       link <path>                  index an external checkout
       unlink <path>                forget an external checkout
       doctor [--fix] [--reindex]   health checks
+      config [list|get|set]        show or change the active configuration
       setup                        choose data and checkout directories
       reindex                      rebuild the index from git and markers
 
@@ -234,6 +240,21 @@ defmodule Gitspace.CLI do
         """
         USAGE
           gitspace doctor [--fix] [--reindex]
+        """
+
+      "config" ->
+        """
+        USAGE
+          gitspace config [list]
+          gitspace config get <key>
+          gitspace config set <key> <value> [--force]
+
+        KEYS
+          paths.data
+          paths.checkouts
+          branch.template
+          git.minimum_version
+          status.max_age_seconds
         """
 
       "setup" ->

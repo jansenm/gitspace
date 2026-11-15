@@ -69,6 +69,18 @@ defmodule Gitspace.Config do
     end
   end
 
+  @doc "Reads the config file without applying environment overrides."
+  @spec load_file() :: {:ok, t()} | {:error, term()}
+  def load_file do
+    path = config_path()
+
+    if File.exists?(path) do
+      read_config(path)
+    else
+      {:error, :not_configured}
+    end
+  end
+
   @spec save(t()) :: :ok | {:error, term()}
   def save(%__MODULE__{} = config) do
     path = config.path || config_path()
@@ -151,12 +163,16 @@ defmodule Gitspace.Config do
 
   defp read(path) do
     if File.exists?(path) do
-      with {:ok, body} <- File.read(path),
-           {:ok, data} <- decode(body) do
-        from_map(data, path)
-      end
+      read_config(path)
     else
       {:ok, %__MODULE__{path: path, data_dir: default_data_dir()}}
+    end
+  end
+
+  defp read_config(path) do
+    with {:ok, body} <- File.read(path),
+         {:ok, data} <- decode(body) do
+      from_map(data, path)
     end
   end
 

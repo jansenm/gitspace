@@ -20,14 +20,14 @@ Product scope, CLI contract and acceptance plan live in the planning repository:
 
 | Area | Commands |
 |---|---|
-| Setup and health | `setup`, `doctor`, `doctor --fix`, `doctor --reindex` |
+| Setup, config and health | `setup`, `config [list|get|set]`, `doctor`, `doctor --fix`, `doctor --reindex` |
 | Mirrors | `repo add`, `repo ls`, `repo fetch`, `repo rm` |
 | Discovery | `scan` (read-only), `link`, `unlink` |
 | Inventory | `gitspace`, `ls`, `status`, `show`, `path` |
 | Recovery | `reindex` — rediscover mirrors from disk, rebuild workspaces from markers |
 | Machine surface | `--json` on every command, exit codes 0–7, `--verbose` prints git argv |
 
-66 checks (62 tests, 3 properties, 1 doctest) in ~4 s.
+76 checks (72 tests, 3 properties, 1 doctest) in ~4 s.
 
 ## Commands
 
@@ -52,6 +52,7 @@ First run:
 
 ```sh
 gitspace setup --data ~/.local/share/gitspace --checkouts /data/work
+gitspace config
 gitspace repo add git@github.com:org/repo.git
 gitspace repo ls
 gitspace scan ~/src
@@ -65,6 +66,10 @@ gitspace doctor
 Configuration is TOML at `$XDG_CONFIG_HOME/gitspace/config.toml` (or `GITSPACE_CONFIG`).
 `GITSPACE_DATA` and `GITSPACE_CHECKOUTS` override the paths. The index is
 `<data>/index.sqlite3`; mirrors live under `<data>/repos/`.
+
+`gitspace config` shows the effective values and whether each comes from the file, the
+environment or a default. `config set` rewrites the file only; an environment override still
+wins at runtime and is reported after the write.
 
 ## Decisions
 
