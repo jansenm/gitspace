@@ -25,3 +25,6 @@ gitspace-*.tar
 
 # Standalone binary build output
 /burrito_out/
+
+# Local Makefile overrides
+Makefile.local

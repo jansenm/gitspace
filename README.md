@@ -33,6 +33,25 @@ repository:
 
 ## Commands
 
+The Makefile wraps the common work; `make help` lists everything.
+
+```sh
+make build         # compile with warnings as errors
+make test          # test suite
+make lint          # format check + warnings-as-errors
+make ci            # lint, then tests
+make burrito       # standalone binary
+
+make run ARGS=doctor
+make bench         # synthetic benchmark
+make bench BENCH_REPO=/path/to/repo BENCH_WORKTREES=2 BENCH_DIR=/data/tmp/gitspace-bench
+
+make install       # installs gitspace and the gsp alias under $(PREFIX)/bin
+make install DESTDIR=/tmp/stage PREFIX=/usr/local
+```
+
+Raw equivalents:
+
 ```sh
 mix test
 mix compile --warnings-as-errors
@@ -42,6 +61,11 @@ GITSPACE_BENCH_REPO=/path/to/real/repo GITSPACE_BENCH_WORKTREES=2 mix run bench/
 BURRITO_TARGET=linux_x86_64 MIX_ENV=prod mix release --overwrite
 ./burrito_out/gitspace_linux_x86_64 doctor
 ```
+
+`Makefile.local` is ignored by git and included if present, for local overrides. Do not
+export `DESTDIR` or `PREFIX` into the Burrito build: Zig honours them and installs the
+wrapper outside `zig-out/bin`, which breaks Burrito's copy step. The Makefile unexports them
+for this reason.
 
 ## Decisions
 
