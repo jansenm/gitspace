@@ -9,6 +9,7 @@ defmodule Gitspace.Layout do
   @max_length 60
   @invalid ~r/[^A-Za-z0-9._-]+/
   @scp_remote ~r/^(?:[^@\/]+@)?([^:\/]+):(.+)$/
+  @default_ports %{"http" => 80, "https" => 443, "ssh" => 22, "git" => 9418, "ftp" => 21}
 
   @doc """
   Turns a piece of work into a path-safe slug.
@@ -149,9 +150,12 @@ defmodule Gitspace.Layout do
     end
   end
 
-  defp normalize_uri(%URI{scheme: scheme, host: host, path: path}, _source)
+  defp normalize_uri(
+         %URI{scheme: scheme, host: host, path: path, port: port},
+         _source
+       )
        when scheme in ["http", "https", "ssh", "git"] and is_binary(host) do
-    clean_key(String.downcase(host) <> (path || ""))
+    clean_key(host_with_port(scheme, String.downcase(host), port) <> (path || ""))
   end
 
   defp normalize_uri(%URI{scheme: "file", path: path}, _source), do: clean_key(Path.expand(path))
@@ -169,6 +173,16 @@ defmodule Gitspace.Layout do
     value
     |> String.trim_trailing("/")
     |> String.replace_suffix(".git", "")
+  end
+
+  defp host_with_port(_scheme, host, nil), do: host
+
+  defp host_with_port(scheme, host, port) do
+    if Map.get(@default_ports, scheme) == port do
+      host
+    else
+      "#{host}:#{port}"
+    end
   end
 
   defp remote_path(source) do

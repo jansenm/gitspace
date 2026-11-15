@@ -22,6 +22,29 @@ defmodule Gitspace.LayoutTest do
     assert slug =~ ~r/^a+-[0-9a-f]{8}$/
   end
 
+  test "remote keys drop default ports and keep non-default ports" do
+    assert Layout.normalize_remote("https://gitlab.com:443/acme/config.git") ==
+             "gitlab.com/acme/config"
+
+    assert Layout.normalize_remote("https://gitlab.com/acme/config.git") ==
+             "gitlab.com/acme/config"
+
+    assert Layout.normalize_remote("https://gitlab.example.com:8443/acme/config.git") ==
+             "gitlab.example.com:8443/acme/config"
+
+    assert Layout.normalize_remote("ssh://git@github.com:22/acme/config.git") ==
+             "github.com/acme/config"
+
+    assert Layout.normalize_remote("ssh://git@github.com:2222/acme/config.git") ==
+             "github.com:2222/acme/config"
+
+    assert Layout.normalize_remote("git://example.com:9418/acme/config") ==
+             "example.com/acme/config"
+
+    assert Layout.normalize_remote("http://example.com:80/acme/config") ==
+             "example.com/acme/config"
+  end
+
   test "branches are derived from the work name" do
     assert Layout.branch_for("mt4711-update-dependencies") ==
              {:ok, "feature_mt4711-update-dependencies"}

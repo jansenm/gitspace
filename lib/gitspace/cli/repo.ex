@@ -15,7 +15,7 @@ defmodule Gitspace.CLI.Repo do
       ["ls" | rest] -> list(global, rest)
       ["fetch" | rest] -> fetch(global, rest)
       ["rm" | rest] -> remove(global, rest)
-      [] -> {:ok, %{help: help()}, &IO.puts/1}
+      [] -> {:ok, %{help: help()}, &render_help/1}
       [other | _] -> {:error, Error.new(:usage, "unknown repo command: #{other}")}
     end
   end
@@ -142,9 +142,16 @@ defmodule Gitspace.CLI.Repo do
 
   defp render_list(%{repositories: repositories}) do
     Output.table(
-      ["SLUG", "STATE", "DEFAULT", "CHECKOUTS", "MIRROR"],
+      ["SLUG", "REMOTE", "STATE", "DEFAULT", "CHECKOUTS", "MIRROR"],
       Enum.map(repositories, fn repo ->
-        [repo.slug, repo.state, repo.default_branch, repo.checkouts, repo.bare_path]
+        [
+          repo.slug,
+          repo.remote_url,
+          repo.state,
+          repo.default_branch,
+          repo.checkouts,
+          repo.bare_path
+        ]
       end)
     )
   end
@@ -182,4 +189,6 @@ defmodule Gitspace.CLI.Repo do
       gitspace repo rm <repo> [--force] [--dry-run] [--yes]
     """
   end
+
+  defp render_help(%{help: help}), do: IO.puts(help)
 end

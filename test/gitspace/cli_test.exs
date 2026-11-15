@@ -44,7 +44,7 @@ defmodule Gitspace.CLITest do
 
     {:ok, _summary} = Index.reindex(config)
 
-    {:ok, repo: repo, path: path}
+    {:ok, repo: repo, path: path, source: source}
   end
 
   test "INV-8/MACH-1 workspace status is a JSON envelope", %{path: path} do
@@ -119,6 +119,17 @@ defmodule Gitspace.CLITest do
     assert data["summary"]["fail"] == 0
     assert Enum.any?(data["checks"], &(&1["name"] == "git" and &1["status"] == "ok"))
     assert Enum.any?(data["checks"], &(&1["name"] == "index" and &1["status"] == "ok"))
+  end
+
+  test "repo shows help and repo ls includes the remote URI", %{source: source} do
+    {help, 0} = cli(["repo"])
+    assert help =~ "gitspace repo add"
+    assert help =~ "gitspace repo rm"
+
+    {output, 0} = cli(["repo", "ls"])
+    assert output =~ "REMOTE"
+    assert output =~ "demo"
+    assert output =~ source
   end
 
   defp cli(args) do
