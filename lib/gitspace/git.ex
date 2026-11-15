@@ -53,6 +53,10 @@ defmodule Gitspace.Git do
 
     command = build_command(args, extra_env, locks?)
 
+    if Application.get_env(:gitspace, :verbose, false) do
+      IO.puts(:stderr, "$ (cd #{cwd} && #{Enum.join(command, " ")})")
+    end
+
     try do
       {out, err, status} =
         command

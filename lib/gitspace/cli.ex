@@ -1,65 +1,255 @@
 defmodule Gitspace.CLI do
-  @moduledoc "M0 CLI entrypoint. The full v1 surface arrives in M1+."
+  @moduledoc "Command dispatcher, global flags, help and exit codes."
+
+  alias Gitspace.Error
+  alias Gitspace.CLI.{Doctor, Inventory, Output, Reindex, Repo, Scan, Setup}
+
+  @global_flags ~w(--json --no-color --verbose --yes --help --version -h)
 
   def main(args) do
-    case args do
-      ["--version"] -> version()
-      ["--help"] -> help()
-      [] -> help()
-      ["doctor"] -> doctor()
-      other -> unknown(other)
+    args = Enum.map(args, &to_string/1)
+    Logger.configure(level: :warning)
+    global = global(args)
+    code = run(args, global)
+    System.halt(code)
+  end
+
+  @doc "Runs one command and returns its exit code. Used by tests."
+  def run(args, global \\ nil) do
+    args = Enum.map(args, &to_string/1)
+    global = global || global(args)
+    Application.put_env(:gitspace, :verbose, global.verbose)
+
+    try do
+      args
+      |> dispatch(global)
+      |> Output.emit(global)
+    rescue
+      error in Error ->
+        Output.emit({:error, error}, global)
+
+      error ->
+        message =
+          if global.verbose do
+            Exception.format(:error, error, __STACKTRACE__)
+          else
+            Exception.message(error)
+          end
+
+        Output.emit({:error, Error.new(:error, message)}, global)
     end
+  end
+
+  defp dispatch(args, global) do
+    cond do
+      "--version" in args ->
+        version()
+
+      args == [] ->
+        Inventory.inbox(global, [])
+
+      true ->
+        {before, rest} = Enum.split_while(args, &String.starts_with?(&1, "-"))
+
+        case Enum.reject(before, &(&1 in @global_flags)) do
+          [] -> dispatch_command(rest, before, global)
+          [unknown | _] -> {:error, Error.new(:usage, "unknown option: #{unknown}")}
+        end
+    end
+  end
+
+  defp dispatch_command([], before, global) do
+    if "--help" in before or "-h" in before do
+      help()
+    else
+      Inventory.inbox(global, [])
+    end
+  end
+
+  defp dispatch_command([command | command_args], before, global) do
+    if "--help" in command_args or "-h" in command_args or "--help" in before do
+      help(command)
+    else
+      case command do
+        "ls" ->
+          Inventory.ls(global, command_args)
+
+        "status" ->
+          Inventory.status(global, command_args)
+
+        "show" ->
+          Inventory.show(global, command_args)
+
+        "path" ->
+          Inventory.path(global, command_args)
+
+        "repo" ->
+          Repo.run(global, command_args)
+
+        "scan" ->
+          Scan.scan(global, command_args)
+
+        "link" ->
+          Scan.link(global, command_args)
+
+        "unlink" ->
+          Scan.unlink(global, command_args)
+
+        "doctor" ->
+          Doctor.run(global, command_args)
+
+        "setup" ->
+          Setup.run(global, command_args)
+
+        "reindex" ->
+          Reindex.run(global, command_args)
+
+        "help" ->
+          help()
+
+        other ->
+          {:error, Error.new(:usage, "unknown command: #{other}", hint: "run `gitspace help`")}
+      end
+    end
+  end
+
+  defp global(args) do
+    %{
+      json: "--json" in args,
+      no_color: "--no-color" in args,
+      verbose: "--verbose" in args,
+      yes: "--yes" in args
+    }
   end
 
   defp version do
-    IO.puts("gitspace #{vsn()} (#{git_version()})")
-    halt(0)
+    vsn =
+      case Application.spec(:gitspace, :vsn) do
+        nil -> "0.1.0"
+        version -> to_string(version)
+      end
+
+    git =
+      case Gitspace.Git.run(["version"]) do
+        {:ok, %{stdout: out}} -> String.trim(out)
+        _ -> "git unavailable"
+      end
+
+    {:ok, %{version: vsn, git: git},
+     fn data -> IO.puts("gitspace #{data.version} (#{data.git})") end}
   end
 
-  defp help do
-    IO.puts("""
-    gitspace — workspaces for git checkouts (M0 spike)
+  defp help, do: help(nil)
+
+  defp help(nil) do
+    {:ok, %{help: top_help()}, &IO.puts/1}
+  end
+
+  defp help(command) do
+    {:ok, %{help: command_help(command)}, &IO.puts/1}
+  end
+
+  defp top_help do
+    """
+    gitspace — workspaces for git checkouts
 
     USAGE
-      gitspace --version
-      gitspace doctor
+      gitspace                     inbox: what needs a decision
+      gitspace <command> [options]
 
-    The full v1 CLI is not implemented yet. M0 proves the git and safety mechanics.
-    """)
+    COMMANDS
+      ls                           all indexed checkouts
+      status [target]              inbox, or one workspace/checkout/repository
+      show <target>                details and provenance
+      path <target>                print a checkout path
+      repo add|ls|fetch|rm         mirrors
+      scan [path...]               discover existing clones and worktrees (read-only)
+      link <path>                  index an external checkout
+      unlink <path>                forget an external checkout
+      doctor [--fix] [--reindex]   health checks
+      setup                        choose data and checkout directories
+      reindex                      rebuild the index from git and markers
 
-    halt(0)
+    GLOBAL
+      --json --no-color --verbose --yes --help --version
+    """
   end
 
-  defp doctor do
-    IO.puts("gitspace      #{vsn()}")
-    IO.puts("git           #{git_version()}")
-    IO.puts("elixir        #{System.version()}")
-    IO.puts("otp           #{System.otp_release()}")
-    IO.puts("burrito       #{System.get_env("__BURRITO", "0")}")
-    halt(0)
-  end
+  defp command_help(command) do
+    case command do
+      "ls" ->
+        """
+        USAGE
+          gitspace ls [--repo R] [--workspace W] [--label L] [--state S]
+                      [--kind worktree|clone] [--source managed|external] [--wide]
+        """
 
-  defp unknown(args) do
-    IO.puts(:stderr, "unknown command: #{Enum.join(args, " ")}")
-    IO.puts(:stderr, "run `gitspace --help`")
-    halt(2)
-  end
+      "status" ->
+        """
+        USAGE
+          gitspace status [target] [--refresh]
+          gitspace status workspace:member
+        """
 
-  defp vsn do
-    case Application.spec(:gitspace, :vsn) do
-      nil -> "0.1.0"
-      version -> to_string(version)
+      "show" ->
+        """
+        USAGE
+          gitspace show <workspace|workspace:member|checkout|repo|path>
+        """
+
+      "path" ->
+        """
+        USAGE
+          gitspace path <workspace|workspace:member|checkout|repo|path>
+        """
+
+      "repo" ->
+        """
+        USAGE
+          gitspace repo add <url> [--name N] [--no-fetch]
+          gitspace repo ls
+          gitspace repo fetch [<repo>|--all] [--prune]
+          gitspace repo rm <repo> [--force] [--dry-run] [--yes]
+        """
+
+      "scan" ->
+        """
+        USAGE
+          gitspace scan [path...] [--max-depth N] [--exclude GLOB]
+        """
+
+      "link" ->
+        """
+        USAGE
+          gitspace link <path> [--repo NAME]
+        """
+
+      "unlink" ->
+        """
+        USAGE
+          gitspace unlink <path>
+        """
+
+      "doctor" ->
+        """
+        USAGE
+          gitspace doctor [--fix] [--reindex]
+        """
+
+      "setup" ->
+        """
+        USAGE
+          gitspace setup [--data DIR] [--checkouts DIR] [--force]
+        """
+
+      "reindex" ->
+        """
+        USAGE
+          gitspace reindex
+        """
+
+      _ ->
+        top_help()
     end
   end
-
-  # Deliberately goes through Gitspace.Git: `doctor` then proves that the
-  # subprocess layer (Exile + helper binaries) works in the packaged binary.
-  defp git_version do
-    case Gitspace.Git.run(["version"]) do
-      {:ok, %{stdout: out}} -> String.trim(out)
-      _ -> "unavailable"
-    end
-  end
-
-  defp halt(code), do: System.halt(code)
 end

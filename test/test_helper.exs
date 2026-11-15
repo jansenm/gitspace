@@ -1,3 +1,5 @@
+Code.compiler_options(ignore_module_conflict: true)
+
 ExUnit.start()
 
 # The developer's global config must never leak into tests. This machine has

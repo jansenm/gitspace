@@ -35,7 +35,16 @@ defmodule Gitspace.MixProject do
             # NIF deps with `zig cc ... -shared`. Exile also ships an executable
             # helper (`spawner`), which cannot be linked with -shared. Since we
             # build natively, use the host-compiled NIFs unchanged.
-            linux_x86_64: [os: :linux, cpu: :x86_64, skip_nifs: true]
+            linux_x86_64: [
+              os: :linux,
+              cpu: :x86_64,
+              skip_nifs: true,
+              # Use the host OTP (glibc) instead of Burrito's musl ERTS:
+              # SQLite's NIF is compiled against glibc and cannot load in musl.
+              custom_erts:
+                System.get_env("GITSPACE_ERTS") ||
+                  Path.join(to_string(:code.root_dir()), "erts-#{:erlang.system_info(:version)}")
+            ]
           ]
         ]
       ]
@@ -46,6 +55,8 @@ defmodule Gitspace.MixProject do
     [
       {:exile, "~> 0.15"},
       {:jason, "~> 1.4"},
+      {:ecto_sqlite3, "~> 0.26"},
+      {:toml_elixir, "~> 3.3"},
       {:burrito, "~> 1.5.0"},
       {:stream_data, "~> 1.1", only: :test}
     ]

@@ -8,6 +8,7 @@ defmodule Gitspace.Layout do
 
   @max_length 60
   @invalid ~r/[^A-Za-z0-9._-]+/
+  @scp_remote ~r/^(?:[^@\/]+@)?([^:\/]+):(.+)$/
 
   @doc """
   Turns a piece of work into a path-safe slug.
@@ -90,6 +91,108 @@ defmodule Gitspace.Layout do
       work_slug(repo)
     end
   end
+
+  @doc """
+  Derives a repository slug from a remote URL or local path.
+
+  Handles scp-like (`git@host:org/repo.git`), URL, and plain path forms.
+  """
+  @spec repo_slug_from_url(String.t()) :: {:ok, String.t()} | {:error, atom()}
+  def repo_slug_from_url(source) when is_binary(source) do
+    case remote_path(source) do
+      nil ->
+        {:error, :invalid_remote}
+
+      path ->
+        base =
+          path
+          |> String.trim_trailing("/")
+          |> Path.basename()
+          |> String.replace_suffix(".git", "")
+
+        repo_slug(base)
+    end
+  end
+
+  @spec repo_slug_from_url!(String.t()) :: String.t()
+  def repo_slug_from_url!(source) do
+    case repo_slug_from_url(source) do
+      {:ok, slug} -> slug
+      {:error, reason} -> raise ArgumentError, "invalid remote #{inspect(source)}: #{reason}"
+    end
+  end
+
+  @doc """
+  Canonical key for matching the same repository across remote syntaxes.
+
+  Credentials are dropped, `.git` and trailing slashes are stripped, and the
+  host is lowercased. Local paths are expanded.
+  """
+  @spec normalize_remote(String.t()) :: String.t()
+  def normalize_remote(source) when is_binary(source) do
+    source = String.trim(source)
+
+    cond do
+      source == "" ->
+        ""
+
+      scheme?(source) ->
+        uri = URI.parse(source)
+        normalize_uri(uri, source)
+
+      match = Regex.run(@scp_remote, source) ->
+        [_, host, path] = match
+        clean_key(String.downcase(host) <> "/" <> path)
+
+      true ->
+        clean_key(Path.expand(source))
+    end
+  end
+
+  defp normalize_uri(%URI{scheme: scheme, host: host, path: path}, _source)
+       when scheme in ["http", "https", "ssh", "git"] and is_binary(host) do
+    clean_key(String.downcase(host) <> (path || ""))
+  end
+
+  defp normalize_uri(%URI{scheme: "file", path: path}, _source), do: clean_key(Path.expand(path))
+
+  defp normalize_uri(%URI{path: path}, source) when is_binary(path) do
+    cond do
+      String.starts_with?(source, ["/", "./", "../", "~"]) -> clean_key(Path.expand(path))
+      true -> clean_key(source)
+    end
+  end
+
+  defp normalize_uri(_uri, source), do: clean_key(source)
+
+  defp clean_key(value) do
+    value
+    |> String.trim_trailing("/")
+    |> String.replace_suffix(".git", "")
+  end
+
+  defp remote_path(source) do
+    source = String.trim(source)
+
+    cond do
+      source == "" ->
+        nil
+
+      scheme?(source) ->
+        case URI.parse(source) do
+          %URI{path: path} -> path
+        end
+
+      match = Regex.run(@scp_remote, source) ->
+        [_, _host, path] = match
+        path
+
+      true ->
+        source
+    end
+  end
+
+  defp scheme?(source), do: Regex.match?(~r/^[A-Za-z][A-Za-z0-9+.-]*:\/\//, source)
 
   @spec valid_branch?(String.t()) :: boolean()
   def valid_branch?(branch) when is_binary(branch) do

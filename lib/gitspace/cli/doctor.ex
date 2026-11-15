@@ -1,0 +1,364 @@
+defmodule Gitspace.CLI.Doctor do
+  @moduledoc false
+
+  import Ecto.Query
+
+  alias Gitspace.{Config, Git, Index, Marker, Repo, Repos, Safety}
+  alias Gitspace.Git.Worktree
+  alias Gitspace.Index.{Checkout, Workspace}
+  alias Gitspace.CLI.Helpers
+
+  def run(_global, args) do
+    with {:ok, opts, rest} <- Helpers.parse(args, strict()),
+         :ok <- Helpers.no_extra_args(rest),
+         {:ok, config} <- Helpers.load_config(),
+         :ok <- Helpers.start_index(config) do
+      fixes = if opts[:fix], do: fix(config), else: []
+      reindex = if opts[:reindex], do: reindex(config), else: nil
+      checks = checks(config)
+      summary = summarize(checks)
+
+      {:ok,
+       %{
+         checks: checks,
+         fixes: fixes,
+         reindex: reindex,
+         summary: summary,
+         ready: summary.fail == 0
+       }, &render/1}
+    end
+  end
+
+  defp strict, do: [fix: :boolean, reindex: :boolean] ++ Helpers.global_strict()
+
+  defp checks(config) do
+    [
+      check_git(config),
+      check_paths(config),
+      check_index(),
+      check_repositories(config),
+      check_checkouts(),
+      check_workspaces(config),
+      check_sync(config)
+    ]
+  end
+
+  defp check_git(config) do
+    case Git.run(["version"]) do
+      {:ok, %{stdout: output}} ->
+        version = git_version(output)
+        minimum = normalize_version(config.git_minimum)
+
+        cond do
+          is_nil(version) ->
+            check("git", "fail", "cannot parse git version: #{String.trim(output)}")
+
+          Version.parse(version) == :error or Version.parse(minimum) == :error ->
+            check(
+              "git",
+              "fail",
+              "cannot compare git #{version} with minimum #{config.git_minimum}"
+            )
+
+          Version.compare(version, minimum) in [:eq, :gt] ->
+            check("git", "ok", "#{version} (minimum #{config.git_minimum})")
+
+          true ->
+            check("git", "fail", "#{version} is below the minimum #{config.git_minimum}")
+        end
+
+      {:error, result} ->
+        check("git", "fail", "git is unavailable: #{result.stderr}")
+    end
+  end
+
+  defp check_paths(config) do
+    paths = [
+      {"data", config.data_dir},
+      {"checkouts", config.checkouts_dir},
+      {"repos", Config.repos_dir(config)}
+    ]
+
+    problems =
+      Enum.flat_map(paths, fn {label, path} ->
+        cond do
+          not File.dir?(path) -> ["#{label} missing: #{path}"]
+          not writable?(path) -> ["#{label} not writable: #{path}"]
+          true -> []
+        end
+      end)
+
+    if problems == [] do
+      check("paths", "ok", "data, checkouts and repos are writable")
+    else
+      check("paths", "fail", Enum.join(problems, "; "))
+    end
+  end
+
+  defp check_index do
+    migrations = Ecto.Migrator.migrations(Repo, Index.migrations_path())
+    pending = Enum.count(migrations, fn {direction, _version, _name} -> direction == :down end)
+    journal = journal_mode()
+
+    cond do
+      pending > 0 ->
+        check("index", "fail", "#{pending} pending migration(s)")
+
+      journal != "wal" ->
+        check("index", "warn", "journal_mode is #{journal || "unknown"}, expected wal")
+
+      true ->
+        check("index", "ok", "schema current, #{length(migrations)} migration(s), wal")
+    end
+  rescue
+    error -> check("index", "fail", "cannot inspect the index: #{Exception.message(error)}")
+  end
+
+  defp check_repositories(config) do
+    rows = Repos.list(config)
+
+    results =
+      Enum.map(rows, fn %{repo: repo} ->
+        cond do
+          repo.state == "external" ->
+            :external
+
+          is_nil(repo.bare_path) or not File.dir?(repo.bare_path) ->
+            :missing_mirror
+
+          true ->
+            case Worktree.list(repo.bare_path) do
+              {:ok, entries} -> {:prunable, Enum.count(entries, & &1.prunable)}
+              {:error, _} -> :broken
+            end
+        end
+      end)
+
+    managed = Enum.count(results, &(&1 != :external))
+    external = Enum.count(results, &(&1 == :external))
+    missing = Enum.count(results, &(&1 == :missing_mirror))
+    broken = Enum.count(results, &(&1 == :broken))
+
+    prunable =
+      Enum.reduce(results, 0, fn
+        {:prunable, count}, acc -> acc + count
+        _, acc -> acc
+      end)
+
+    failed_fetches = Enum.count(rows, fn %{repo: repo} -> repo.last_fetch_error end)
+
+    cond do
+      missing > 0 or broken > 0 ->
+        check(
+          "repositories",
+          "fail",
+          "#{managed} managed, #{external} external, #{missing} missing mirrors, #{broken} unreadable"
+        )
+
+      prunable > 0 or failed_fetches > 0 ->
+        check(
+          "repositories",
+          "warn",
+          "#{managed} managed, #{external} external, #{prunable} prunable worktree(s), #{failed_fetches} fetch error(s)"
+        )
+
+      true ->
+        check("repositories", "ok", "#{managed} managed, #{external} external")
+    end
+  end
+
+  defp check_checkouts do
+    checkouts = Repo.all(Checkout)
+    missing = Enum.count(checkouts, &(not File.dir?(&1.path)))
+    broken = Enum.count(checkouts, &(&1.state == "broken"))
+    stale = Enum.count(checkouts, &is_nil(&1.last_status_at))
+
+    cond do
+      missing > 0 ->
+        check(
+          "checkouts",
+          "warn",
+          "#{length(checkouts)} indexed, #{missing} missing director(ies)"
+        )
+
+      broken > 0 ->
+        check("checkouts", "fail", "#{length(checkouts)} indexed, #{broken} broken")
+
+      stale > 0 ->
+        check("checkouts", "ok", "#{length(checkouts)} indexed, #{stale} without cached status")
+
+      true ->
+        check("checkouts", "ok", "#{length(checkouts)} indexed")
+    end
+  end
+
+  defp check_workspaces(config) do
+    active = Repo.aggregate(from(w in Workspace, where: w.state == "active"), :count)
+    {:ok, markers, bad} = Marker.find_all(config.checkouts_dir)
+
+    marker_paths =
+      MapSet.new(markers, fn {dir, _} -> Path.join(dir, Marker.marker_filename()) end)
+
+    orphans =
+      from(w in Workspace, where: w.state == "active", select: {w.name, w.marker_path})
+      |> Repo.all()
+      |> Enum.reject(fn {_name, path} -> path && MapSet.member?(marker_paths, path) end)
+
+    cond do
+      bad != [] ->
+        check(
+          "workspaces",
+          "warn",
+          "#{active} active, #{length(markers)} markers, #{length(bad)} invalid marker(s)"
+        )
+
+      orphans != [] ->
+        check(
+          "workspaces",
+          "warn",
+          "#{active} active, #{length(markers)} markers, #{length(orphans)} without marker"
+        )
+
+      true ->
+        check("workspaces", "ok", "#{active} active, #{length(markers)} marker(s)")
+    end
+  end
+
+  defp check_sync(config) do
+    synced = Enum.filter([config.data_dir, config.checkouts_dir], &Config.sync_root?/1)
+
+    if synced == [] do
+      check("sync", "ok", "no sync roots in use")
+    else
+      check("sync", "warn", "inside a file-sync root: #{Enum.join(synced, ", ")}")
+    end
+  end
+
+  defp fix(_config) do
+    Repo.all(Gitspace.Index.Repository)
+    |> Enum.filter(&(&1.bare_path && File.dir?(&1.bare_path)))
+    |> Enum.map(&anchor_and_prune/1)
+  end
+
+  defp anchor_and_prune(repo) do
+    case Worktree.list(repo.bare_path) do
+      {:ok, entries} ->
+        prunable = Enum.filter(entries, & &1.prunable)
+        anchored = Enum.count(prunable, &anchor_if_needed(repo.bare_path, &1))
+
+        case Worktree.prune(repo.bare_path) do
+          {:ok, _} ->
+            %{repo: repo.slug, prunable: length(prunable), anchored: anchored, pruned: true}
+
+          {:error, result} ->
+            %{
+              repo: repo.slug,
+              prunable: length(prunable),
+              anchored: anchored,
+              error: result.stderr
+            }
+        end
+
+      {:error, result} ->
+        %{repo: repo.slug, error: result.stderr}
+    end
+  end
+
+  defp anchor_if_needed(bare, entry) do
+    cond do
+      is_nil(entry.head) ->
+        false
+
+      reachable?(bare, entry.head) ->
+        false
+
+      true ->
+        ref =
+          "refs/gitspace/keep/doctor/#{String.slice(entry.head, 0, 8)}-#{System.system_time(:second)}"
+
+        Safety.anchor!(bare, ref, entry.head)
+        true
+    end
+  end
+
+  defp reachable?(bare, sha) do
+    case Git.run(["rev-list", "-1", sha, "--not", "--branches", "--remotes", "--tags"], cd: bare) do
+      # Empty output means every commit is already reachable from a ref.
+      {:ok, %{stdout: out}} -> String.trim(out) == ""
+      {:error, _} -> false
+    end
+  end
+
+  defp reindex(config) do
+    {:ok, summary} = Index.reindex(config)
+    summary
+  end
+
+  defp journal_mode do
+    case Ecto.Adapters.SQL.query(Repo, "PRAGMA journal_mode", []) do
+      {:ok, %{rows: [[mode]]}} -> mode
+      _ -> nil
+    end
+  end
+
+  defp writable?(dir) do
+    probe = Path.join(dir, ".gitspace-doctor-#{System.unique_integer([:positive])}")
+
+    case File.write(probe, "") do
+      :ok ->
+        _ = File.rm(probe)
+        true
+
+      {:error, _} ->
+        false
+    end
+  end
+
+  defp git_version(output) do
+    case Regex.run(~r/(\d+\.\d+\.\d+)/, output) do
+      [_, version] -> version
+      _ -> nil
+    end
+  end
+
+  defp normalize_version(version) do
+    case String.split(version, ".") do
+      [major, minor] -> "#{major}.#{minor}.0"
+      _ -> version
+    end
+  end
+
+  defp check(name, status, detail), do: %{name: name, status: status, detail: detail}
+
+  defp summarize(checks) do
+    %{
+      ok: Enum.count(checks, &(&1.status == "ok")),
+      warn: Enum.count(checks, &(&1.status == "warn")),
+      fail: Enum.count(checks, &(&1.status == "fail"))
+    }
+  end
+
+  defp render(data) do
+    IO.puts("gitspace doctor")
+
+    Enum.each(data.checks, fn check ->
+      IO.puts("  [#{check.status}] #{String.pad_trailing(check.name, 14)} #{check.detail}")
+    end)
+
+    Enum.each(data.fixes, fn fix ->
+      if fix[:error] do
+        IO.puts(:stderr, "fix #{fix.repo}: #{fix.error}")
+      else
+        IO.puts("  fixed #{fix.repo}: #{fix.anchored} anchored, #{fix.prunable} prunable")
+      end
+    end)
+
+    if data.reindex do
+      IO.puts(
+        "  reindexed: #{data.reindex.repositories} repositories, #{data.reindex.workspaces} workspaces"
+      )
+    end
+
+    IO.puts("#{data.summary.ok} ok · #{data.summary.warn} warn · #{data.summary.fail} fail")
+  end
+end

@@ -1,10 +1,11 @@
-# gitspace (M0 spike)
+# gitspace (M1)
 
-The mechanics spike for a workspace-centric git checkout manager. **Not the product yet** —
-this repo proves the git, safety and packaging mechanics that the v1 plan depends on.
+A workspace-centric git checkout manager. This repository currently implements the **read-only
+inventory**: configure gitspace, register mirrors, discover and link existing checkouts, see
+what needs attention, and rebuild the index from git and markers. Creation (`co`,
+`workspace new`) is M2.
 
-The product scope, CLI surface, acceptance plan and implementation plan live in the planning
-repository:
+Product scope, CLI contract and acceptance plan live in the planning repository:
 
 ```
 /data/mjansen/nextcloud/shared/Dokumente/planning/
@@ -12,24 +13,21 @@ repository:
 ├── use-cases/13-v1-cli.md
 ├── use-cases/14-v1-acceptance.md
 ├── implementation/01-v1-plan.md
-└── implementation/03-m0-report.md
+└── implementation/04-m1-report.md
 ```
 
-## What is proven
+## What works
 
-| Area | Status |
+| Area | Commands |
 |---|---|
-| Bare mirror recipe (`refs/remotes/origin/*`, no `--mirror`) | tests pass |
-| Worktree add/list/remove, occupied branch, prunable metadata | tests pass |
-| Porcelain v2 status parsing | tests pass |
-| Upstream / ahead / behind / “exists nowhere else” | tests pass |
-| Work-name slug, path containment, branch templates | property tests pass |
-| Workspace recovery marker read/write/find | tests pass |
-| Safety: keep ref + `gc --prune=now`, stash create, untracked tar, bundle | tests pass |
-| Submodule and LFS repositories | no-crash probes pass |
-| Standalone Burrito binary | builds and runs |
+| Setup and health | `setup`, `doctor`, `doctor --fix`, `doctor --reindex` |
+| Mirrors | `repo add`, `repo ls`, `repo fetch`, `repo rm` |
+| Discovery | `scan` (read-only), `link`, `unlink` |
+| Inventory | `gitspace`, `ls`, `status`, `show`, `path` |
+| Recovery | `reindex` — rediscover mirrors from disk, rebuild workspaces from markers |
+| Machine surface | `--json` on every command, exit codes 0–7, `--verbose` prints git argv |
 
-44 checks (40 tests, 3 properties, 1 doctest) in ~1.2 s.
+66 checks (62 tests, 3 properties, 1 doctest) in ~4 s.
 
 ## Commands
 
@@ -50,22 +48,23 @@ make install       # installs gitspace and the gsp alias under $(PREFIX)/bin
 make install DESTDIR=/tmp/stage PREFIX=/usr/local
 ```
 
-Raw equivalents:
+First run:
 
 ```sh
-mix test
-mix compile --warnings-as-errors
-mix run bench/bench.exs
-GITSPACE_BENCH_REPO=/path/to/real/repo GITSPACE_BENCH_WORKTREES=2 mix run bench/bench.exs
-
-BURRITO_TARGET=linux_x86_64 MIX_ENV=prod mix release --overwrite
-./burrito_out/gitspace_linux_x86_64 doctor
+gitspace setup --data ~/.local/share/gitspace --checkouts /data/work
+gitspace repo add git@github.com:org/repo.git
+gitspace repo ls
+gitspace scan ~/src
+gitspace link ~/src/old-api
+gitspace
+gitspace ls --repo repo
+gitspace status <workspace>
+gitspace doctor
 ```
 
-`Makefile.local` is ignored by git and included if present, for local overrides. Do not
-export `DESTDIR` or `PREFIX` into the Burrito build: Zig honours them and installs the
-wrapper outside `zig-out/bin`, which breaks Burrito's copy step. The Makefile unexports them
-for this reason.
+Configuration is TOML at `$XDG_CONFIG_HOME/gitspace/config.toml` (or `GITSPACE_CONFIG`).
+`GITSPACE_DATA` and `GITSPACE_CHECKOUTS` override the paths. The index is
+`<data>/index.sqlite3`; mirrors live under `<data>/repos/`.
 
 ## Decisions
 
@@ -77,23 +76,35 @@ for this reason.
   refspec on git 2.56.
 - **Untracked archive:** system `tar` for Linux v1. `:erl_tar.create/3` does not honour
   `{:cwd, …}` for creation.
-- **Config:** TOML via `toml_elixir ~> 3.3` (TOML 1.0/1.1, maintained, no runtime deps).
-- **Packaging:** `mix release` + Burrito 1.5.0 (matches the installed Zig 0.15.2).
+- **Config:** TOML via `toml_elixir ~> 3.3`.
+- **Index:** `ecto_sqlite3` + `exqlite`, pool size 1, WAL, migrations on demand.
+- **Recovery:** the SQLite index is disposable; mirrors are rediscovered from
+  `<data>/repos/*.git`, workspaces from `<root>/<work>/.gitspace.json` markers.
+- **Status cache:** 1 h TTL. `ls` and the inbox read the cache; `status --refresh` computes.
+  The first view refreshes up to 20 checkouts that have never been measured.
 - **Git floor:** 2.40.
-- **Test isolation:** `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_SYSTEM=/dev/null`, fixed
-  author/committer dates. This machine sets `tag.gpgSign = true` globally.
+- **Packaging:** `mix release` + Burrito 1.5.0 with the host glibc ERTS.
 
-## Burrito caveat — do not remove `skip_nifs`
+## Burrito caveats — do not “fix” these casually
 
-Burrito treats **every** Linux target as a cross-build and rebuilds NIF dependencies with
-`zig cc … -shared`. Exile ships an executable helper (`spawner`), and linking it with
-`-shared` produces a file with entry point `0x0` and `DT_NEEDED libc.so`. It segfaults on
-every spawn, and because `deps/exile/priv` is symlinked into every `_build` env, it breaks
-`mix test` too.
+1. **Keep `skip_nifs: true`.** Burrito treats every Linux target as a cross-build and
+   recompiles NIF deps with `zig cc … -shared`. Exile's `spawner` is an executable and is
+   corrupted by `-shared` (entry point `0x0`, segfault on every spawn).
+2. **Use the exact running ERTS, not the OTP root.** The host has several `erts-*` versions;
+   Burrito picks the first. The target sets:
 
-The target therefore sets `skip_nifs: true`; the native build uses host-compiled NIFs. If the
-`zig cc` path is ever needed, Exile's Makefile must be patched to strip `-shared` from the
-`spawner` rule.
+   ```elixir
+   custom_erts:
+     System.get_env("GITSPACE_ERTS") ||
+       Path.join(to_string(:code.root_dir()), "erts-#{:erlang.system_info(:version)}")
+   ```
+
+   This bundles glibc ERTS so `exqlite`'s NIF loads. Burrito's musl ERTS fails with
+   `__memmove_chk: symbol not found`. The binary is native-Linux portable, not Alpine/musl
+   portable.
+
+Binary: **7.0 MB**, cold start 1.58 s (payload extraction), warm `ls` 0.60 s, warm `doctor`
+1.37 s.
 
 ## Benchmarks
 
@@ -110,18 +121,22 @@ status (20) 61.6 ms.
 | `worktree list` (2) | 4.2 ms |
 | `status` (2 checkouts) | 480 ms |
 
-`status` is ~240 ms per checkout, which is why status caching is mandatory in the product.
-
-Binary startup: 1.39 s cold (payload extraction), 0.20 s warm, 16 MB.
+`status` is ~240 ms per checkout on that repository, which is why the cache is mandatory.
 
 ## Known limits
 
-- Submodules are checked out as empty directories; they are not initialised.
-- LFS pointer files are checked out verbatim; LFS content is not in the mirror.
-- The status parser still needs to skip the extra NUL token of rename records (M1).
-- `unshare -n` is unavailable here; offline benchmarks use `GIT_ALLOW_PROTOCOL=file`.
+- Creation is not implemented yet; M1 indexes worktrees created by `git` or by `reindex`.
+- External checkouts are index-only: `unlink` forgets them and a later reindex cannot
+  rediscover them unless you `scan`/`link` again.
+- Submodules are checked out as empty directories; LFS pointer files are checked out verbatim.
+- `scan` does not follow symlinks.
+- Stable checkout IDs survive normal reruns and reindexes, but not deletion of the index;
+  workspace identity is recovered from markers.
+- `doctor --fix` prunes worktree metadata; use `--reindex` to reconcile missing checkout rows.
+- The interactive prompts are covered by manual use; the non-TTY contract is tested.
 
 ## Not here yet
 
-CLI surface, config/setup, SQLite/Ecto, workspace creation/teardown, inbox, reindex, prune.
-That is M1+ in `implementation/01-v1-plan.md`.
+M2 creation (`co`, `workspace new`, branch derivation, markers, occupied-branch dialog),
+M3 teardown/prune/safety, M4 handoff and `run --all`, M5 full machine contract and performance,
+M6 dogfood and release.
