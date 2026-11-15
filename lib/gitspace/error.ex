@@ -13,6 +13,7 @@ defmodule Gitspace.Error do
     not_found: 3,
     ambiguous: 3,
     conflict: 4,
+    branch_occupied: 4,
     refused: 5,
     confirmation_required: 6,
     partial: 7,

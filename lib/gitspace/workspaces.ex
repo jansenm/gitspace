@@ -66,6 +66,11 @@ defmodule Gitspace.Workspaces do
     end
   end
 
+  @doc "Rebuilds one workspace from a marker. Used after creation writes the marker."
+  @spec recover(Config.t(), Path.t(), map()) ::
+          {:ok, non_neg_integer(), [map()]} | {:error, Error.t()}
+  def recover(%Config{} = config, dir, marker), do: recover_workspace(config, dir, marker)
+
   defp recover_workspace(config, dir, marker) do
     with {:ok, workspace} <- upsert_workspace(dir, marker),
          :ok <- clear_children(workspace),

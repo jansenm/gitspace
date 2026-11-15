@@ -2,7 +2,19 @@ defmodule Gitspace.CLI do
   @moduledoc "Command dispatcher, global flags, help and exit codes."
 
   alias Gitspace.Error
-  alias Gitspace.CLI.{Config, Doctor, Inventory, Output, Reindex, Repo, Scan, Setup}
+
+  alias Gitspace.CLI.{
+    Config,
+    Co,
+    Doctor,
+    Inventory,
+    Output,
+    Reindex,
+    Repo,
+    Scan,
+    Setup,
+    Workspace
+  }
 
   @global_flags ~w(--json --no-color --verbose --yes --help --version -h)
 
@@ -73,6 +85,12 @@ defmodule Gitspace.CLI do
       case command do
         "ls" ->
           Inventory.ls(global, command_args)
+
+        "co" ->
+          Co.run(global, command_args)
+
+        "workspace" ->
+          Workspace.run(global, command_args)
 
         "status" ->
           Inventory.status(global, command_args)
@@ -164,6 +182,8 @@ defmodule Gitspace.CLI do
 
     COMMANDS
       ls                           all indexed checkouts
+      co <repo>@<ref>              create a one-repo workspace
+      workspace new|ls|status      create or inspect multi-repo workspaces
       status [target]              inbox, or one workspace/checkout/repository
       show <target>                details and provenance
       path <target>                print a checkout path
@@ -196,6 +216,21 @@ defmodule Gitspace.CLI do
           gitspace status [target] [--refresh]
           gitspace status workspace:member
         """
+
+      "co" ->
+        """
+        USAGE
+          gitspace co <repo>@<ref> [--name N] [--branch B] [--detach]
+                                  [--label L]... [--fetch] [--json]
+
+        EXAMPLES
+          gitspace co api@hotfix/timeout
+          gitspace co api@main --name compare-1.8 --detach
+          gitspace co api@v1.9.0 --name compare-1.9
+        """
+
+      "workspace" ->
+        Workspace.help()
 
       "show" ->
         """

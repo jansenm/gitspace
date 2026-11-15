@@ -5,7 +5,10 @@ defmodule Gitspace.CLI.Output do
 
   @schema_version 1
 
-  @spec emit({:ok, term(), fun()} | {:error, Error.t()}, map()) :: non_neg_integer()
+  @spec emit(
+          {:ok, term(), fun()} | {:error, Error.t()} | {:partial, term(), fun(), Error.t()},
+          map()
+        ) :: non_neg_integer()
   def emit({:ok, data, _renderer}, %{json: true}) do
     IO.puts(
       Jason.encode!(%{
@@ -46,9 +49,35 @@ defmodule Gitspace.CLI.Output do
     error.exit_code
   end
 
+  def emit({:partial, _data, _renderer, %Error{} = error}, %{json: true}) do
+    emit({:error, error}, %{json: true})
+  end
+
+  def emit({:partial, data, renderer, %Error{} = error}, _global) do
+    renderer.(data)
+    IO.puts(:stderr, "error: #{error.message}")
+    if error.hint, do: IO.puts(:stderr, "hint: #{error.hint}")
+    error.exit_code
+  end
+
   @spec tty?() :: boolean()
   def tty? do
-    match?({:ok, _}, :io.columns())
+    if System.get_env("GITSPACE_NO_PROMPT") in ["1", "true", "yes"] do
+      false
+    else
+      terminal?()
+    end
+  end
+
+  defp terminal? do
+    case File.read_link("/proc/self/fd/0") do
+      {:ok, target} -> tty_path?(target)
+      {:error, _} -> match?({:ok, _}, :io.columns())
+    end
+  end
+
+  defp tty_path?(target) do
+    String.starts_with?(target, ["/dev/pts/", "/dev/tty"]) or target == "/dev/console"
   end
 
   @spec confirm?(String.t()) :: boolean()

@@ -1,9 +1,9 @@
-# gitspace (M1)
+# gitspace (M2)
 
-A workspace-centric git checkout manager. This repository currently implements the **read-only
-inventory**: configure gitspace, register mirrors, discover and link existing checkouts, see
-what needs attention, and rebuild the index from git and markers. Creation (`co`,
-`workspace new`) is M2.
+A workspace-centric git checkout manager. This repository now implements the **creation and
+inventory path**: configure gitspace, register mirrors, create one-repo checkouts and
+multi-repo workspaces, discover and link existing checkouts, see what needs attention, and
+rebuild the index from git and markers. Teardown and pruning are M3.
 
 Product scope, CLI contract and acceptance plan live in the planning repository:
 
@@ -13,13 +13,15 @@ Product scope, CLI contract and acceptance plan live in the planning repository:
 ├── use-cases/13-v1-cli.md
 ├── use-cases/14-v1-acceptance.md
 ├── implementation/01-v1-plan.md
-└── implementation/04-m1-report.md
+├── implementation/04-m1-report.md
+└── implementation/05-m2-report.md
 ```
 
 ## What works
 
 | Area | Commands |
 |---|---|
+| Creation | `co`, `workspace new`, `workspace ls`, `workspace status` |
 | Setup, config and health | `setup`, `config [list|get|set]`, `doctor`, `doctor --fix`, `doctor --reindex` |
 | Mirrors | `repo add`, `repo ls`, `repo fetch`, `repo rm` |
 | Discovery | `scan` (read-only), `link`, `unlink` |
@@ -27,7 +29,7 @@ Product scope, CLI contract and acceptance plan live in the planning repository:
 | Recovery | `reindex` — rediscover mirrors from disk, rebuild workspaces from markers |
 | Machine surface | `--json` on every command, exit codes 0–7, `--verbose` prints git argv |
 
-76 checks (72 tests, 3 properties, 1 doctest) in ~4 s.
+109 checks (105 tests, 3 properties, 1 doctest) in ~11 s.
 
 ## Commands
 
@@ -55,6 +57,9 @@ gitspace setup --data ~/.local/share/gitspace --checkouts /data/work
 gitspace config
 gitspace repo add git@github.com:org/repo.git
 gitspace repo ls
+gitspace co api@hotfix/timeout
+gitspace workspace new JENKINS-123 --own api --own web --borrow shared-lib@main
+gitspace workspace status JENKINS-123
 gitspace scan ~/src
 gitspace link ~/src/old-api
 gitspace
@@ -70,6 +75,25 @@ Configuration is TOML at `$XDG_CONFIG_HOME/gitspace/config.toml` (or `GITSPACE_C
 `gitspace config` shows the effective values and whether each comes from the file, the
 environment or a default. `config set` rewrites the file only; an environment override still
 wins at runtime and is reported after the write.
+
+## Creation model
+
+- `co <repo>@<ref>` creates a one-repo workspace. The default work name is the sanitized ref
+  (`hotfix/timeout` → `hotfix-timeout`); the path is `<checkouts>/<work>/<repo>`.
+- A branch ref checks out that branch (creating the local branch from `origin` when needed).
+  A tag or commit is detached. `--branch` creates a named branch from the ref; `--detach`
+  forces detached.
+- `workspace new <name> --own <repo>` derives `feature_<work>` from the repository's default
+  branch. `--branch` overrides; an explicit `repo@ref` opts out and checks out that ref as-is.
+- `--borrow <repo>[@<ref>]` references an existing checkout. It is never moved, branched or
+  deleted. With several checkouts, `@<ref>` selects one by branch or commit.
+- Creation is ensure-only: matching members are reused, conflicting paths or branches are
+  errors, and nothing is overwritten. Re-running a subset leaves existing members untouched.
+- An occupied branch prompts for borrow / new branch / detach / cancel on a terminal. With
+  `--json` or no terminal it is a `branch_occupied` error (exit 4).
+- Worktrees are created first; the marker is written only for successful members. A missing
+  ref or failed member yields exit 7, and re-running the same command completes the workspace.
+- `--fetch` is opt-in and only runs when a requested ref is missing. Warm mirrors work offline.
 
 ## Decisions
 
@@ -87,6 +111,12 @@ wins at runtime and is reported after the write.
   `<data>/repos/*.git`, workspaces from `<root>/<work>/.gitspace.json` markers.
 - **Status cache:** 1 h TTL. `ls` and the inbox read the cache; `status --refresh` computes.
   The first view refreshes up to 20 checkouts that have never been measured.
+- **Creation:** ensure-only and marker-first for recovery. Worktrees are created before the
+  marker is written; a partial run leaves only successful members, so a re-run completes it.
+- **Refs:** local branch → remote branch → tag → commit. Branch identity is per mirror, so
+  `main` in one repository never blocks `main` in another.
+- **TTY detection:** read the stdin device (`/proc/self/fd/0`). `:io.columns()` returns
+  `:enotsup` in release-style stdin even under a PTY. `GITSPACE_NO_PROMPT=1` forces off.
 - **Git floor:** 2.40.
 - **Packaging:** `mix release` + Burrito 1.5.0 with the host glibc ERTS.
 
@@ -108,8 +138,8 @@ wins at runtime and is reported after the write.
    `__memmove_chk: symbol not found`. The binary is native-Linux portable, not Alpine/musl
    portable.
 
-Binary: **7.0 MB**, cold start 1.58 s (payload extraction), warm `ls` 0.60 s, warm `doctor`
-1.37 s.
+Binary: **7.1 MB**, cold start 1.58 s (payload extraction), warm `ls` 0.60 s, warm `co` 0.64 s,
+warm `doctor` 1.37 s.
 
 ## Benchmarks
 
@@ -130,7 +160,7 @@ status (20) 61.6 ms.
 
 ## Known limits
 
-- Creation is not implemented yet; M1 indexes worktrees created by `git` or by `reindex`.
+- Teardown, `prune` and the full safety net are M3.
 - External checkouts are index-only: `unlink` forgets them and a later reindex cannot
   rediscover them unless you `scan`/`link` again.
 - Submodules are checked out as empty directories; LFS pointer files are checked out verbatim.
@@ -138,10 +168,16 @@ status (20) 61.6 ms.
 - Stable checkout IDs survive normal reruns and reindexes, but not deletion of the index;
   workspace identity is recovered from markers.
 - `doctor --fix` prunes worktree metadata; use `--reindex` to reconcile missing checkout rows.
-- The interactive prompts are covered by manual use; the non-TTY contract is tested.
+- The occupied-branch dialog has unit and strategy coverage plus a PTY smoke test; a fully
+  automated PTY suite is not in place. The non-TTY and `--json` contracts are tested.
+- `GITSPACE_NO_PROMPT=1` forces non-interactive behaviour even when stdin is a terminal.
+- `workspace ls` lists active workspaces; `--all`/torn-down listings belong with M3 teardown.
+- `--dry-run` does not fetch, even with `--fetch`; it reports what the current mirror can do.
+- A partial run with **no** successful member returns the original error and writes no marker.
+- Borrowing a checkout that is owned by another workspace is allowed; M3 teardown must
+  reconcile that reference instead of deleting it.
 
 ## Not here yet
 
-M2 creation (`co`, `workspace new`, branch derivation, markers, occupied-branch dialog),
 M3 teardown/prune/safety, M4 handoff and `run --all`, M5 full machine contract and performance,
 M6 dogfood and release.

@@ -27,7 +27,7 @@ defmodule Gitspace.Layout do
         trimmed
         |> String.replace(@invalid, "-")
         |> collapse()
-        |> String.trim("-.")
+        |> trim_separators()
         |> String.trim_leading(".")
 
       cond do
@@ -203,11 +203,29 @@ defmodule Gitspace.Layout do
       Regex.match?(~r/^[A-Za-z0-9._\/-]+$/, branch)
   end
 
+  @doc """
+  Validation for a user-supplied git ref.
+
+  Broader than a branch name: tags and commit SHAs are allowed, but the
+  characters that make a ref ambiguous or option-like are not.
+  """
+  @spec valid_ref?(String.t()) :: boolean()
+  def valid_ref?(ref) when is_binary(ref) do
+    ref != "" and
+      not String.contains?(ref, [" ", "..", "@{", "\\", "\0", "~", "^", ":", "?", "*", "["]) and
+      not String.contains?(ref, "//") and
+      not String.starts_with?(ref, ["-", "/", "."]) and
+      not String.ends_with?(ref, ["/", ".", ".lock"]) and
+      not Regex.match?(~r/[\x00-\x1f\x7f]/, ref)
+  end
+
   defp within?(path, root) do
     path == root or String.starts_with?(path, root <> "/")
   end
 
   defp collapse(value), do: Regex.replace(~r/-{2,}/, value, "-")
+
+  defp trim_separators(value), do: Regex.replace(~r/^[.\-]+|[.\-]+$/, value, "")
 
   defp truncate(slug) when byte_size(slug) <= @max_length, do: slug
 
