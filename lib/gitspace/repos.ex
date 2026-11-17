@@ -1,9 +1,9 @@
 defmodule Gitspace.Repos do
-  @moduledoc "Registered repositories and their bare mirrors."
+  @moduledoc "Registered repositories, aliases and their hashed bare mirrors."
 
   import Ecto.Query
 
-  alias Gitspace.{Config, Error, Git, Layout, Repo}
+  alias Gitspace.{Aliases, Config, Error, Git, Layout, MirrorIndex, Repo}
   alias Gitspace.Git.Mirror
   alias Gitspace.Index.Checkout
   alias Gitspace.Index.Repository
@@ -15,9 +15,42 @@ defmodule Gitspace.Repos do
     url = String.trim(url)
 
     with :ok <- validate_url(url),
-         {:ok, slug} <- choose_slug(url, opts),
-         {:ok, repo, upgrade?} <- prepare(config, url, slug, opts) do
-      create_or_upgrade(config, repo, url, slug, upgrade?, opts)
+         key = Layout.normalize_remote(url),
+         :ok <- validate_remote_key(key),
+         {:ok, requested_alias} <- requested_alias(opts[:name]),
+         bare = mirror_path(config, key),
+         {:ok, repo, upgrade?} <- prepare(config, url, key, bare),
+         {:ok, saved} <- create_or_upgrade(config, repo, url, upgrade?, opts) do
+      overrides =
+        if requested_alias do
+          %{saved.id => %{alias: requested_alias, source: "explicit"}}
+        else
+          %{}
+        end
+
+      case rebalance_aliases(config, overrides) do
+        {:ok, _summary} ->
+          saved = Repo.get!(Repository, saved.id)
+
+          if opts[:no_fetch] do
+            with :ok <- sync_index(config), do: {:ok, saved}
+          else
+            case fetch(config, saved) do
+              {:ok, fetched} ->
+                {:ok, fetched}
+
+              {:error, %Error{} = error} ->
+                {:error,
+                 %{
+                   error
+                   | details: Map.merge(error.details, %{repo: saved.slug, registered: true})
+                 }}
+            end
+          end
+
+        {:error, %Error{} = error} ->
+          rollback_new_repo(saved, upgrade?, error)
+      end
     end
   end
 
@@ -39,7 +72,9 @@ defmodule Gitspace.Repos do
   end
 
   @spec get(Config.t(), String.t()) :: {:ok, Repository.t()} | {:error, Error.t()}
-  def get(_config, selector) do
+  def get(%Config{} = _config, selector) do
+    selector = String.trim(selector)
+
     repo =
       Repo.get_by(Repository, slug: selector) ||
         case Ecto.UUID.cast(selector) do
@@ -48,8 +83,11 @@ defmodule Gitspace.Repos do
         end
 
     case repo do
-      nil -> {:error, Error.new(:not_found, "repository not found: #{selector}")}
-      repo -> {:ok, repo}
+      %Repository{} = repo ->
+        {:ok, repo}
+
+      nil ->
+        resolve_selector(selector)
     end
   end
 
@@ -66,33 +104,198 @@ defmodule Gitspace.Repos do
     Repo.get_by(Repository, remote_key: Layout.normalize_remote(url))
   end
 
-  @doc """
-  Registers bare mirrors found under the data directory.
+  @doc "Permanently sets an explicit alias for a repository."
+  @spec set_alias(Config.t(), String.t(), String.t()) ::
+          {:ok, Repository.t()} | {:error, Error.t()}
+  def set_alias(%Config{} = config, selector, alias_name) do
+    with {:ok, alias_name} <- requested_alias(alias_name),
+         {:ok, repo} <- get(config, selector) do
+      case rebalance_aliases(config, %{repo.id => %{alias: alias_name, source: "explicit"}}) do
+        {:ok, _summary} ->
+          with :ok <- sync_index(config) do
+            {:ok, Repo.get!(Repository, repo.id)}
+          end
 
-  This is what makes a reindex survive deletion of the index: mirrors are
-  discoverable from the filesystem, workspaces from markers.
+        {:error, error} ->
+          {:error, error}
+      end
+    end
+  end
+
+  @doc """
+  Recomputes auto aliases for the current repository set.
+
+  Existing checkout directories are never moved. Markers carry the canonical
+  remote and the chosen checkout name, so an alias change only affects future
+  commands and checkouts.
+  """
+  @spec rebalance_aliases(Config.t(), map()) :: {:ok, map()} | {:error, Error.t()}
+  def rebalance_aliases(%Config{} = config, overrides \\ %{}) do
+    repos = Repo.all(Repository)
+
+    effective =
+      Enum.map(repos, fn repo ->
+        case Map.get(overrides, repo.id) do
+          nil ->
+            repo
+
+          %{alias: alias_name, source: source} ->
+            %{repo | slug: alias_name, alias_source: source}
+        end
+      end)
+
+    case Aliases.resolve(effective) do
+      {:ok, desired} ->
+        sources = Map.new(effective, &{&1.id, &1.alias_source})
+        apply_alias_changes(config, repos, desired, sources)
+
+      {:error, error} ->
+        {:error, error}
+    end
+  end
+
+  @doc "Writes the hash-to-remote text index from the registered mirrors."
+  @spec sync_index(Config.t()) :: :ok | {:error, Error.t()}
+  def sync_index(%Config{} = config) do
+    repos =
+      from(r in Repository, where: not is_nil(r.bare_path))
+      |> Repo.all()
+
+    case MirrorIndex.write(config, repos) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        {:error,
+         Error.new(:error, "cannot write #{MirrorIndex.path(config)}: #{inspect(reason)}")}
+    end
+  end
+
+  @doc """
+  Registers mirrors found under the data directory.
+
+  The directory and the mirror's `remote.origin.url` are authoritative; the
+  text index is rebuilt from them. Mismatches are reported, not hidden.
   """
   @spec discover(Config.t()) :: %{discovered: non_neg_integer(), issues: [map()]}
   def discover(%Config{} = config) do
-    dir = Config.repos_dir(config)
+    entries = mirror_entries(config)
+    {registered, issues, overrides} = register_entries(entries)
 
-    results =
-      case File.ls(dir) do
-        {:ok, entries} ->
-          entries
-          |> Enum.filter(&String.ends_with?(&1, ".git"))
-          |> Enum.map(&Path.join(dir, &1))
-          |> Enum.filter(&bare_repo?/1)
-          |> Enum.map(&discover_one/1)
-
-        {:error, _} ->
-          []
+    issues =
+      case rebalance_aliases(config, overrides) do
+        {:ok, _summary} -> issues
+        {:error, error} -> issues ++ [%{kind: :alias, reason: error.message}]
       end
 
+    _ = sync_index(config)
+
+    %{discovered: length(registered), issues: issues}
+  end
+
+  @doc """
+  Read-only audit of mirror directories against the index and `remotes.txt`.
+
+  Mirrors and their `remote.origin.url` are authoritative. The audit reports
+  hash-name mismatches, unregistered mirrors, stale text entries, and mirrors
+  that disagree with the text index; `discover/1` repairs the caches.
+  """
+  @spec audit_mirrors(Config.t()) :: %{
+          mirrors: non_neg_integer(),
+          text: non_neg_integer(),
+          issues: [map()]
+        }
+  def audit_mirrors(%Config{} = config) do
+    entries = mirror_entries(config)
+    indexed = Repo.all(Repository)
+    indexed_paths = MapSet.new(indexed, & &1.bare_path)
+    indexed_keys = MapSet.new(indexed, & &1.remote_key)
+    entry_keys = MapSet.new(entries, & &1.remote_key)
+
+    text =
+      case MirrorIndex.read(config) do
+        {:ok, text_entries} -> text_entries
+        {:error, _} -> []
+      end
+
+    text_keys = MapSet.new(text, & &1.remote_key)
+    text_by_key = Map.new(text, &{&1.remote_key, &1})
+
+    entry_issues =
+      Enum.flat_map(entries, fn entry ->
+        []
+        |> maybe_issue(
+          entry.expected_hash != entry.actual_hash,
+          %{
+            kind: :hash_mismatch,
+            path: entry.bare_path,
+            expected: entry.expected_hash,
+            actual: entry.actual_hash,
+            remote: entry.remote_key
+          }
+        )
+        |> maybe_issue(
+          is_nil(entry.origin),
+          %{kind: :missing_remote, path: entry.bare_path, repo: entry.alias || entry.remote_key}
+        )
+        |> maybe_issue(
+          not MapSet.member?(indexed_paths, entry.bare_path) and
+            not MapSet.member?(indexed_keys, entry.remote_key),
+          %{kind: :unregistered_mirror, path: entry.bare_path, remote: entry.remote_key}
+        )
+        |> maybe_issue(
+          not MapSet.member?(text_keys, entry.remote_key),
+          %{kind: :missing_from_text, path: entry.bare_path, remote: entry.remote_key}
+        )
+        |> maybe_text_issue(Map.get(text_by_key, entry.remote_key), entry)
+      end)
+
+    stale_text =
+      text
+      |> Enum.reject(&MapSet.member?(entry_keys, &1.remote_key))
+      |> Enum.map(fn entry ->
+        %{kind: :stale_text, remote: entry.remote_key, hash: entry.hash}
+      end)
+
+    missing_mirrors =
+      indexed
+      |> Enum.filter(&((&1.state == "managed" and &1.bare_path) && not File.dir?(&1.bare_path)))
+      |> Enum.map(fn repo ->
+        %{kind: :missing_mirror, repo: repo.slug, path: repo.bare_path}
+      end)
+
     %{
-      discovered: Enum.count(results, &match?({:ok, _}, &1)),
-      issues: for({:error, issue} <- results, do: issue)
+      mirrors: length(entries),
+      text: length(text),
+      issues: entry_issues ++ stale_text ++ missing_mirrors
     }
+  end
+
+  defp maybe_issue(issues, true, issue), do: issues ++ [issue]
+  defp maybe_issue(issues, false, _issue), do: issues
+
+  defp maybe_text_issue(issues, nil, _entry), do: issues
+
+  defp maybe_text_issue(issues, text_entry, entry) do
+    issues
+    |> maybe_issue(
+      text_entry.hash != entry.expected_hash,
+      %{
+        kind: :text_hash_mismatch,
+        remote: entry.remote_key,
+        text_hash: text_entry.hash,
+        expected: entry.expected_hash
+      }
+    )
+    |> maybe_issue(
+      is_binary(entry.alias) and text_entry.alias != entry.alias,
+      %{
+        kind: :text_alias_mismatch,
+        remote: entry.remote_key,
+        text: text_entry.alias,
+        mirror: entry.alias
+      }
+    )
   end
 
   @spec fetch(Config.t(), Repository.t()) :: {:ok, Repository.t()} | {:error, Error.t()}
@@ -173,6 +376,7 @@ defmodule Gitspace.Repos do
               bare = repo.bare_path
               {:ok, _} = Repo.delete(repo)
               if bare && File.dir?(bare), do: File.rm_rf!(bare)
+              _ = sync_index(config)
 
               {:ok,
                %{
@@ -196,132 +400,141 @@ defmodule Gitspace.Repos do
     end
   end
 
-  defp prepare(config, url, slug, _opts) do
-    bare = Path.join(Config.repos_dir(config), slug <> ".git")
-    key = Layout.normalize_remote(url)
+  defp resolve_selector(selector) do
+    normalized = normalized_selector(selector)
+    last = last_selector_segment(selector, normalized)
+    repos = Repo.all(Repository)
 
-    case find_existing(slug, key, bare) do
-      nil ->
-        {:ok, %Repository{slug: slug, remote_url: url, remote_key: key, bare_path: bare}, false}
+    exact =
+      Enum.filter(repos, fn repo ->
+        repo.slug == selector or
+          repo.remote_key == selector or
+          (normalized != nil and repo.remote_key == normalized)
+      end)
 
-      %Repository{state: "external", bare_path: nil} = existing
-      when existing.remote_key == key ->
-        {:ok, %{existing | remote_url: url, bare_path: bare}, true}
+    suffix =
+      Enum.filter(repos, fn repo -> suffix_match?(repo.remote_key, selector) end)
 
-      existing ->
-        suggestions = suggested_names(url, existing.slug)
-
-        {:error,
-         Error.new(:conflict, "repository name '#{existing.slug}' is already in use",
-           hint: suggestion_hint(suggestions),
-           details: %{
-             slug: existing.slug,
-             existing_remote: existing.remote_url,
-             new_remote: url,
-             suggested_names: suggestions
-           }
-         )}
-    end
-  end
-
-  @doc false
-  def suggested_names(url, existing_slug \\ nil) do
-    key = Layout.normalize_remote(url)
-    segments = String.split(key, "/", trim: true)
-
-    candidates =
-      if String.starts_with?(key, "/") do
-        local_name_candidates(segments)
+    fallback =
+      if last do
+        Enum.filter(repos, fn repo ->
+          Aliases.describe(repo.remote_key).basename == last or repo.slug == last
+        end)
       else
-        remote_name_candidates(segments)
+        []
       end
 
-    candidates
-    |> Enum.map(&slugify_parts/1)
-    |> Enum.reject(&is_nil/1)
-    |> Enum.reject(&(&1 == existing_slug))
-    |> Enum.uniq()
-    |> Enum.take(3)
-  end
-
-  defp remote_name_candidates([host | rest]) do
-    repo = List.last(rest) || host
-    owner = rest |> Enum.drop(-1) |> Enum.join("-")
-
-    if owner == "" do
-      [[repo], [host, repo]]
-    else
-      [[owner, repo], [host, owner, repo]]
-    end
-  end
-
-  defp remote_name_candidates([]), do: []
-
-  defp local_name_candidates(segments) do
-    repo = List.last(segments)
-    parent = Enum.at(segments, -2)
-    grandparent = Enum.at(segments, -3)
-
-    [
-      [parent, repo],
-      [grandparent, parent, repo]
-    ]
-  end
-
-  defp slugify_parts(parts) do
-    parts = Enum.reject(parts, &(&1 in [nil, ""]))
-
-    case Layout.work_slug(Enum.join(parts, "-")) do
-      {:ok, slug} -> slug
-      {:error, _} -> nil
-    end
-  end
-
-  defp suggestion_hint([]), do: "choose another name with --name"
-
-  defp suggestion_hint([one]) do
-    "choose a unique name, e.g. `--name #{one}`"
-  end
-
-  defp suggestion_hint([first, second | _]) do
-    "choose a unique name, e.g. `--name #{first}` or `--name #{second}`"
-  end
-
-  defp create_or_upgrade(config, repo, url, _slug, upgrade?, opts) do
-    bare = repo.bare_path
-
     cond do
-      File.exists?(bare) ->
-        {:error,
-         Error.new(:conflict, "path already exists: #{bare}",
-           hint: "remove it or choose another name with --name"
-         )}
+      exact != [] ->
+        resolve_matches(exact, selector)
+
+      suffix != [] ->
+        resolve_matches(suffix, selector)
+
+      fallback != [] ->
+        resolve_matches(fallback, selector)
 
       true ->
-        File.mkdir_p!(Path.dirname(bare))
+        {:error,
+         Error.new(:not_found, "repository not found: #{selector}",
+           hint: "run `gitspace repo ls` to see aliases and remotes"
+         )}
+    end
+  end
 
-        with {:ok, _} <- safe_mirror(bare, url, no_fetch: true),
-             {:ok, saved} <- save_repo(repo, upgrade?) do
-          if opts[:no_fetch] do
-            {:ok, saved}
-          else
-            case fetch(config, saved) do
-              {:ok, fetched} ->
-                {:ok, fetched}
+  defp resolve_matches([repo], _selector), do: {:ok, repo}
 
-              {:error, %Error{} = error} ->
-                {:error,
-                 %{
-                   error
-                   | details: Map.merge(error.details, %{repo: saved.slug, registered: true})
-                 }}
-            end
-          end
-        else
-          {:error, %Error{} = error} ->
-            _ = File.rm_rf(bare)
-            {:error, error}
-        end
+  defp resolve_matches(many, selector) do
+    candidates =
+      Enum.map(many, fn repo ->
+        %{alias: repo.slug, remote: repo.remote_key, mirror: repo.bare_path}
+      end)
+
+    {:error,
+     Error.new(:ambiguous, "repository selector is ambiguous: #{selector}",
+       hint: "use one of: #{Enum.map_join(many, ", ", & &1.slug)}",
+       details: %{candidates: candidates}
+     )}
+  end
+
+  defp normalized_selector(selector) do
+    if String.contains?(selector, "://") or String.starts_with?(selector, "/") or
+         Regex.match?(~r/^[^@\/]+@[^:\/]+:/, selector) do
+      Layout.normalize_remote(selector)
+    end
+  end
+
+  defp last_selector_segment(selector, normalized) do
+    if is_nil(normalized) and String.contains?(selector, "/") do
+      selector |> String.split("/", trim: true) |> List.last()
+    end
+  end
+
+  defp suffix_match?(key, selector) do
+    key == selector or
+      String.ends_with?(key, "/" <> selector) or
+      Aliases.describe(key).basename == selector
+  end
+
+  defp prepare(_config, url, key, bare) do
+    existing =
+      Repo.get_by(Repository, remote_key: key) ||
+        Repo.get_by(Repository, bare_path: bare)
+
+    case existing do
+      nil ->
+        %Repository{
+          slug: temp_alias(key),
+          remote_url: url,
+          remote_key: key,
+          bare_path: bare,
+          state: "managed",
+          alias_source: "auto"
+        }
+
+      %Repository{state: "external", bare_path: nil} = repo when repo.remote_key == key ->
+        {:ok, %{repo | remote_url: url, bare_path: bare, state: "managed"}, true}
+
+      repo ->
+        {:error,
+         Error.new(:conflict, "repository already exists: #{repo.slug}",
+           hint: "use `gitspace repo fetch #{repo.slug}` to update it",
+           details: %{alias: repo.slug, remote: repo.remote_url, mirror: repo.bare_path}
+         )}
+    end
+    |> case do
+      {:ok, repo, upgrade?} ->
+        {:ok, repo, upgrade?}
+
+      %Repository{} = repo ->
+        {:ok, repo, false}
+
+      {:error, error} ->
+        {:error, error}
+    end
+  end
+
+  defp create_or_upgrade(config, repo, url, upgrade?, _opts) do
+    bare = repo.bare_path
+
+    if File.exists?(bare) do
+      {:error,
+       Error.new(:conflict, "mirror path already exists: #{bare}",
+         hint: "the mirror is not in the index; run `gitspace reindex` or remove it"
+       )}
+    else
+      File.mkdir_p!(Path.dirname(bare))
+
+      with {:ok, _} <- safe_mirror(bare, url, no_fetch: true),
+           :ok <- set_mirror_identity(repo, repo.slug, repo.alias_source),
+           {:ok, saved} <- save_repo(repo, upgrade?) do
+        _ = sync_index(config)
+        {:ok, saved}
+      else
+        {:error, %Error{} = error} ->
+          _ = File.rm_rf(bare)
+          {:error, error}
+      end
     end
   end
 
@@ -330,7 +543,8 @@ defmodule Gitspace.Repos do
     |> Ecto.Changeset.change(%{
       state: "managed",
       bare_path: repo.bare_path,
-      remote_url: repo.remote_url
+      remote_url: repo.remote_url,
+      remote_key: repo.remote_key
     })
     |> Repo.update()
     |> case do
@@ -346,12 +560,252 @@ defmodule Gitspace.Repos do
       remote_url: repo.remote_url,
       remote_key: repo.remote_key,
       bare_path: repo.bare_path,
-      state: "managed"
+      state: "managed",
+      alias_source: repo.alias_source
     })
     |> Repo.insert()
     |> case do
       {:ok, repo} -> {:ok, repo}
       {:error, changeset} -> {:error, changeset_error(changeset)}
+    end
+  end
+
+  defp apply_alias_changes(config, repos, desired, sources) do
+    changes =
+      Enum.filter(repos, fn repo ->
+        Map.get(desired, repo.id, repo.slug) != repo.slug or
+          Map.get(sources, repo.id, repo.alias_source) != repo.alias_source
+      end)
+
+    if changes == [] do
+      {:ok, %{changed: []}}
+    else
+      now = DateTime.utc_now()
+
+      result =
+        Repo.transaction(fn ->
+          Enum.each(changes, fn repo ->
+            from(r in Repository, where: r.id == ^repo.id)
+            |> Repo.update_all(set: [slug: temp_slug(repo.id), updated_at: now])
+          end)
+
+          Enum.each(changes, fn repo ->
+            from(r in Repository, where: r.id == ^repo.id)
+            |> Repo.update_all(
+              set: [
+                slug: Map.fetch!(desired, repo.id),
+                alias_source: Map.fetch!(sources, repo.id),
+                updated_at: now
+              ]
+            )
+          end)
+        end)
+
+      case result do
+        {:ok, _} ->
+          updated = Repo.all(Repository)
+
+          issues =
+            Enum.flat_map(updated, fn repo ->
+              case set_mirror_identity(
+                     repo,
+                     Map.get(desired, repo.id, repo.slug),
+                     repo.alias_source
+                   ) do
+                :ok -> []
+                {:error, error} -> [%{repo: repo.slug, reason: error.message}]
+              end
+            end)
+
+          _ = sync_index(config)
+
+          if issues == [] do
+            {:ok, %{changed: Enum.map(changes, &Map.fetch!(desired, &1.id))}}
+          else
+            {:error,
+             Error.new(:partial, "aliases changed but mirror metadata was not fully written",
+               details: %{issues: issues}
+             )}
+          end
+
+        {:error, reason} ->
+          {:error, Error.new(:error, "cannot update repository aliases: #{inspect(reason)}")}
+      end
+    end
+  end
+
+  defp set_mirror_identity(%Repository{bare_path: nil}, _alias, _source), do: :ok
+
+  defp set_mirror_identity(repo, alias_name, source) do
+    with {:ok, _} <- Git.run(["config", "gitspace.alias", alias_name], cd: repo.bare_path),
+         {:ok, _} <- Git.run(["config", "gitspace.alias-source", source], cd: repo.bare_path),
+         {:ok, _} <-
+           Git.run(["config", "gitspace.remote-key", repo.remote_key], cd: repo.bare_path) do
+      :ok
+    else
+      {:error, result} ->
+        {:error,
+         Error.new(:error, "cannot write mirror alias for #{repo.slug}: #{result.stderr}")}
+    end
+  end
+
+  defp mirror_entries(config) do
+    dir = Config.repos_dir(config)
+
+    case File.ls(dir) do
+      {:ok, entries} ->
+        entries
+        |> Enum.filter(&String.ends_with?(&1, ".git"))
+        |> Enum.map(&Path.join(dir, &1))
+        |> Enum.filter(&bare_repo?/1)
+        |> Enum.map(&mirror_entry/1)
+
+      {:error, _} ->
+        []
+    end
+  end
+
+  defp mirror_entry(bare) do
+    remote = read_config(bare, ["config", "--get", "remote.origin.url"])
+    remote_url = remote || bare
+    key = Layout.normalize_remote(remote_url)
+    expected_hash = Layout.remote_hash(key)
+    actual_hash = bare |> Path.basename() |> String.replace_suffix(".git", "")
+    alias_name = read_config(bare, ["config", "--get", "gitspace.alias"])
+
+    source =
+      normalize_alias_source(read_config(bare, ["config", "--get", "gitspace.alias-source"]))
+
+    %{
+      bare_path: bare,
+      origin: remote,
+      remote_url: remote_url,
+      remote_key: key,
+      expected_hash: expected_hash,
+      actual_hash: actual_hash,
+      alias: alias_name,
+      alias_source: source
+    }
+  end
+
+  defp register_entries(entries) do
+    Enum.reduce(entries, {[], [], %{}}, fn entry, {registered, issues, overrides} ->
+      issues =
+        if entry.actual_hash != entry.expected_hash do
+          [
+            %{
+              kind: :hash_mismatch,
+              path: entry.bare_path,
+              expected: entry.expected_hash,
+              actual: entry.actual_hash,
+              remote: entry.remote_key
+            }
+            | issues
+          ]
+        else
+          issues
+        end
+
+      issues =
+        if is_nil(entry.origin) do
+          [%{kind: :missing_remote, path: entry.bare_path, remote: entry.remote_key} | issues]
+        else
+          issues
+        end
+
+      case register_entry(entry) do
+        {:ok, repo} ->
+          overrides =
+            if entry.alias_source == "explicit" and is_binary(entry.alias) do
+              Map.put(overrides, repo.id, %{alias: entry.alias, source: "explicit"})
+            else
+              overrides
+            end
+
+          {[repo.id | registered], issues, overrides}
+
+        {:error, error} ->
+          {registered, [%{kind: :repository, reason: error.message} | issues], overrides}
+      end
+    end)
+  end
+
+  defp register_entry(entry) do
+    existing =
+      Repo.get_by(Repository, remote_key: entry.remote_key) ||
+        Repo.get_by(Repository, bare_path: entry.bare_path)
+
+    attrs = %{
+      bare_path: entry.bare_path,
+      remote_url: entry.remote_url,
+      remote_key: entry.remote_key,
+      state: "managed"
+    }
+
+    attrs =
+      if is_binary(entry.alias) do
+        Map.put(attrs, :alias_source, entry.alias_source)
+      else
+        attrs
+      end
+
+    cond do
+      existing && is_nil(entry.origin) ->
+        existing
+        |> Ecto.Changeset.change(%{
+          bare_path: entry.bare_path,
+          state: "managed",
+          default_branch: default_branch_or_existing(entry, existing)
+        })
+        |> Repo.update()
+
+      existing ->
+        existing
+        |> Ecto.Changeset.change(
+          Map.put(attrs, :default_branch, default_branch_or_existing(entry, existing))
+        )
+        |> Repo.update()
+
+      is_nil(entry.origin) ->
+        {:error,
+         Error.new(:error, "mirror has no remote.origin.url: #{entry.bare_path}",
+           hint: "restore the origin remote in the mirror or remove it"
+         )}
+
+      true ->
+        %Repository{}
+        |> Repository.changeset(
+          Map.merge(attrs, %{
+            slug: temp_alias(entry.remote_key),
+            alias_source: Map.get(attrs, :alias_source, "auto"),
+            default_branch: Mirror.default_branch(entry.bare_path)
+          })
+        )
+        |> Repo.insert()
+    end
+    |> case do
+      {:ok, repo} -> {:ok, repo}
+      {:error, changeset} -> {:error, changeset_error(changeset)}
+    end
+  end
+
+  defp default_branch_or_existing(entry, existing) do
+    existing.default_branch || Mirror.default_branch(entry.bare_path)
+  end
+
+  defp normalize_alias_source("explicit"), do: "explicit"
+  defp normalize_alias_source(_), do: "auto"
+
+  defp read_config(bare, args) do
+    case Git.run(args, cd: bare) do
+      {:ok, %{stdout: out}} ->
+        case String.trim(out) do
+          "" -> nil
+          value -> value
+        end
+
+      {:error, _} ->
+        nil
     end
   end
 
@@ -400,98 +854,55 @@ defmodule Gitspace.Repos do
        )}
   end
 
-  defp choose_slug(url, opts) do
-    cond do
-      name = opts[:name] ->
-        case Layout.repo_slug(name) do
-          {:ok, slug} ->
-            {:ok, slug}
+  defp rollback_new_repo(repo, false, error) do
+    _ = Repo.delete(repo)
+    if repo.bare_path && File.dir?(repo.bare_path), do: File.rm_rf!(repo.bare_path)
+    {:error, error}
+  end
 
-          {:error, reason} ->
-            {:error, Error.new(:usage, "invalid repository name #{inspect(name)}: #{reason}")}
-        end
+  defp rollback_new_repo(_repo, true, error), do: {:error, error}
 
-      true ->
-        case Layout.repo_slug_from_url(url) do
-          {:ok, slug} ->
-            {:ok, slug}
+  defp requested_alias(nil), do: {:ok, nil}
 
-          {:error, _} ->
-            {:error,
-             Error.new(:usage, "cannot derive a repository name from #{url}", hint: "use --name")}
-        end
+  defp requested_alias(name) do
+    case Layout.repo_slug(name) do
+      {:ok, slug} ->
+        {:ok, slug}
+
+      {:error, reason} ->
+        {:error, Error.new(:usage, "invalid repository alias #{inspect(name)}: #{reason}")}
     end
   end
 
-  defp find_existing(slug, key, bare) do
-    Repo.get_by(Repository, remote_key: key) ||
-      Repo.get_by(Repository, slug: slug) ||
-      Repo.get_by(Repository, bare_path: bare)
+  defp mirror_path(config, key) do
+    Path.join(Config.repos_dir(config), Layout.remote_hash(key) <> ".git")
   end
 
-  defp discover_one(bare) do
-    slug = bare |> Path.basename() |> String.replace_suffix(".git", "")
+  defp temp_alias(key) do
+    base = "tmp-" <> String.slice(Layout.remote_hash(key), 0, 12)
 
-    remote =
-      case Git.run(["remote", "get-url", "origin"], cd: bare) do
-        {:ok, %{stdout: out}} -> out |> String.trim() |> nil_if_empty()
-        {:error, _} -> nil
-      end
-
-    remote_url = remote || bare
-    key = Layout.normalize_remote(remote_url)
-    default_branch = Mirror.default_branch(bare)
-
-    existing =
-      Repo.get_by(Repository, bare_path: bare) ||
-        Repo.get_by(Repository, slug: slug) ||
-        Repo.get_by(Repository, remote_key: key)
-
-    cond do
-      existing ->
-        existing
-        |> Ecto.Changeset.change(%{
-          bare_path: bare,
-          state: "managed",
-          remote_url: remote_url,
-          remote_key: key,
-          default_branch: existing.default_branch || default_branch
-        })
-        |> Repo.update()
-        |> case do
-          {:ok, repo} -> {:ok, repo}
-          {:error, changeset} -> {:error, changeset_error(changeset)}
-        end
-
-      true ->
-        %Repository{}
-        |> Repository.changeset(%{
-          slug: slug,
-          remote_url: remote_url,
-          remote_key: key,
-          bare_path: bare,
-          state: "managed",
-          default_branch: default_branch
-        })
-        |> Repo.insert()
-        |> case do
-          {:ok, repo} -> {:ok, repo}
-          {:error, changeset} -> {:error, changeset_error(changeset)}
-        end
+    if Repo.get_by(Repository, slug: base) do
+      base <> "-" <> Integer.to_string(System.unique_integer([:positive]))
+    else
+      base
     end
   end
+
+  defp temp_slug(id), do: "tmp-" <> String.replace(id, "-", "")
+
+  defp validate_remote_key(""),
+    do: {:error, Error.new(:usage, "cannot derive a canonical remote from this URL")}
+
+  defp validate_remote_key(_key), do: :ok
+
+  defp validate_url(""), do: {:error, Error.new(:usage, "repository URL is required")}
+  defp validate_url(_), do: :ok
 
   defp bare_repo?(path) do
     File.dir?(Path.join(path, "objects")) and
       File.regular?(Path.join(path, "HEAD")) and
       File.dir?(Path.join(path, "refs"))
   end
-
-  defp nil_if_empty(""), do: nil
-  defp nil_if_empty(value), do: value
-
-  defp validate_url(""), do: {:error, Error.new(:usage, "repository URL is required")}
-  defp validate_url(_), do: :ok
 
   defp changeset_error(changeset) do
     Error.new(:conflict, "cannot save repository",

@@ -45,6 +45,7 @@ defmodule Gitspace.Create do
          {:ok, work} <- co_work(ref, opts) do
       spec = %{
         repo: repo,
+        member_name: opts[:as],
         ownership: "owned",
         ref: ref,
         branch_mode: co_branch_mode(opts)
@@ -55,7 +56,7 @@ defmodule Gitspace.Create do
         work,
         [spec],
         [],
-        Keyword.merge(opts, single_repo: repo.slug, created_by: "co")
+        Keyword.merge(opts, single_repo: repo, created_by: "co")
       )
     end
   end
@@ -69,7 +70,8 @@ defmodule Gitspace.Create do
          {:ok, work_dir} <- work_dir(config, name),
          {:ok, existing} <- load_existing(config, work_dir, name),
          :ok <- single_repo_check(existing, specs, opts),
-         {:ok, plans, failures} <- plan_all(config, name, work_dir, specs, existing, opts) do
+         {:ok, plans, failures} <- plan_all(config, name, work_dir, specs, existing, opts),
+         :ok <- validate_plan_names(existing, plans) do
       if opts[:dry_run] do
         dry_run(config, name, work_dir, existing, plans, failures, opts)
       else
@@ -178,11 +180,25 @@ defmodule Gitspace.Create do
 
       true ->
         Enum.reduce_while(specs, :ok, fn spec, :ok ->
-          case validate_spec(spec) do
-            :ok -> {:cont, :ok}
+          with :ok <- validate_member_name(spec[:member_name]),
+               :ok <- validate_spec(spec) do
+            {:cont, :ok}
+          else
             {:error, error} -> {:halt, {:error, error}}
           end
         end)
+    end
+  end
+
+  defp validate_member_name(nil), do: :ok
+
+  defp validate_member_name(name) do
+    case Layout.repo_slug(name) do
+      {:ok, _} ->
+        :ok
+
+      {:error, reason} ->
+        {:error, Error.new(:usage, "invalid member name #{inspect(name)}: #{reason}")}
     end
   end
 
@@ -233,26 +249,11 @@ defmodule Gitspace.Create do
       {:ok, repo} ->
         {:ok, repo}
 
-      {:error, %Error{} = error} ->
-        resolve_repo_basename(config, selector, error)
-    end
-  end
-
-  defp resolve_repo_basename(config, selector, error) do
-    fallback =
-      selector
-      |> String.split("/", trim: true)
-      |> List.last()
-
-    cond do
-      is_nil(fallback) or fallback == selector ->
+      {:error, %Error{code: :not_found} = error} ->
         {:error, missing_repo_error(selector, error)}
 
-      true ->
-        case Repos.get(config, fallback) do
-          {:ok, repo} -> {:ok, repo}
-          {:error, _} -> {:error, missing_repo_error(selector, error)}
-        end
+      {:error, %Error{} = error} ->
+        {:error, error}
     end
   end
 
@@ -364,6 +365,8 @@ defmodule Gitspace.Create do
 
         base = %{
           "repo" => repo.slug,
+          "remote" => repo.remote_key,
+          "name" => member.name,
           "ownership" => member.ownership,
           "branch" => checkout.branch,
           "ref" => checkout.branch || checkout.head_sha,
@@ -405,11 +408,11 @@ defmodule Gitspace.Create do
       nil ->
         :ok
 
-      slug ->
+      repo ->
         others =
           existing.members
-          |> Enum.map(& &1["repo"])
-          |> Enum.reject(&(&1 == slug))
+          |> Enum.reject(&member_matches_repo?(&1, repo))
+          |> Enum.map(&member_label/1)
 
         cond do
           others != [] ->
@@ -462,27 +465,101 @@ defmodule Gitspace.Create do
   end
 
   defp plan_member(config, name, work_dir, %{ownership: "owned"} = spec, existing, opts) do
-    plan_owned(config, name, work_dir, spec, find_member(existing, spec.repo.slug), opts)
+    plan_owned(config, name, work_dir, spec, find_member(existing, spec.repo), opts)
   end
 
   defp plan_member(config, _name, _work_dir, %{ownership: "borrowed"} = spec, existing, _opts) do
-    plan_borrowed(config, spec, find_member(existing, spec.repo.slug))
+    plan_borrowed(config, spec, find_member(existing, spec.repo))
   end
 
-  defp find_member(existing, slug) do
-    Enum.find(existing.members, &(&1["repo"] == slug))
+  defp validate_plan_names(existing, plans) do
+    existing_names =
+      existing.members
+      |> Enum.reject(fn member ->
+        Enum.any?(plans, fn plan -> member_matches_repo?(member, plan.repo) end)
+      end)
+      |> Enum.map(&marker_name/1)
+
+    names = existing_names ++ Enum.map(plans, & &1.name)
+
+    duplicates =
+      names
+      |> Enum.frequencies()
+      |> Enum.filter(fn {_name, count} -> count > 1 end)
+
+    case duplicates do
+      [] ->
+        :ok
+
+      [{name, _} | _] ->
+        {:error,
+         Error.new(:conflict, "member name is used more than once: #{name}",
+           hint: "choose a different --as name for one of the members"
+         )}
+    end
   end
+
+  defp find_member(existing, %Repository{} = repo) do
+    Enum.find(existing.members, &member_matches_repo?(&1, repo))
+  end
+
+  defp member_matches_repo?(member, %Repository{} = repo),
+    do: member_matches_key?(member, repo.remote_key, repo.slug)
+
+  defp member_matches_repo?(member, %{repo: slug, remote: remote}),
+    do: member_matches_key?(member, remote, slug)
+
+  defp member_matches_key?(member, remote_key, slug) do
+    if is_binary(member["remote"]) do
+      member["remote"] == remote_key
+    else
+      member["repo"] == slug
+    end
+  end
+
+  defp member_label(member), do: member["name"] || member["repo"] || member["remote"]
 
   defp plan_owned(config, name, work_dir, spec, existing_member, opts) do
-    path = Path.join(work_dir, spec.repo.slug)
-
     with :ok <- ownership_matches(existing_member, "owned"),
+         :ok <- existing_member_name_matches(existing_member, spec[:member_name]),
+         member_name = member_name(spec, existing_member, spec.repo.slug),
+         path = Path.join(work_dir, member_name),
          {:ok, plan} <- owned_desired(config, name, spec, path, opts),
          {:ok, plan} <- apply_occupancy(config, plan, opts),
          :ok <- existing_owned_matches(existing_member, plan),
          {:ok, plan} <- owned_path_state(config, plan, opts) do
-      {:ok, plan}
+      {:ok, Map.put(plan, :name, member_name)}
     end
+  end
+
+  defp existing_member_name_matches(nil, _requested), do: :ok
+
+  defp existing_member_name_matches(member, requested) do
+    existing = member_name_from_marker(member)
+
+    if is_nil(requested) or requested == existing do
+      :ok
+    else
+      {:error,
+       Error.new(:conflict, "member is already checked out as #{existing}",
+         hint: "member directory names are immutable; choose a new workspace or omit --as",
+         details: %{existing: existing, requested: requested}
+       )}
+    end
+  end
+
+  defp member_name(spec, existing_member, fallback) do
+    cond do
+      existing_member -> member_name_from_marker(existing_member)
+      is_binary(spec[:member_name]) -> spec[:member_name]
+      true -> fallback
+    end
+  end
+
+  defp member_name_from_marker(member) do
+    member["name"] ||
+      (member["rel_path"] && Path.basename(member["rel_path"])) ||
+      member["repo"]
   end
 
   defp ownership_matches(nil, _ownership), do: :ok
@@ -872,10 +949,18 @@ defmodule Gitspace.Create do
 
   defp plan_borrowed(config, spec, existing_member) do
     with :ok <- ownership_matches(existing_member, "borrowed"),
+         :ok <- existing_member_name_matches(existing_member, spec[:member_name]),
          {:ok, checkout} <- select_borrowed(config, spec, existing_member) do
+      name =
+        existing_member_name(existing_member) ||
+          spec[:member_name] ||
+          Path.basename(checkout.path) ||
+          spec.repo.slug
+
       {:ok,
        %{
          repo: spec.repo,
+         name: name,
          ownership: "borrowed",
          ref: spec.ref,
          desired_branch: checkout.branch,
@@ -891,6 +976,9 @@ defmodule Gitspace.Create do
        }}
     end
   end
+
+  defp existing_member_name(nil), do: nil
+  defp existing_member_name(member), do: member_name_from_marker(member)
 
   defp select_borrowed(config, spec, existing_member) do
     candidates =
@@ -1237,6 +1325,8 @@ defmodule Gitspace.Create do
   defp checkout_result(plan, checkout) do
     %{
       repo: plan.repo.slug,
+      remote: plan.repo.remote_key,
+      name: plan.name,
       ownership: plan.ownership,
       path: checkout.path,
       branch: checkout.branch,
@@ -1318,13 +1408,17 @@ defmodule Gitspace.Create do
   end
 
   defp merge_members(existing_members, results) do
-    result_by_repo = Map.new(results, &{&1.repo, marker_member(&1)})
-
     existing_members
-    |> Enum.map(fn member -> Map.get(result_by_repo, member["repo"], member) end)
+    |> Enum.map(fn member ->
+      Enum.find_value(results, member, fn result ->
+        if member_matches_repo?(member, result), do: marker_member(result)
+      end)
+    end)
     |> Enum.concat(
       results
-      |> Enum.reject(fn result -> Enum.any?(existing_members, &(&1["repo"] == result.repo)) end)
+      |> Enum.reject(fn result ->
+        Enum.any?(existing_members, &member_matches_repo?(&1, result))
+      end)
       |> Enum.map(&marker_member/1)
     )
   end
@@ -1332,6 +1426,8 @@ defmodule Gitspace.Create do
   defp marker_member(result) do
     base = %{
       "repo" => result.repo,
+      "remote" => result.remote,
+      "name" => result.name,
       "ownership" => result.ownership,
       "branch" => result.branch,
       "ref" => result.ref,
@@ -1339,18 +1435,17 @@ defmodule Gitspace.Create do
     }
 
     case result.ownership do
-      "owned" -> Map.put(base, "rel_path", Path.basename(result.path))
+      "owned" -> Map.put(base, "rel_path", result.name || Path.basename(result.path))
       "borrowed" -> Map.put(base, "path", result.path)
     end
   end
 
   defp result_from_results(name, work_dir, existing, results, dry_run?, opts) do
-    action_by_repo = Map.new(results, &{&1.repo, &1})
     final_members = merge_members(existing.members, results)
 
     members =
       Enum.map(final_members, fn marker_member ->
-        result = Map.get(action_by_repo, marker_member["repo"])
+        result = Enum.find(results, &member_matches_repo?(marker_member, &1))
         output_member(marker_member, result, work_dir)
       end)
 
@@ -1362,6 +1457,8 @@ defmodule Gitspace.Create do
       Enum.map(plans, fn plan ->
         %{
           repo: plan.repo.slug,
+          remote: plan.repo.remote_key,
+          name: plan.name,
           ownership: plan.ownership,
           path: plan.path,
           branch: plan.desired_branch,
@@ -1379,7 +1476,9 @@ defmodule Gitspace.Create do
 
     kept =
       existing.members
-      |> Enum.reject(fn member -> Enum.any?(plans, &(&1.repo.slug == member["repo"])) end)
+      |> Enum.reject(fn member ->
+        Enum.any?(plans, fn plan -> member_matches_repo?(member, plan.repo) end)
+      end)
       |> Enum.map(&output_member(&1, nil, work_dir))
 
     metadata(name, work_dir, existing, planned, kept ++ planned, dry_run?, opts)
@@ -1387,10 +1486,11 @@ defmodule Gitspace.Create do
 
   defp output_member(marker_member, result, work_dir) do
     ownership = marker_member["ownership"]
+    name = (result && result.name) || marker_member["name"] || marker_name(marker_member)
 
     path =
       case ownership do
-        "owned" -> Path.join(work_dir, marker_member["rel_path"] || marker_member["repo"])
+        "owned" -> Path.join(work_dir, marker_member["rel_path"] || name)
         _ -> marker_member["path"]
       end
 
@@ -1400,6 +1500,8 @@ defmodule Gitspace.Create do
 
     %{
       repo: marker_member["repo"],
+      remote: (result && result.remote) || marker_member["remote"],
+      name: name,
       ownership: ownership,
       path: path,
       branch: branch,
@@ -1408,6 +1510,11 @@ defmodule Gitspace.Create do
       head: head,
       action: (result && result.action) || "kept"
     }
+  end
+
+  defp marker_name(marker_member) do
+    (marker_member["rel_path"] && Path.basename(marker_member["rel_path"])) ||
+      marker_member["repo"]
   end
 
   defp metadata(name, work_dir, existing, results, members, dry_run?, opts) do

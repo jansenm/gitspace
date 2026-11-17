@@ -83,7 +83,7 @@ defmodule Gitspace.Index do
       |> Enum.sum()
 
     issues =
-      Enum.map(discovered.issues, fn error -> %{kind: :discovery, reason: error.message} end) ++
+      discovered.issues ++
         Enum.flat_map(repo_results, fn
           {:error, slug, error} -> [%{kind: :repository, repo: slug, reason: error.message}]
           {:missing_mirror, slug} -> [%{kind: :missing_mirror, repo: slug}]

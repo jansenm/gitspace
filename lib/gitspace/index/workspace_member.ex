@@ -4,6 +4,7 @@ defmodule Gitspace.Index.WorkspaceMember do
 
   @primary_key {:id, :binary_id, autogenerate: true}
   schema "workspace_members" do
+    field(:name, :string)
     field(:ownership, :string)
     field(:role, :string)
 
@@ -15,7 +16,7 @@ defmodule Gitspace.Index.WorkspaceMember do
   end
 
   @required ~w(workspace_id checkout_id repository_id ownership)a
-  @optional ~w(role)a
+  @optional ~w(name role)a
 
   def changeset(member, attrs) do
     member
@@ -25,6 +26,9 @@ defmodule Gitspace.Index.WorkspaceMember do
     |> unique_constraint([:workspace_id, :checkout_id])
     |> unique_constraint([:workspace_id, :repository_id],
       name: :workspace_members_workspace_repository_index
+    )
+    |> unique_constraint([:workspace_id, :name],
+      name: :workspace_members_workspace_name_index
     )
   end
 end

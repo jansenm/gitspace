@@ -12,6 +12,7 @@ defmodule Gitspace.CLI.Co do
          :ok <- Helpers.start_index(config) do
       create_opts = [
         name: opts[:name],
+        as: opts[:as],
         branch: opts[:branch],
         detach: opts[:detach],
         labels: Keyword.get_values(opts, :label),
@@ -36,6 +37,7 @@ defmodule Gitspace.CLI.Co do
   defp strict do
     [
       name: :string,
+      as: :string,
       branch: :string,
       detach: :boolean,
       label: :keep,
@@ -74,6 +76,7 @@ defmodule Gitspace.CLI.Co do
 
     %{
       work: result.workspace,
+      name: member[:name],
       path: member[:path],
       repo: member[:repo],
       ref: ref,
@@ -111,6 +114,11 @@ defmodule Gitspace.CLI.Co do
     IO.puts("#{action}: #{data.path}")
     IO.puts("  work:     #{data.work}")
     IO.puts("  repo:     #{data.repo}")
+
+    if data.name do
+      IO.puts("  name:     #{data.name}")
+    end
+
     IO.puts("  ref:      #{data.ref}")
     IO.puts("  branch:   #{data.branch || "(detached)"}")
 

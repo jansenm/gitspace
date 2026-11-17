@@ -197,6 +197,38 @@ defmodule Gitspace.CLI.WorkspaceTest do
     assert member["branch"] == "main"
   end
 
+  test "co --as and workspace --as choose top-level member names" do
+    {co, 0} = cli(["co", "a@main", "--as", "checkout", "--json"])
+    co_data = Jason.decode!(co)["data"]
+    assert co_data["name"] == "checkout"
+    assert co_data["path"] == Path.join([data_root(), "work", "main", "checkout"])
+
+    {created, 0} =
+      cli([
+        "workspace",
+        "new",
+        "aliased",
+        "--own",
+        "b",
+        "--as",
+        "b=acme",
+        "--json"
+      ])
+
+    data = Jason.decode!(created)["data"]
+    assert [member] = data["members"]
+    assert member["name"] == "acme"
+    assert member["path"] == Path.join([data_root(), "work", "aliased", "acme"])
+
+    {path_output, 0} = cli(["path", "aliased:acme", "--json"])
+    assert Jason.decode!(path_output)["data"]["path"] == member["path"]
+
+    {output, 2} =
+      cli(["workspace", "new", "bad-as", "--own", "a", "--as", "nope=acme", "--json"])
+
+    assert Jason.decode!(output)["error"]["code"] == "usage"
+  end
+
   test "WS-1/2 workspace status reports three members and member addressing resolves", %{
     config: config
   } do

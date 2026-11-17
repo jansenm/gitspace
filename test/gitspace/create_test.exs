@@ -370,6 +370,72 @@ defmodule Gitspace.CreateTest do
     assert member.branch == "main"
   end
 
+  test "per-checkout member names stay top-level and persist in the marker", %{
+    config: config
+  } do
+    a = owned("a") |> Map.put(:member_name, "acme")
+    b = owned("b") |> Map.put(:member_name, "beta")
+
+    assert {:ok, result} = Create.workspace_new(config, "aliased", [a, b], [])
+
+    assert Enum.map(result.members, & &1.name) == ["acme", "beta"]
+    assert Enum.map(result.members, &Path.basename(&1.path)) == ["acme", "beta"]
+    assert Enum.all?(result.members, &(Path.dirname(&1.path) == result.path))
+
+    marker = Marker.read!(result.path)
+    assert Enum.map(marker["members"], & &1["name"]) == ["acme", "beta"]
+    assert Enum.all?(marker["members"], &is_binary(&1["remote"]))
+
+    assert {:ok, workspace} = Workspaces.get(config, "aliased")
+    names = workspace.members |> Enum.map(& &1.name) |> Enum.sort()
+    assert names == ["acme", "beta"]
+
+    assert {:ok, again} = Create.workspace_new(config, "aliased", [owned("a")], [])
+    assert [acme, beta] = Enum.sort_by(again.members, & &1.name)
+    assert acme.name == "acme"
+    assert acme.action == "reused"
+    assert beta.name == "beta"
+    assert beta.action == "kept"
+  end
+
+  test "alias changes do not move or duplicate existing members", %{config: config} do
+    assert {:ok, result} = Create.workspace_new(config, "alias-move", [owned("a")], [])
+    assert [member] = result.members
+    old_path = member.path
+
+    assert {:ok, renamed} = Repos.set_alias(config, "a", "renamed")
+    assert renamed.slug == "renamed"
+
+    assert {:ok, again} = Create.workspace_new(config, "alias-move", [owned("renamed")], [])
+    assert [kept] = again.members
+    assert kept.path == old_path
+    assert kept.action == "reused"
+    assert kept.repo == "renamed"
+    assert File.dir?(old_path)
+    refute File.exists?(Path.join(result.path, "renamed"))
+  end
+
+  test "co reuses an existing workspace after the alias changes", %{config: config} do
+    assert {:ok, first} = Create.co(config, "b", "main", name: "alias-co")
+    path = hd(first.members).path
+
+    assert {:ok, _} = Repos.set_alias(config, "b", "renamed-b")
+
+    assert {:ok, second} = Create.co(config, "renamed-b", "main", name: "alias-co")
+    assert [member] = second.members
+    assert member.path == path
+    assert member.action == "reused"
+  end
+
+  test "duplicate member names are refused", %{config: config} do
+    a = owned("a") |> Map.put(:member_name, "same")
+    b = owned("b") |> Map.put(:member_name, "same")
+
+    assert {:error, error} = Create.workspace_new(config, "duplicate-names", [a, b], [])
+    assert error.code == :conflict
+    assert error.message =~ "same"
+  end
+
   test "creation markers recover after the index is deleted", %{config: config} do
     assert {:ok, _result} =
              Create.workspace_new(config, "recovered", [owned("a"), owned("b")], [],

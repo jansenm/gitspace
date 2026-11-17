@@ -32,6 +32,14 @@ defmodule Gitspace.CLI.Reindex do
     end)
   end
 
+  defp format_issue(%{kind: :hash_mismatch} = issue) do
+    "hash_mismatch #{issue.path}: expected #{String.slice(issue.expected, 0, 12)}, got #{String.slice(issue.actual, 0, 12)}"
+  end
+
+  defp format_issue(%{kind: :missing_from_text} = issue),
+    do: "missing_from_text #{issue.remote}"
+
+  defp format_issue(%{kind: :stale_text} = issue), do: "stale_text #{issue.remote}"
   defp format_issue(%{kind: kind, repo: repo, reason: reason}), do: "#{kind} #{repo}: #{reason}"
   defp format_issue(%{kind: kind, path: path, reason: reason}), do: "#{kind} #{path}: #{reason}"
   defp format_issue(%{kind: kind, repo: repo}), do: "#{kind} #{repo}"

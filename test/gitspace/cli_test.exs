@@ -132,6 +132,35 @@ defmodule Gitspace.CLITest do
     assert output =~ source
   end
 
+  test "repo alias changes the persistent alias", %{source: source} do
+    {output, 0} = cli(["repo", "alias", "demo", "renamed"])
+    assert output =~ "alias: renamed"
+
+    {list, 0} = cli(["repo", "ls"])
+    assert list =~ "REMOTE"
+    assert list =~ source
+    assert list =~ "renamed"
+  end
+
+  test "doctor warns on mirror index drift and --fix reconciles it", %{config: config} do
+    File.rm!(Gitspace.MirrorIndex.path(config))
+
+    {output, 0} = cli(["doctor", "--json"])
+    data = Jason.decode!(output)["data"]
+    mirrors = Enum.find(data["checks"], &(&1["name"] == "mirrors"))
+    assert mirrors["status"] == "warn"
+    assert mirrors["detail"] =~ "missing_from_text"
+
+    {fixed, 0} = cli(["doctor", "--fix", "--json"])
+    fixes = Jason.decode!(fixed)["data"]["fixes"]
+    assert Enum.any?(fixes, &(&1["discovered"] == 1 and &1["issues"] == 0))
+    assert File.exists?(Gitspace.MirrorIndex.path(config))
+
+    {again, 0} = cli(["doctor", "--json"])
+    again_data = Jason.decode!(again)["data"]
+    assert Enum.find(again_data["checks"], &(&1["name"] == "mirrors"))["status"] == "ok"
+  end
+
   defp cli(args) do
     {code, output} = ExUnit.CaptureIO.with_io(fn -> Gitspace.CLI.run(args) end)
     {output, code}

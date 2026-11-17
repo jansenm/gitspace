@@ -23,13 +23,13 @@ Product scope, CLI contract and acceptance plan live in the planning repository:
 |---|---|
 | Creation | `co`, `workspace new`, `workspace ls`, `workspace status` |
 | Setup, config and health | `setup`, `config [list|get|set]`, `doctor`, `doctor --fix`, `doctor --reindex` |
-| Mirrors | `repo add`, `repo ls`, `repo fetch`, `repo rm` |
+| Mirrors | `repo add`, `repo ls`, `repo fetch`, `repo alias`, `repo rm` |
 | Discovery | `scan` (read-only), `link`, `unlink` |
 | Inventory | `gitspace`, `ls`, `status`, `show`, `path` |
 | Recovery | `reindex` — rediscover mirrors from disk, rebuild workspaces from markers |
 | Machine surface | `--json` on every command, exit codes 0–7, `--verbose` prints git argv |
 
-112 checks (108 tests, 3 properties, 1 doctest) in ~11 s.
+132 checks (128 tests, 3 properties, 1 doctest) in ~20 s.
 
 ## Commands
 
@@ -70,7 +70,8 @@ gitspace doctor
 
 Configuration is TOML at `$XDG_CONFIG_HOME/gitspace/config.toml` (or `GITSPACE_CONFIG`).
 `GITSPACE_DATA` and `GITSPACE_CHECKOUTS` override the paths. The index is
-`<data>/index.sqlite3`; mirrors live under `<data>/repos/`.
+`<data>/index.sqlite3`; mirrors live under `<data>/repos/<sha256>.git`, with the readable
+`<data>/repos/remotes.txt` index beside them.
 
 `gitspace config` shows the effective values and whether each comes from the file, the
 environment or a default. `config set` rewrites the file only; an environment override still
@@ -95,32 +96,46 @@ wins at runtime and is reported after the write.
   ref or failed member yields exit 7, and re-running the same command completes the workspace.
 - `--fetch` is opt-in and only runs when a requested ref is missing. Warm mirrors work offline.
 
-## Repository names and collisions
+## Repository aliases, mirrors and collisions
 
-The default repository slug is the URL basename: `.../ferroclass.git` becomes `ferroclass`.
-The slug is globally unique because it is both the mirror directory (`<data>/repos/<slug>.git`)
-and the member path segment (`<work>/<repo-slug>`).
+A repository's alias is its short name in commands and its default member directory. Auto
+aliases use the basename: `.../ferroclass.git` becomes `ferroclass`. When different remotes
+share a basename, every auto-aliased member of that group is qualified with its group:
+`github.com/acme/config` and `github.com/beta/config` both become `acme-config` and
+`beta-config`. If groups still collide across hosts, the host is prefixed
+(`github.com-acme-config`); a content hash is the final fallback. Aliases stay globally unique.
 
-A second, different remote with the same basename is **refused** (exit 4). It is never merged,
-silently re-used, or auto-suffixed. The error suggests qualified names derived from the URL:
+Mirrors are content-addressed by canonical remote key: `<data>/repos/<sha256>.git`.
+`<data>/repos/remotes.txt` is a human-readable cache of `hash`, canonical remote, alias and
+alias source. Mirror directories and their `remote.origin.url` are authoritative; `doctor` and
+`reindex` report disagreements and rebuild the text index.
 
-```
-$ gitspace repo add git@github.com:acme/config.git
-error: repository name 'config' is already in use
-hint: choose a unique name, e.g. `--name acme-config` or `--name github.com-acme-config`
-```
-
-Name it explicitly when the host or namespace matters:
+An explicit name opts a repository out of auto-disambiguation. The bare basename is allowed if
+it is free; duplicate explicit aliases are errors.
 
 ```sh
-gitspace repo add git@github.com:acme/config.git   --name github-acme-config
-gitspace repo add git@gitlab.com:acme/config.git   --name gitlab-acme-config
-gitspace repo add git@github.com:beta/config.git   --name beta-config
+gitspace repo add git@github.com:acme/config.git   # auto: acme-config if config collides
+gitspace repo add git@github.com:beta/config.git --name config
+gitspace repo add git@gitlab.com:beta/config.git --name beta-config
+gitspace repo alias acme-config my-config         # permanent alias change
 ```
 
+Aliases may change when repositories are added; checkout directories never move. Member
+directories are chosen per checkout and recorded in the workspace marker:
+
+```sh
+gitspace co api@main --as api-main
+gitspace workspace new JENKINS-123 --own api --as api=v2-api --own web
+```
+
+All checkouts remain top-level under `<checkouts>/<workspace>/`; there are no per-repository or
+group subdirectories. Existing member names are immutable: asking for a different `--as` name
+for an existing member is a conflict.
+
 The same remote written in another URL form (`git@…`, `https://…`, with or without `.git`) is
-matched by its canonical remote key and is not duplicated. `gitspace repo ls` shows the remote
-behind each slug.
+matched by its canonical remote key and is not duplicated. Default ports are omitted; other
+ports remain part of the key. `gitspace repo ls` shows the remote, alias, and mirror hash behind
+each repository.
 
 ## Decisions
 
@@ -135,7 +150,10 @@ behind each slug.
 - **Config:** TOML via `toml_elixir ~> 3.3`.
 - **Index:** `ecto_sqlite3` + `exqlite`, pool size 1, WAL, migrations on demand.
 - **Recovery:** the SQLite index is disposable; mirrors are rediscovered from
-  `<data>/repos/*.git`, workspaces from `<root>/<work>/.gitspace.json` markers.
+  `<data>/repos/*.git`, `remotes.txt` is rebuilt from the mirrors, and workspaces from
+  `<root>/<work>/.gitspace.json` markers.
+- **Checkout paths:** the workspace marker is authoritative. Alias changes never move an
+  existing checkout; member names are chosen at creation and stay immutable.
 - **Status cache:** 1 h TTL. `ls` and the inbox read the cache; `status --refresh` computes.
   The first view refreshes up to 20 checkouts that have never been measured.
 - **Creation:** ensure-only and marker-first for recovery. Worktrees are created before the

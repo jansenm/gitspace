@@ -20,6 +20,8 @@ defmodule Gitspace.CLI.Workspace do
          {:ok, name} <- one_arg(rest, "gitspace workspace new <name> [--own repo]..."),
          {:ok, owned} <- specs(Keyword.get_values(opts, :own), "owned"),
          {:ok, borrowed} <- specs(Keyword.get_values(opts, :borrow), "borrowed"),
+         {:ok, owned, borrowed} <-
+           apply_member_aliases(owned, borrowed, Keyword.get_values(opts, :as)),
          {:ok, config} <- Helpers.load_config(),
          :ok <- Helpers.start_index(config) do
       create_opts =
@@ -49,6 +51,7 @@ defmodule Gitspace.CLI.Workspace do
     [
       own: :keep,
       borrow: :keep,
+      as: :keep,
       branch: :string,
       label: :keep,
       description: :string,
@@ -77,6 +80,56 @@ defmodule Gitspace.CLI.Workspace do
           {:halt, {:error, error}}
       end
     end)
+  end
+
+  defp apply_member_aliases(owned, borrowed, values) do
+    with {:ok, aliases} <- member_aliases(values),
+         {:ok, owned, aliases} <- assign_member_aliases(owned, aliases),
+         {:ok, borrowed, aliases} <- assign_member_aliases(borrowed, aliases),
+         :ok <- no_unused_aliases(aliases) do
+      {:ok, owned, borrowed}
+    end
+  end
+
+  defp member_aliases(values) do
+    Enum.reduce_while(values, {:ok, %{}}, fn value, {:ok, acc} ->
+      case String.split(value, "=", parts: 2) do
+        [selector, name] when selector != "" and name != "" ->
+          if Map.has_key?(acc, selector) do
+            {:halt, {:error, Error.new(:usage, "duplicate --as for #{selector}")}}
+          else
+            {:cont, {:ok, Map.put(acc, selector, name)}}
+          end
+
+        _ ->
+          {:halt,
+           {:error, Error.new(:usage, "invalid --as #{inspect(value)}", hint: "use repo=name")}}
+      end
+    end)
+  end
+
+  defp assign_member_aliases(specs, aliases) do
+    Enum.reduce_while(specs, {:ok, [], aliases}, fn spec, {:ok, acc, aliases} ->
+      {name, aliases} = Map.pop(aliases, spec.repo)
+
+      spec =
+        if is_nil(name) do
+          spec
+        else
+          Map.put(spec, :member_name, name)
+        end
+
+      {:cont, {:ok, acc ++ [spec], aliases}}
+    end)
+  end
+
+  defp no_unused_aliases(aliases) do
+    if map_size(aliases) == 0 do
+      :ok
+    else
+      {:error,
+       Error.new(:usage, "no such member for --as: #{Enum.join(Map.keys(aliases), ", ")}")}
+    end
   end
 
   defp split_spec(value) do
@@ -201,10 +254,11 @@ defmodule Gitspace.CLI.Workspace do
     IO.puts("")
 
     Output.table(
-      ["ACTION", "OWN", "REPO", "REF", "BRANCH", "PATH"],
+      ["ACTION", "NAME", "OWN", "REPO", "REF", "BRANCH", "PATH"],
       Enum.map(result.members, fn member ->
         [
           member.action,
+          member.name,
           member.ownership,
           member.repo,
           member.ref,
@@ -239,7 +293,7 @@ defmodule Gitspace.CLI.Workspace do
     USAGE
       gitspace workspace new <name> [--own <repo>[@<ref>]]... [--borrow <repo>[@<ref>]]...
                                     [--branch B] [--label L]... [--description D]
-                                    [--fetch] [--dry-run] [--json]
+                                    [--as <repo>=<dir>]... [--fetch] [--dry-run] [--json]
       gitspace workspace ls [--label L] [--all] [--json]
       gitspace workspace status <name> [--refresh] [--json]
 
@@ -250,6 +304,10 @@ defmodule Gitspace.CLI.Workspace do
     BORROWED MEMBERS
       An existing checkout, referenced but never moved, branched or deleted.
       With several checkouts for one repository, select one with repo@ref.
+
+    MEMBER DIRECTORIES
+      Top-level by default. Use --as repo=name to choose a member directory.
+      Names are immutable once the member exists.
     """
   end
 end

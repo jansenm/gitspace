@@ -145,7 +145,7 @@ defmodule Gitspace.Workspaces do
     repo_name = member["repo"]
     ownership = member["ownership"]
 
-    with {:ok, repo} <- find_repo(repo_name),
+    with {:ok, repo} <- find_member_repo(member),
          {:ok, path} <- member_path(dir, member),
          {:ok, checkout} <- import_member(config, repo, path, ownership, member) do
       %WorkspaceMember{}
@@ -153,6 +153,7 @@ defmodule Gitspace.Workspaces do
         workspace_id: workspace.id,
         checkout_id: checkout.id,
         repository_id: repo.id,
+        name: member["name"] || Path.basename(path) || repo.slug,
         ownership: ownership,
         role: member["role"]
       })
@@ -170,6 +171,19 @@ defmodule Gitspace.Workspaces do
            repo: repo_name,
            reason: error.message
          }}
+    end
+  end
+
+  defp find_member_repo(member) do
+    remote = member["remote"]
+
+    if is_binary(remote) do
+      case Repo.get_by(Repository, remote_key: remote) do
+        nil -> find_repo(member["repo"])
+        repo -> {:ok, repo}
+      end
+    else
+      find_repo(member["repo"])
     end
   end
 
@@ -229,7 +243,8 @@ defmodule Gitspace.Workspaces do
 
     repo =
       Enum.find_value(candidates, fn candidate ->
-        Repo.get_by(Repository, slug: candidate)
+        Repo.get_by(Repository, slug: candidate) ||
+          Repo.get_by(Repository, remote_key: candidate)
       end)
 
     repo =

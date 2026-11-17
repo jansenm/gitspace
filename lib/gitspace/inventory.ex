@@ -175,7 +175,7 @@ defmodule Gitspace.Inventory do
       from(m in WorkspaceMember,
         join: w in assoc(m, :workspace),
         where: m.checkout_id == ^checkout.id and w.state == "active",
-        select: %{workspace: w.name, ownership: m.ownership, role: m.role}
+        select: %{workspace: w.name, name: m.name, ownership: m.ownership, role: m.role}
       )
       |> Repo.all()
 
@@ -220,9 +220,11 @@ defmodule Gitspace.Inventory do
 
   defp member_row(config, workspace, member, checkout) do
     base = checkout_row(config, checkout, %{workspace: workspace, ownership: member.ownership})
+    name = member.name || base.repo
 
     Map.merge(base, %{
-      handle: "#{workspace.name}:#{base.repo}",
+      handle: "#{workspace.name}:#{name}",
+      name: name,
       ownership: member.ownership,
       role: member.role,
       workspace: workspace.name

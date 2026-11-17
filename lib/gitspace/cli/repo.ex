@@ -15,6 +15,7 @@ defmodule Gitspace.CLI.Repo do
       ["ls" | rest] -> list(global, rest)
       ["fetch" | rest] -> fetch(global, rest)
       ["rm" | rest] -> remove(global, rest)
+      ["alias" | rest] -> alias_repo(global, rest)
       [] -> {:ok, %{help: help()}, &render_help/1}
       [other | _] -> {:error, Error.new(:usage, "unknown repo command: #{other}")}
     end
@@ -114,11 +115,34 @@ defmodule Gitspace.CLI.Repo do
   defp one_arg([arg], _usage), do: {:ok, arg}
   defp one_arg(_rest, usage), do: {:error, Error.new(:usage, "usage: #{usage}")}
 
+  defp alias_repo(_global, args) do
+    with {:ok, _opts, rest} <- Helpers.parse(args, Helpers.global_strict()),
+         {:ok, selector, name} <- selector_and_name(rest),
+         {:ok, config} <- Helpers.load_config(),
+         :ok <- Helpers.start_index(config),
+         {:ok, repo} <- Repos.set_alias(config, selector, name) do
+      checkouts = Gitspace.Checkouts.list(config, repo: repo.slug) |> length()
+
+      {:ok, %{repo: repo_map(repo, checkouts)}, &render_alias/1}
+    end
+  end
+
+  defp selector_and_name([selector, name]) when selector != "" and name != "" do
+    {:ok, selector, name}
+  end
+
+  defp selector_and_name(_rest) do
+    {:error, Error.new(:usage, "usage: gitspace repo alias <repo> <name>")}
+  end
+
   defp repo_map(repo, checkouts) do
     %{
       id: repo.id,
       slug: repo.slug,
       remote_url: repo.remote_url,
+      remote_key: repo.remote_key,
+      alias_source: repo.alias_source,
+      hash: repo.bare_path && Path.basename(repo.bare_path, ".git"),
       bare_path: repo.bare_path,
       default_branch: repo.default_branch,
       state: repo.state,
@@ -142,7 +166,7 @@ defmodule Gitspace.CLI.Repo do
 
   defp render_list(%{repositories: repositories}) do
     Output.table(
-      ["SLUG", "REMOTE", "STATE", "DEFAULT", "CHECKOUTS", "MIRROR"],
+      ["SLUG", "REMOTE", "STATE", "DEFAULT", "CHECKOUTS", "HASH", "MIRROR"],
       Enum.map(repositories, fn repo ->
         [
           repo.slug,
@@ -150,10 +174,17 @@ defmodule Gitspace.CLI.Repo do
           repo.state,
           repo.default_branch,
           repo.checkouts,
+          String.slice(repo.hash || "", 0, 12),
           repo.bare_path
         ]
       end)
     )
+  end
+
+  defp render_alias(%{repo: repo}) do
+    IO.puts("alias: #{repo.slug}")
+    IO.puts("  remote: #{repo.remote_url}")
+    IO.puts("  mirror: #{repo.bare_path}")
   end
 
   defp render_fetch(%{fetched: fetched, failed: failed}) do
@@ -187,6 +218,7 @@ defmodule Gitspace.CLI.Repo do
       gitspace repo ls
       gitspace repo fetch [<repo>|--all] [--prune]
       gitspace repo rm <repo> [--force] [--dry-run] [--yes]
+      gitspace repo alias <repo> <name>
     """
   end
 

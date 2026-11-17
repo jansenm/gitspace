@@ -220,7 +220,7 @@ defmodule Gitspace.CLI do
       "co" ->
         """
         USAGE
-          gitspace co <repo>@<ref> [--name N] [--branch B] [--detach]
+          gitspace co <repo>@<ref> [--name N] [--as DIR] [--branch B] [--detach]
                                   [--label L]... [--fetch] [--json]
 
         EXAMPLES

@@ -225,13 +225,17 @@ defmodule Gitspace.Targets do
   defp find_member(workspace, member_name) do
     Enum.find(workspace.members, fn member ->
       repo_slug = member.checkout.repository && member.checkout.repository.slug
-      repo_slug == member_name or Path.basename(member.checkout.path) == member_name
+
+      member.name == member_name or
+        repo_slug == member_name or
+        Path.basename(member.checkout.path) == member_name
     end)
   end
 
   defp handle(workspace, member) do
     repo = member.checkout.repository
+    name = member.name || (repo && repo.slug) || Path.basename(member.checkout.path)
 
-    "#{workspace.name}:#{if(repo, do: repo.slug, else: Path.basename(member.checkout.path))}"
+    "#{workspace.name}:#{name}"
   end
 end

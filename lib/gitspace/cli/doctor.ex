@@ -37,6 +37,7 @@ defmodule Gitspace.CLI.Doctor do
       check_paths(config),
       check_index(),
       check_repositories(config),
+      check_mirrors(config),
       check_checkouts(),
       check_workspaces(config),
       check_sync(config)
@@ -112,6 +113,27 @@ defmodule Gitspace.CLI.Doctor do
     end
   rescue
     error -> check("index", "fail", "cannot inspect the index: #{Exception.message(error)}")
+  end
+
+  defp check_mirrors(config) do
+    audit = Repos.audit_mirrors(config)
+    counts = Enum.frequencies_by(audit.issues, & &1.kind)
+
+    if audit.issues == [] do
+      check(
+        "mirrors",
+        "ok",
+        "#{audit.mirrors} hash mirror(s), remotes.txt in sync (#{audit.text} entries)"
+      )
+    else
+      check(
+        "mirrors",
+        "warn",
+        "#{audit.mirrors} mirror(s), #{audit.text} text entries; " <>
+          Enum.map_join(counts, ", ", fn {kind, count} -> "#{count} #{kind}" end) <>
+          "; run `gitspace doctor --fix` or `gitspace reindex`"
+      )
+    end
   end
 
   defp check_repositories(config) do
@@ -234,10 +256,22 @@ defmodule Gitspace.CLI.Doctor do
     end
   end
 
-  defp fix(_config) do
-    Repo.all(Gitspace.Index.Repository)
-    |> Enum.filter(&(&1.bare_path && File.dir?(&1.bare_path)))
-    |> Enum.map(&anchor_and_prune/1)
+  defp fix(config) do
+    discovery = Repos.discover(config)
+
+    prunes =
+      Repo.all(Gitspace.Index.Repository)
+      |> Enum.filter(&(&1.bare_path && File.dir?(&1.bare_path)))
+      |> Enum.map(&anchor_and_prune/1)
+
+    [
+      %{
+        kind: :mirrors,
+        discovered: discovery.discovered,
+        issues: length(discovery.issues)
+      }
+      | prunes
+    ]
   end
 
   defp anchor_and_prune(repo) do
@@ -346,10 +380,15 @@ defmodule Gitspace.CLI.Doctor do
     end)
 
     Enum.each(data.fixes, fn fix ->
-      if fix[:error] do
-        IO.puts(:stderr, "fix #{fix.repo}: #{fix.error}")
-      else
-        IO.puts("  fixed #{fix.repo}: #{fix.anchored} anchored, #{fix.prunable} prunable")
+      cond do
+        fix[:kind] == :mirrors ->
+          IO.puts("  fixed mirrors: #{fix.discovered} registered, #{fix.issues} issue(s) remain")
+
+        fix[:error] ->
+          IO.puts(:stderr, "fix #{fix.repo}: #{fix.error}")
+
+        true ->
+          IO.puts("  fixed #{fix.repo}: #{fix.anchored} anchored, #{fix.prunable} prunable")
       end
     end)
 
