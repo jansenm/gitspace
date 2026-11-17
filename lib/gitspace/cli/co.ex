@@ -8,10 +8,11 @@ defmodule Gitspace.CLI.Co do
     with {:ok, opts, rest} <- Helpers.parse(args, strict()),
          {:ok, target} <- one_arg(rest, "gitspace co <repo>@<ref>"),
          {:ok, repo, ref} <- split_target(target),
+         {:ok, name} <- co_name(opts),
          {:ok, config} <- Helpers.load_config(),
          :ok <- Helpers.start_index(config) do
       create_opts = [
-        name: opts[:name],
+        name: name,
         as: opts[:as],
         branch: opts[:branch],
         detach: opts[:detach],
@@ -36,6 +37,7 @@ defmodule Gitspace.CLI.Co do
 
   defp strict do
     [
+      ticket: :string,
       name: :string,
       as: :string,
       branch: :string,
@@ -43,6 +45,28 @@ defmodule Gitspace.CLI.Co do
       label: :keep,
       fetch: :boolean
     ] ++ Helpers.global_strict()
+  end
+
+  defp co_name(opts) do
+    case {opts[:ticket], opts[:name]} do
+      {nil, nil} ->
+        {:ok, nil}
+
+      {ticket, nil} ->
+        {:ok, ticket}
+
+      {nil, name} ->
+        {:ok, name}
+
+      {ticket, name} when ticket == name ->
+        {:ok, ticket}
+
+      {_ticket, _name} ->
+        {:error,
+         Error.new(:usage, "--ticket and --name are aliases; use only one",
+           hint: "for example: gitspace co api@main --ticket JENKINS-123"
+         )}
+    end
   end
 
   defp occupied_handler(global) do

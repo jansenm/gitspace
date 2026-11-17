@@ -193,12 +193,12 @@ defmodule Gitspace.CLI do
 
     COMMANDS
       ls                           all indexed checkouts
-      co <repo>@<ref>              create a one-repo workspace
+      co <repo>@<ref> [--ticket T] create a one-repo workspace
       workspace new|ls|status      create or inspect multi-repo workspaces
       status [target]              inbox, or one workspace/checkout/repository
       show <target>                details and provenance
       path <target>                print a checkout path
-      repo add|ls|fetch|rm         mirrors
+      repo add|ls|fetch|rm|alias   mirrors and aliases
       scan [path...]               discover existing clones and worktrees (read-only)
       link <path>                  index an external checkout
       unlink <path>                forget an external checkout
@@ -233,12 +233,16 @@ defmodule Gitspace.CLI do
       "co" ->
         """
         USAGE
-          gitspace co <repo>@<ref> [--name N] [--as DIR] [--branch B] [--detach]
-                                  [--label L]... [--fetch] [--json]
+          gitspace co <repo>@<ref> [--ticket NAME] [--as DIR] [--branch B]
+                                  [--detach] [--label L]... [--fetch] [--json]
+
+        --ticket NAME names the one-repo workspace, usually a ticket such as
+        JENKINS-123. Without it the workspace is named after the sanitized ref.
+        --name is an alias for --ticket.
 
         EXAMPLES
-          gitspace co api@hotfix/timeout
-          gitspace co api@main --name compare-1.8 --detach
+          gitspace co api@feature/JENKINS-123 --ticket JENKINS-123
+          gitspace co api@main --ticket compare-1.8 --detach
           gitspace co api@v1.9.0 --name compare-1.9
         """
 

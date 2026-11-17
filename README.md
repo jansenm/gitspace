@@ -29,7 +29,7 @@ Product scope, CLI contract and acceptance plan live in the planning repository:
 | Recovery | `reindex` — rediscover mirrors from disk, rebuild workspaces from markers |
 | Machine surface | `--json` on every command, exit codes 0–7, `--verbose` prints git argv |
 
-139 checks (135 tests, 3 properties, 1 doctest) in ~20 s.
+140 checks (136 tests, 3 properties, 1 doctest) in ~21 s.
 
 ## Commands
 
@@ -79,8 +79,12 @@ wins at runtime and is reported after the write.
 
 ## Creation model
 
-- `co <repo>@<ref>` creates a one-repo workspace. The default work name is the sanitized ref
-  (`hotfix/timeout` → `hotfix-timeout`); the path is `<checkouts>/<work>/<repo>`.
+- `co <repo>@<ref> --ticket JENKINS-123` creates a one-repo workspace named for the
+  ticket. `--name` is an alias for `--ticket`. Without either, the workspace name defaults to
+  the sanitized ref (`hotfix/timeout` → `hotfix-timeout`). The path is
+  `<checkouts>/<workspace>/<member>`, where the member defaults to the repository alias.
+- `workspace new <name>` already takes the ticket as its first argument, so
+  `workspace new JENKINS-123 --own api --own web` is the multi-repo form.
 - A branch ref checks out that branch (creating the local branch from `origin` when needed).
   A tag or commit is detached. `--branch` creates a named branch from the ref; `--detach`
   forces detached.

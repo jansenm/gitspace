@@ -229,6 +229,22 @@ defmodule Gitspace.CLI.WorkspaceTest do
     assert Jason.decode!(output)["error"]["code"] == "usage"
   end
 
+  test "co --ticket names the workspace independently of the ref" do
+    {output, 0} = cli(["co", "a@main", "--ticket", "JENKINS-42", "--json"])
+    data = Jason.decode!(output)["data"]
+    assert data["work"] == "JENKINS-42"
+    assert data["ref"] == "main"
+    assert data["path"] == Path.join([data_root(), "work", "JENKINS-42", "a"])
+
+    {again, 0} = cli(["co", "a@main", "--ticket", "JENKINS-42", "--json"])
+    assert Jason.decode!(again)["data"]["reused"] == true
+
+    {conflict, 2} =
+      cli(["co", "a@main", "--ticket", "JENKINS-42", "--name", "other", "--json"])
+
+    assert Jason.decode!(conflict)["error"]["code"] == "usage"
+  end
+
   test "WS-1/2 workspace status reports three members and member addressing resolves", %{
     config: config
   } do
@@ -293,6 +309,8 @@ defmodule Gitspace.CLI.WorkspaceTest do
 
     {co, 0} = cli(["co", "--help"])
     assert co =~ "gitspace co <repo>@<ref>"
+    assert co =~ "--ticket"
+    assert co =~ "JENKINS-123"
 
     {workspace, 0} = cli(["workspace", "--help"])
     assert workspace =~ "gitspace workspace new <name>"
