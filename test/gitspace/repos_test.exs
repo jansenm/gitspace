@@ -8,7 +8,7 @@ defmodule Gitspace.ReposTest do
   test "adds a mirror, fetches it and lists it", %{config: config} do
     source = Fixtures.source_repo!()
 
-    assert {:ok, repo} = Repos.add(config, source, name: "demo")
+    assert {:ok, repo} = Repos.add(config, Fixtures.repo_url(source), name: "demo")
     assert repo.slug == "demo"
     assert repo.default_branch == "main"
     assert File.dir?(repo.bare_path)
@@ -20,9 +20,9 @@ defmodule Gitspace.ReposTest do
 
   test "the same remote under another name is a conflict", %{config: config} do
     source = Fixtures.source_repo!()
-    assert {:ok, _} = Repos.add(config, source, name: "demo")
+    assert {:ok, _} = Repos.add(config, Fixtures.repo_url(source), name: "demo")
 
-    assert {:error, error} = Repos.add(config, source, name: "other")
+    assert {:error, error} = Repos.add(config, Fixtures.repo_url(source), name: "other")
     assert error.code == :conflict
     assert error.exit_code == 4
   end
@@ -32,12 +32,12 @@ defmodule Gitspace.ReposTest do
     first = source_named!(root, "one/config")
     second = source_named!(root, "two/config")
 
-    assert {:ok, first_repo} = Repos.add(config, first)
+    assert {:ok, first_repo} = Repos.add(config, Fixtures.repo_url(first))
     assert first_repo.slug == "config"
     assert File.dir?(first_repo.bare_path)
     assert Path.basename(first_repo.bare_path) =~ ~r/^[0-9a-f]{64}\.git$/
 
-    assert {:ok, second_repo} = Repos.add(config, second)
+    assert {:ok, second_repo} = Repos.add(config, Fixtures.repo_url(second))
     assert second_repo.slug == "two-config"
 
     assert {:ok, first_repo} = Repos.get(config, first)
@@ -67,23 +67,23 @@ defmodule Gitspace.ReposTest do
     second = source_named!(root, "two/config")
     third = source_named!(root, "three/config")
 
-    assert {:ok, _} = Repos.add(config, first, name: "one-config")
-    assert {:ok, _} = Repos.add(config, second, name: "config")
+    assert {:ok, _} = Repos.add(config, Fixtures.repo_url(first), name: "one-config")
+    assert {:ok, _} = Repos.add(config, Fixtures.repo_url(second), name: "config")
 
-    assert {:error, opt_out} = Repos.add(config, third, name: "config")
+    assert {:error, opt_out} = Repos.add(config, Fixtures.repo_url(third), name: "config")
     assert opt_out.code == :conflict
 
     aliases = Repos.list(config) |> Enum.map(& &1.repo.slug) |> Enum.sort()
     assert aliases == ["config", "one-config"]
 
-    assert {:ok, _} = Repos.add(config, third, name: "three-config")
+    assert {:ok, _} = Repos.add(config, Fixtures.repo_url(third), name: "three-config")
     aliases = Repos.list(config) |> Enum.map(& &1.repo.slug) |> Enum.sort()
     assert aliases == ["config", "one-config", "three-config"]
   end
 
   test "sync imports worktrees and marks vanished ones missing", %{config: config} do
     source = Fixtures.source_repo!()
-    {:ok, repo} = Repos.add(config, source, name: "demo")
+    {:ok, repo} = Repos.add(config, Fixtures.repo_url(source), name: "demo")
 
     path = Path.join([config.checkouts_dir, "demo", "demo"])
     File.mkdir_p!(Path.dirname(path))
@@ -106,7 +106,7 @@ defmodule Gitspace.ReposTest do
 
   test "remove refuses while used, then unindexes with force", %{config: config} do
     source = Fixtures.source_repo!()
-    {:ok, repo} = Repos.add(config, source, name: "demo")
+    {:ok, repo} = Repos.add(config, Fixtures.repo_url(source), name: "demo")
 
     path = Path.join([config.checkouts_dir, "demo", "demo"])
     File.mkdir_p!(Path.dirname(path))
@@ -124,7 +124,7 @@ defmodule Gitspace.ReposTest do
 
   test "discover rebuilds mirror rows from the filesystem", %{config: config} do
     source = Fixtures.source_repo!()
-    {:ok, _} = Repos.add(config, source, name: "demo")
+    {:ok, _} = Repos.add(config, Fixtures.repo_url(source), name: "demo")
 
     Repo.delete_all(Repository)
     assert [] = Repos.list(config)
@@ -137,7 +137,7 @@ defmodule Gitspace.ReposTest do
 
   test "audit and discover reconcile remotes.txt with mirror directories", %{config: config} do
     source = Fixtures.source_repo!()
-    assert {:ok, repo} = Repos.add(config, source, name: "demo")
+    assert {:ok, repo} = Repos.add(config, Fixtures.repo_url(source), name: "demo")
 
     assert %{mirrors: 1, issues: []} = Repos.audit_mirrors(config)
 
@@ -166,7 +166,7 @@ defmodule Gitspace.ReposTest do
 
   test "discovery keeps the stored remote when a mirror has no origin", %{config: config} do
     source = Fixtures.source_repo!()
-    assert {:ok, repo} = Repos.add(config, source, name: "demo")
+    assert {:ok, repo} = Repos.add(config, Fixtures.repo_url(source), name: "demo")
 
     Git.run!(["config", "--unset", "remote.origin.url"], cd: repo.bare_path)
 
@@ -174,14 +174,14 @@ defmodule Gitspace.ReposTest do
     assert Enum.any?(issues, &(&1.kind == :missing_remote))
 
     assert {:ok, found} = Repos.get(config, "demo")
-    assert found.remote_url == source
+    assert found.remote_url == Fixtures.repo_url(source)
     assert found.remote_key == Layout.normalize_remote(source)
     assert found.bare_path == repo.bare_path
   end
 
   test "explicit aliases survive index deletion via mirror metadata", %{config: config} do
     source = Fixtures.source_repo!()
-    assert {:ok, _repo} = Repos.add(config, source, name: "before")
+    assert {:ok, _repo} = Repos.add(config, Fixtures.repo_url(source), name: "before")
     assert {:ok, renamed} = Repos.set_alias(config, "before", "stable")
     assert renamed.alias_source == "explicit"
 
@@ -196,7 +196,7 @@ defmodule Gitspace.ReposTest do
 
   test "reindex surfaces mirror hash mismatches as issues", %{config: config} do
     source = Fixtures.source_repo!()
-    assert {:ok, repo} = Repos.add(config, source, name: "demo")
+    assert {:ok, repo} = Repos.add(config, Fixtures.repo_url(source), name: "demo")
 
     renamed = Path.join(Config.repos_dir(config), String.duplicate("a", 64) <> ".git")
     File.rename!(repo.bare_path, renamed)
@@ -215,6 +215,32 @@ defmodule Gitspace.ReposTest do
 
     assert repo.bare_path ==
              Path.join(Config.repos_dir(config), Layout.remote_hash(repo.remote_key) <> ".git")
+  end
+
+  test "add from a checkout seeds the mirror via reference and dissociates", %{config: config} do
+    source = Fixtures.source_repo!()
+    clone = clone_checkout!(source, "reference")
+
+    assert {:ok, repo} = Repos.add(config, clone)
+    assert repo.remote_url == source
+    assert repo.default_branch == "main"
+    assert repo.last_fetched_at
+    refute File.exists?(Path.join(repo.bare_path, "objects/info/alternates"))
+
+    assert {:ok, branches} =
+             Git.run(["for-each-ref", "--format=%(refname)", "refs/heads"], cd: repo.bare_path)
+
+    assert String.trim(branches.stdout) == ""
+
+    assert {:ok, head} =
+             Git.run(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], cd: repo.bare_path)
+
+    assert String.trim(head.stdout) == "origin/main"
+    assert {:ok, _} = Git.run(["cat-file", "-e", "refs/remotes/origin/main"], cd: repo.bare_path)
+
+    File.rm_rf!(clone)
+    File.rm_rf!(source)
+    assert {:ok, _} = Git.run(["cat-file", "-e", "refs/remotes/origin/main"], cd: repo.bare_path)
   end
 
   test "multiple checkout remotes require --remote and list candidates", %{config: config} do
@@ -248,12 +274,17 @@ defmodule Gitspace.ReposTest do
     assert repo.remote_url == source
   end
 
-  test "--remote requires a remote in the checkout", %{config: config} do
+  test "a local checkout without remotes is refused", %{config: config} do
     source = Fixtures.source_repo!()
 
-    assert {:error, error} = Repos.add(config, source, remote: "origin")
+    assert {:error, error} = Repos.add(config, source)
     assert error.code == :usage
     assert error.message =~ "no remotes"
+    assert error.hint =~ "remote URL"
+
+    assert {:error, with_remote} = Repos.add(config, source, remote: "origin")
+    assert with_remote.code == :usage
+    assert with_remote.message =~ "no remotes"
   end
 
   defp clone_checkout!(source, label) do

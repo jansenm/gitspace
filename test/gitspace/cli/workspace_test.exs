@@ -25,8 +25,8 @@ defmodule Gitspace.CLI.WorkspaceTest do
     source_a = Fixtures.source_repo!(branches: ["hotfix/timeout"], tags: ["v1.0.0"])
     source_b = Fixtures.source_repo!()
 
-    {:ok, _repo_a} = Repos.add(config, source_a, name: "a")
-    {:ok, _repo_b} = Repos.add(config, source_b, name: "b")
+    {:ok, _repo_a} = Repos.add(config, Fixtures.repo_url(source_a), name: "a")
+    {:ok, _repo_b} = Repos.add(config, Fixtures.repo_url(source_b), name: "b")
 
     {:ok, config: config, source_a: source_a}
   end
@@ -233,7 +233,7 @@ defmodule Gitspace.CLI.WorkspaceTest do
     config: config
   } do
     source_c = Fixtures.source_repo!()
-    {:ok, _repo_c} = Repos.add(config, source_c, name: "c")
+    {:ok, _repo_c} = Repos.add(config, Fixtures.repo_url(source_c), name: "c")
 
     {_output, 0} = cli(["co", "c@main"])
 

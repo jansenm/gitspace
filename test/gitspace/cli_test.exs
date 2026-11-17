@@ -21,7 +21,7 @@ defmodule Gitspace.CLITest do
     end)
 
     source = Fixtures.source_repo!()
-    {:ok, repo} = Repos.add(config, source, name: "demo")
+    {:ok, repo} = Repos.add(config, Fixtures.repo_url(source), name: "demo")
 
     path = Path.join([config.checkouts_dir, "JENKINS-123", "demo"])
     File.mkdir_p!(Path.dirname(path))

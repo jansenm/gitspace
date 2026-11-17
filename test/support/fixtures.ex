@@ -18,6 +18,8 @@ defmodule Gitspace.Fixtures do
     base
   end
 
+  def repo_url(path), do: "file://" <> Path.expand(path)
+
   def source_repo!(opts \\ []) do
     dir = tmp_dir!("src")
     Git.run!(["init", "--initial-branch=main", dir])

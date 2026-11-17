@@ -7,8 +7,8 @@ defmodule Gitspace.CreateTest do
     source_a = Fixtures.source_repo!(branches: ["hotfix/timeout"], tags: ["v1.0.0"])
     source_b = Fixtures.source_repo!()
 
-    {:ok, repo_a} = Repos.add(config, source_a, name: "a")
-    {:ok, repo_b} = Repos.add(config, source_b, name: "b")
+    {:ok, repo_a} = Repos.add(config, Fixtures.repo_url(source_a), name: "a")
+    {:ok, repo_b} = Repos.add(config, Fixtures.repo_url(source_b), name: "b")
 
     {:ok, repo_a: repo_a, repo_b: repo_b, source_a: source_a, source_b: source_b}
   end

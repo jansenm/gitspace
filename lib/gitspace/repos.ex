@@ -13,23 +13,24 @@ defmodule Gitspace.Repos do
   @doc """
   Registers a remote for mirroring.
 
-  `source` may be a URL, a local repository path, or an existing checkout. For a
-  checkout with one remote, that remote's URL is registered. With several
-  remotes, pass `remote: "name"`; otherwise the call fails and lists the
-  available remotes.
+  `source` may be a URL or an existing checkout. For a checkout with one remote,
+  that remote's URL is registered. With several remotes, pass `remote: "name"`;
+  otherwise the call fails and lists the available remotes.
   """
   @spec add(Config.t(), String.t(), keyword()) :: {:ok, Repository.t()} | {:error, Error.t()}
   def add(%Config{} = config, source, opts \\ []) do
     source = String.trim(source)
 
     with :ok <- validate_url(source),
-         {:ok, url} <- resolve_source(source, opts[:remote]),
+         {:ok, url, reference} <- resolve_source(source, opts[:remote]),
          key = Layout.normalize_remote(url),
          :ok <- validate_remote_key(key),
          {:ok, requested_alias} <- requested_alias(opts[:name]),
          bare = mirror_path(config, key),
          {:ok, repo, upgrade?} <- prepare(config, url, key, bare),
-         {:ok, saved} <- create_or_upgrade(config, repo, url, upgrade?, opts) do
+         mirror_reference = if(opts[:no_fetch], do: nil, else: reference),
+         {:ok, saved} <-
+           create_or_upgrade(config, repo, url, upgrade?, opts, mirror_reference) do
       overrides =
         if requested_alias do
           %{saved.id => %{alias: requested_alias, source: "explicit"}}
@@ -41,20 +42,25 @@ defmodule Gitspace.Repos do
         {:ok, _summary} ->
           saved = Repo.get!(Repository, saved.id)
 
-          if opts[:no_fetch] do
-            with :ok <- sync_index(config), do: {:ok, saved}
-          else
-            case fetch(config, saved) do
-              {:ok, fetched} ->
-                {:ok, fetched}
+          cond do
+            opts[:no_fetch] ->
+              with :ok <- sync_index(config), do: {:ok, saved}
 
-              {:error, %Error{} = error} ->
-                {:error,
-                 %{
-                   error
-                   | details: Map.merge(error.details, %{repo: saved.slug, registered: true})
-                 }}
-            end
+            reference ->
+              mark_fetched(saved)
+
+            true ->
+              case fetch(config, saved) do
+                {:ok, fetched} ->
+                  {:ok, fetched}
+
+                {:error, %Error{} = error} ->
+                  {:error,
+                   %{
+                     error
+                     | details: Map.merge(error.details, %{repo: saved.slug, registered: true})
+                   }}
+              end
           end
 
         {:error, %Error{} = error} ->
@@ -523,7 +529,7 @@ defmodule Gitspace.Repos do
     end
   end
 
-  defp create_or_upgrade(config, repo, url, upgrade?, _opts) do
+  defp create_or_upgrade(config, repo, url, upgrade?, _opts, reference) do
     bare = repo.bare_path
 
     if File.exists?(bare) do
@@ -534,7 +540,14 @@ defmodule Gitspace.Repos do
     else
       File.mkdir_p!(Path.dirname(bare))
 
-      with {:ok, _} <- safe_mirror(bare, url, no_fetch: true),
+      mirror_opts =
+        if reference do
+          [reference: reference]
+        else
+          [no_fetch: true]
+        end
+
+      with {:ok, _} <- safe_mirror(bare, url, mirror_opts),
            :ok <- set_mirror_identity(repo, repo.slug, repo.alias_source),
            {:ok, saved} <- save_repo(repo, upgrade?) do
         _ = sync_index(config)
@@ -820,7 +833,22 @@ defmodule Gitspace.Repos do
 
   defp do_fetch(repo) do
     Mirror.fetch!(repo.bare_path, timeout: 300_000)
+    mark_fetched(repo)
+  rescue
+    error in Git.Error ->
+      message = Exception.message(error)
 
+      repo
+      |> Ecto.Changeset.change(%{last_fetch_error: message})
+      |> Repo.update!()
+
+      {:error,
+       Error.new(:error, "fetch failed for #{repo.slug}: #{message}",
+         hint: "check the remote and credentials; the mirror is unchanged"
+       )}
+  end
+
+  defp mark_fetched(repo) do
     default_branch = Mirror.default_branch(repo.bare_path) || repo.default_branch
 
     updated =
@@ -834,18 +862,6 @@ defmodule Gitspace.Repos do
 
     invalidate_statuses(repo.id)
     {:ok, updated}
-  rescue
-    error in Git.Error ->
-      message = Exception.message(error)
-
-      repo
-      |> Ecto.Changeset.change(%{last_fetch_error: message})
-      |> Repo.update!()
-
-      {:error,
-       Error.new(:error, "fetch failed for #{repo.slug}: #{message}",
-         hint: "check the remote and credentials; the mirror is unchanged"
-       )}
   end
 
   defp invalidate_statuses(repository_id) do
@@ -914,22 +930,16 @@ defmodule Gitspace.Repos do
       File.dir?(path) ->
         case list_remotes(path) do
           :not_a_repository ->
-            if remote_name do
-              {:error,
-               Error.new(:usage, "--remote requires an existing local git checkout: #{source}")}
-            else
-              {:ok, path}
-            end
+            {:error,
+             Error.new(:usage, "not a git checkout: #{source}",
+               hint: "pass a remote URL or point at an existing checkout"
+             )}
 
           [] ->
-            if remote_name do
-              {:error,
-               Error.new(:usage, "checkout has no remotes: #{path}",
-                 hint: "add a remote to the checkout or pass the remote URL instead"
-               )}
-            else
-              {:ok, path}
-            end
+            {:error,
+             Error.new(:usage, "checkout has no remotes: #{path}",
+               hint: "add a remote to the checkout or pass its remote URL instead"
+             )}
 
           names ->
             select_remote(path, names, remote_name)
@@ -939,7 +949,7 @@ defmodule Gitspace.Repos do
         {:error, Error.new(:usage, "--remote requires an existing local git checkout: #{source}")}
 
       true ->
-        {:ok, source}
+        {:ok, source, nil}
     end
   end
 
@@ -950,7 +960,9 @@ defmodule Gitspace.Repos do
     end
   end
 
-  defp select_remote(path, [name], nil), do: remote_url_for(path, name)
+  defp select_remote(path, [name], nil) do
+    with {:ok, url} <- remote_url_for(path, name), do: {:ok, url, path}
+  end
 
   defp select_remote(path, names, nil) do
     remotes = Enum.map(names, &remote_candidate(path, &1))
@@ -964,7 +976,7 @@ defmodule Gitspace.Repos do
 
   defp select_remote(path, names, name) do
     if name in names do
-      remote_url_for(path, name)
+      with {:ok, url} <- remote_url_for(path, name), do: {:ok, url, path}
     else
       {:error,
        Error.new(:usage, "checkout has no remote named #{name}",

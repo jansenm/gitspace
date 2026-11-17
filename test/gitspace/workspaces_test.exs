@@ -6,13 +6,13 @@ defmodule Gitspace.WorkspacesTest do
 
   test "REC-1 recovers owned and borrowed members, labels and missing paths", %{config: config} do
     source = Fixtures.source_repo!()
-    {:ok, demo} = Repos.add(config, source, name: "demo")
+    {:ok, demo} = Repos.add(config, Fixtures.repo_url(source), name: "demo")
 
     lib_source = Fixtures.source_repo!()
-    {:ok, lib} = Repos.add(config, lib_source, name: "lib")
+    {:ok, lib} = Repos.add(config, Fixtures.repo_url(lib_source), name: "lib")
 
     ui_source = Fixtures.source_repo!()
-    {:ok, _ui} = Repos.add(config, ui_source, name: "ui")
+    {:ok, _ui} = Repos.add(config, Fixtures.repo_url(ui_source), name: "ui")
 
     owned_path = Path.join([config.checkouts_dir, "JENKINS-123", "demo"])
     borrowed_path = Path.join([config.checkouts_dir, "main", "lib"])

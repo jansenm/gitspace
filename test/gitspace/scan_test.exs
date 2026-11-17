@@ -50,7 +50,7 @@ defmodule Gitspace.ScanTest do
   end
 
   test "DISC-1 detects bare mirrors and marks them indexed", %{config: config, source: source} do
-    assert {:ok, _} = Repos.add(config, source, name: "demo")
+    assert {:ok, _} = Repos.add(config, Fixtures.repo_url(source), name: "demo")
 
     assert {:ok, entries} = Scan.scan(config, [Config.repos_dir(config)], max_depth: 1)
     bare = Enum.find(entries, &(&1.kind == "bare" and &1.indexed_repo == "demo"))
@@ -64,7 +64,7 @@ defmodule Gitspace.ScanTest do
     config: config,
     source: source
   } do
-    {:ok, repo} = Repos.add(config, source, name: "demo")
+    {:ok, repo} = Repos.add(config, Fixtures.repo_url(source), name: "demo")
     path = Path.join([config.checkouts_dir, "demo", "demo"])
     File.mkdir_p!(Path.dirname(path))
     {:ok, _} = Worktree.add(repo.bare_path, path, "origin/main", branch: "main")

@@ -230,8 +230,11 @@ defmodule Gitspace.CLI.Repo do
     ADD FROM A CHECKOUT
       Point `repo add` at an existing clone or worktree. With one remote its
       URL is registered automatically. With several, choose one with
-      `--remote <name>`. A local git repository without remotes is mirrored
-      from its path, as before.
+      `--remote <name>`. A path without a remote is refused; pass a URL
+      instead.
+
+      When fetching, the mirror is seeded from the checkout with
+      `git clone --reference ... --dissociate` so local objects are reused.
     """
   end
 

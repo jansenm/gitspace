@@ -2,10 +2,12 @@ defmodule Gitspace.Git.Mirror do
   @moduledoc """
   Creates and updates a bare mirror.
 
-  `git clone --bare` writes no fetch refspec (verified on git 2.56), so the
-  mirror is created explicitly. Remote branches live under
-  `refs/remotes/origin/*`, like a normal clone, which keeps fetch safe while a
-  local branch is checked out in a worktree.
+  Mirrors normally start with `git init --bare`, a remote and a fetch. When an
+  existing checkout is available, the mirror can instead be cloned with
+  `--reference <checkout> --dissociate`, borrowing its local objects and then
+  disconnecting from it. Remote branches live under `refs/remotes/origin/*`,
+  like a normal clone, which keeps fetch safe while a local branch is checked
+  out in a worktree.
   """
 
   alias Gitspace.Git
@@ -16,14 +18,81 @@ defmodule Gitspace.Git.Mirror do
   def init!(bare, url, opts \\ []) do
     File.mkdir_p!(Path.dirname(bare))
 
+    case opts[:reference] do
+      nil -> init_plain!(bare, url, opts)
+      reference -> init_from_reference!(bare, url, reference)
+    end
+
+    bare
+  end
+
+  defp init_plain!(bare, url, opts) do
     Git.run!(["init", "--bare", "--initial-branch=main", bare])
     Git.run!(["remote", "add", "origin", url], cd: bare)
     Git.run!(["config", "remote.origin.fetch", @fetch_refspec], cd: bare)
     Git.run!(["config", "gc.auto", "0"], cd: bare)
 
     unless opts[:no_fetch], do: fetch!(bare, opts)
+  end
+
+  defp init_from_reference!(bare, url, reference) do
+    Git.run!(["clone", "--bare", "--reference", reference, "--dissociate", url, bare])
+
+    default = default_branch_from_head(bare)
 
     bare
+    |> local_branches()
+    |> Enum.each(fn {branch, sha} ->
+      Git.run!(["update-ref", "refs/remotes/origin/#{branch}", sha], cd: bare)
+      Git.run!(["update-ref", "-d", "refs/heads/#{branch}"], cd: bare)
+    end)
+
+    Git.run!(["config", "remote.origin.fetch", @fetch_refspec], cd: bare)
+    Git.run!(["config", "gc.auto", "0"], cd: bare)
+    set_origin_head(bare, default)
+  end
+
+  defp local_branches(bare) do
+    case Git.run(
+           ["for-each-ref", "--format=%(refname:strip=2) %(objectname)", "refs/heads"],
+           cd: bare
+         ) do
+      {:ok, %{stdout: out}} ->
+        out
+        |> String.split("\n", trim: true)
+        |> Enum.map(fn line ->
+          [branch, sha] = String.split(line, " ", parts: 2)
+          {branch, sha}
+        end)
+
+      {:error, _} ->
+        []
+    end
+  end
+
+  defp default_branch_from_head(bare) do
+    case Git.run(["symbolic-ref", "--short", "HEAD"], cd: bare) do
+      {:ok, %{stdout: out}} ->
+        case String.trim(out) do
+          "" -> nil
+          branch -> branch
+        end
+
+      {:error, _} ->
+        nil
+    end
+  end
+
+  defp set_origin_head(_bare, nil), do: :ok
+
+  defp set_origin_head(bare, branch) do
+    case Git.run(
+           ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/#{branch}"],
+           cd: bare
+         ) do
+      {:ok, _} -> :ok
+      {:error, _} -> :ok
+    end
   end
 
   @spec fetch!(Path.t(), keyword()) :: binary()

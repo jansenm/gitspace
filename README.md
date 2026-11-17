@@ -29,7 +29,7 @@ Product scope, CLI contract and acceptance plan live in the planning repository:
 | Recovery | `reindex` — rediscover mirrors from disk, rebuild workspaces from markers |
 | Machine surface | `--json` on every command, exit codes 0–7, `--verbose` prints git argv |
 
-138 checks (134 tests, 3 properties, 1 doctest) in ~21 s.
+139 checks (135 tests, 3 properties, 1 doctest) in ~20 s.
 
 ## Commands
 
@@ -128,8 +128,13 @@ gitspace repo add ~/src/app --remote upstream   # picks one remote explicitly
 ```
 
 With one remote, its URL is registered automatically. With several, `repo add` refuses and
-lists the candidates until you choose one with `--remote <name>`. A local git repository with
-no remotes is still mirrored from its path, as before.
+lists the candidates until you choose one with `--remote <name>`. A path without a remote is
+refused rather than implicitly mirrored; pass a remote URL instead.
+
+When fetching is enabled, the mirror is seeded from the checkout with
+`git clone --reference <checkout> --dissociate`, so objects already present locally are reused
+and the new mirror is then disconnected from the checkout. `--no-fetch` stays fully offline
+and does not use the reference clone.
 
 Aliases may change when repositories are added; checkout directories never move. Member
 directories are chosen per checkout and recorded in the workspace marker:
