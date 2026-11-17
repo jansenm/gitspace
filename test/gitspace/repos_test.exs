@@ -205,6 +205,63 @@ defmodule Gitspace.ReposTest do
     assert Enum.any?(summary.issues, &(&1.kind == :hash_mismatch))
   end
 
+  test "add from a checkout uses its single remote", %{config: config} do
+    source = Fixtures.source_repo!()
+    clone = clone_checkout!(source, "single-remote")
+
+    assert {:ok, repo} = Repos.add(config, clone, no_fetch: true)
+    assert repo.remote_url == source
+    assert repo.remote_key == Layout.normalize_remote(source)
+
+    assert repo.bare_path ==
+             Path.join(Config.repos_dir(config), Layout.remote_hash(repo.remote_key) <> ".git")
+  end
+
+  test "multiple checkout remotes require --remote and list candidates", %{config: config} do
+    source = Fixtures.source_repo!()
+    clone = clone_checkout!(source, "multi-remote")
+    Git.run!(["remote", "add", "upstream", "git@example.com:other/config.git"], cd: clone)
+
+    assert {:error, error} = Repos.add(config, clone)
+    assert error.code == :usage
+    assert error.message =~ "multiple remotes"
+    assert error.hint =~ "--remote"
+    assert Enum.map(error.details.remotes, & &1.name) |> Enum.sort() == ["origin", "upstream"]
+
+    assert {:error, missing} = Repos.add(config, clone, remote: "nope")
+    assert missing.code == :usage
+    assert missing.message =~ "no remote named nope"
+
+    assert {:ok, repo} = Repos.add(config, clone, remote: "upstream", no_fetch: true)
+    assert repo.remote_url == "git@example.com:other/config.git"
+    assert repo.remote_key == "example.com/other/config"
+  end
+
+  test "relative checkout remotes resolve against the checkout root", %{config: config} do
+    source = Fixtures.source_repo!()
+    clone = clone_checkout!(source, "relative-remote")
+    relative = Path.relative_to(source, clone)
+
+    Git.run!(["remote", "set-url", "origin", relative], cd: clone)
+
+    assert {:ok, repo} = Repos.add(config, clone, no_fetch: true)
+    assert repo.remote_url == source
+  end
+
+  test "--remote requires a remote in the checkout", %{config: config} do
+    source = Fixtures.source_repo!()
+
+    assert {:error, error} = Repos.add(config, source, remote: "origin")
+    assert error.code == :usage
+    assert error.message =~ "no remotes"
+  end
+
+  defp clone_checkout!(source, label) do
+    clone = Path.join(Fixtures.tmp_dir!(label), "checkout")
+    Git.run!(["clone", source, clone])
+    clone
+  end
+
   defp source_named!(root, relative) do
     dir = Path.join(root, relative)
     File.mkdir_p!(dir)

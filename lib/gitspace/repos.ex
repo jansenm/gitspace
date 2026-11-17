@@ -10,11 +10,20 @@ defmodule Gitspace.Repos do
 
   @type result :: {:ok, Repository.t()} | {:error, Error.t()}
 
-  @spec add(Config.t(), String.t(), keyword()) :: {:ok, Repository.t()} | {:error, Error.t()}
-  def add(%Config{} = config, url, opts \\ []) do
-    url = String.trim(url)
+  @doc """
+  Registers a remote for mirroring.
 
-    with :ok <- validate_url(url),
+  `source` may be a URL, a local repository path, or an existing checkout. For a
+  checkout with one remote, that remote's URL is registered. With several
+  remotes, pass `remote: "name"`; otherwise the call fails and lists the
+  available remotes.
+  """
+  @spec add(Config.t(), String.t(), keyword()) :: {:ok, Repository.t()} | {:error, Error.t()}
+  def add(%Config{} = config, source, opts \\ []) do
+    source = String.trim(source)
+
+    with :ok <- validate_url(source),
+         {:ok, url} <- resolve_source(source, opts[:remote]),
          key = Layout.normalize_remote(url),
          :ok <- validate_remote_key(key),
          {:ok, requested_alias} <- requested_alias(opts[:name]),
@@ -897,6 +906,111 @@ defmodule Gitspace.Repos do
 
   defp validate_url(""), do: {:error, Error.new(:usage, "repository URL is required")}
   defp validate_url(_), do: :ok
+
+  defp resolve_source(source, remote_name) do
+    path = Path.expand(source)
+
+    cond do
+      File.dir?(path) ->
+        case list_remotes(path) do
+          :not_a_repository ->
+            if remote_name do
+              {:error,
+               Error.new(:usage, "--remote requires an existing local git checkout: #{source}")}
+            else
+              {:ok, path}
+            end
+
+          [] ->
+            if remote_name do
+              {:error,
+               Error.new(:usage, "checkout has no remotes: #{path}",
+                 hint: "add a remote to the checkout or pass the remote URL instead"
+               )}
+            else
+              {:ok, path}
+            end
+
+          names ->
+            select_remote(path, names, remote_name)
+        end
+
+      remote_name ->
+        {:error, Error.new(:usage, "--remote requires an existing local git checkout: #{source}")}
+
+      true ->
+        {:ok, source}
+    end
+  end
+
+  defp list_remotes(path) do
+    case Git.run(["remote"], cd: path) do
+      {:ok, %{stdout: out}} -> out |> String.split("\n", trim: true)
+      {:error, _} -> :not_a_repository
+    end
+  end
+
+  defp select_remote(path, [name], nil), do: remote_url_for(path, name)
+
+  defp select_remote(path, names, nil) do
+    remotes = Enum.map(names, &remote_candidate(path, &1))
+
+    {:error,
+     Error.new(:usage, "checkout has multiple remotes: #{Enum.join(names, ", ")}",
+       hint: "choose one with `--remote <name>`",
+       details: %{path: path, remotes: remotes}
+     )}
+  end
+
+  defp select_remote(path, names, name) do
+    if name in names do
+      remote_url_for(path, name)
+    else
+      {:error,
+       Error.new(:usage, "checkout has no remote named #{name}",
+         hint: "available remotes: #{Enum.join(names, ", ")}",
+         details: %{path: path, remotes: names}
+       )}
+    end
+  end
+
+  defp remote_url_for(path, name) do
+    case read_config(path, ["config", "--get", "remote.#{name}.url"]) do
+      nil ->
+        {:error,
+         Error.new(:usage, "remote #{name} has no URL", details: %{path: path, remote: name})}
+
+      url ->
+        {:ok, resolve_local_remote(url, repository_root(path))}
+    end
+  end
+
+  defp remote_candidate(path, name) do
+    %{name: name, url: read_config(path, ["config", "--get", "remote.#{name}.url"])}
+  end
+
+  defp repository_root(path) do
+    case Git.run(["rev-parse", "--show-toplevel"], cd: path) do
+      {:ok, %{stdout: out}} ->
+        String.trim(out)
+
+      {:error, _} ->
+        case Git.run(["rev-parse", "--absolute-git-dir"], cd: path) do
+          {:ok, %{stdout: out}} -> String.trim(out)
+          {:error, _} -> path
+        end
+    end
+  end
+
+  defp resolve_local_remote(url, root) do
+    if remote_url?(url), do: url, else: Path.expand(url, root)
+  end
+
+  defp remote_url?(url) do
+    Regex.match?(~r/^[A-Za-z][A-Za-z0-9+.-]*:\/\//, url) or
+      Regex.match?(~r/^(?:[^@\/]+@)?[^:\/]+:.+$/, url) or
+      Path.type(url) == :absolute
+  end
 
   defp bare_repo?(path) do
     File.dir?(Path.join(path, "objects")) and

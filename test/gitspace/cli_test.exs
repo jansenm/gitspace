@@ -1,7 +1,7 @@
 defmodule Gitspace.CLITest do
   use Gitspace.IndexCase, async: false
 
-  alias Gitspace.{Config, Fixtures, Index, Marker, Repos}
+  alias Gitspace.{Config, Fixtures, Git, Index, Marker, Repos}
   alias Gitspace.Git.Worktree
   alias Gitspace.Index.Repository
 
@@ -60,15 +60,35 @@ defmodule Gitspace.CLITest do
     assert member["ownership"] == "owned"
   end
 
-  test "INV-4/MACH-1 ls filters and path resolve", %{path: path} do
+  test "INV-4/MACH-1 ls filters and path resolve", %{path: path, repo: repo} do
     {output, 0} = cli(["ls", "--repo", "demo", "--json"])
     data = Jason.decode!(output)
     assert [checkout] = data["data"]["checkouts"]
     assert checkout["repo"] == "demo"
     assert checkout["workspace"] == "JENKINS-123"
+    assert checkout["mirror"] == repo.bare_path
+    assert checkout["hash"] == Path.basename(repo.bare_path, ".git")
 
     {path_output, 0} = cli(["path", "JENKINS-123:demo", "--json"])
     assert Jason.decode!(path_output)["data"]["path"] == path
+  end
+
+  test "ls is compact by default and --verbose adds hash and mirror", %{repo: repo} do
+    {plain, 0} = cli(["ls"])
+    assert plain =~ "REPO"
+    assert plain =~ "WORKSPACE"
+    refute plain =~ "PATH"
+    refute plain =~ "MIRROR"
+    refute plain =~ "HASH"
+    assert plain |> String.split("\n", trim: true) |> Enum.all?(&(String.length(&1) <= 100))
+
+    {verbose, 0} = cli(["ls", "--verbose"])
+    hash = Path.basename(repo.bare_path, ".git")
+    assert verbose =~ "HASH"
+    assert verbose =~ "MIRROR"
+    assert verbose =~ repo.bare_path
+    assert verbose =~ String.slice(hash, 0, 12)
+    refute verbose =~ "PATH"
   end
 
   test "MACH-2 unknown target is exit 3 with a stable code" do
@@ -130,6 +150,36 @@ defmodule Gitspace.CLITest do
     assert output =~ "REMOTE"
     assert output =~ "demo"
     assert output =~ source
+  end
+
+  test "repo add reads remote URLs from an existing checkout", %{source: source} do
+    clone = Path.join(Fixtures.tmp_dir!("cli-checkout"), "checkout")
+    Git.run!(["clone", source, clone])
+    Git.run!(["remote", "add", "upstream", "git@example.com:cli/config.git"], cd: clone)
+
+    {output, 2} = cli(["repo", "add", clone, "--json"])
+    error = Jason.decode!(output)["error"]
+    assert error["code"] == "usage"
+    assert error["hint"] =~ "--remote"
+    assert Enum.any?(error["details"]["remotes"], &(&1["name"] == "upstream"))
+
+    {created, 0} =
+      cli([
+        "repo",
+        "add",
+        clone,
+        "--remote",
+        "upstream",
+        "--name",
+        "upstream-cli",
+        "--no-fetch",
+        "--json"
+      ])
+
+    repo = Jason.decode!(created)["data"]["repo"]
+    assert repo["slug"] == "upstream-cli"
+    assert repo["remote_url"] == "git@example.com:cli/config.git"
+    assert repo["remote_key"] == "example.com/cli/config"
   end
 
   test "repo alias changes the persistent alias", %{source: source} do

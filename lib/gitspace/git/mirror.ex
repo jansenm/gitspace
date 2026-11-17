@@ -23,17 +23,20 @@ defmodule Gitspace.Git.Mirror do
 
     unless opts[:no_fetch], do: fetch!(bare, opts)
 
-    set_head!(bare)
     bare
   end
 
   @spec fetch!(Path.t(), keyword()) :: binary()
   def fetch!(bare, opts \\ []) do
-    Git.run!(["fetch", "--prune", "origin"],
-      cd: bare,
-      locks: true,
-      timeout: Keyword.get(opts, :timeout, 300_000)
-    )
+    output =
+      Git.run!(["fetch", "--prune", "origin"],
+        cd: bare,
+        locks: true,
+        timeout: Keyword.get(opts, :timeout, 300_000)
+      )
+
+    set_head!(bare)
+    output
   end
 
   @spec set_head!(Path.t()) :: :ok

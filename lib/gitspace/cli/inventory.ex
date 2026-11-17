@@ -13,7 +13,7 @@ defmodule Gitspace.CLI.Inventory do
     end
   end
 
-  def ls(_global, args) do
+  def ls(global, args) do
     with {:ok, opts, rest} <- Helpers.parse(args, ls_strict()),
          :ok <- Helpers.no_extra_args(rest),
          {:ok, config} <- Helpers.load_config(),
@@ -28,7 +28,9 @@ defmodule Gitspace.CLI.Inventory do
           source: opts[:source]
         )
 
-      {:ok, %{checkouts: rows, wide: !!opts[:wide]}, &render_ls/1}
+      verbose = !!global.verbose or !!opts[:wide]
+
+      {:ok, %{checkouts: rows, verbose: verbose}, &render_ls/1}
     end
   end
 
@@ -207,41 +209,24 @@ defmodule Gitspace.CLI.Inventory do
     IO.puts("next: gitspace ls · gitspace doctor")
   end
 
-  defp render_ls(%{checkouts: rows, wide: wide}) do
+  defp render_ls(%{checkouts: rows} = data) do
+    verbose = Map.get(data, :verbose, false)
+
     headers =
-      if wide do
-        [
-          "KIND",
-          "REPO",
-          "WORKSPACE",
-          "BRANCH",
-          "DIRTY",
-          "AHEAD",
-          "BEHIND",
-          "UNPUSHED",
-          "AGE",
-          "SOURCE",
-          "PATH"
-        ]
-      else
-        [
-          "KIND",
-          "REPO",
-          "WORKSPACE",
-          "BRANCH",
-          "DIRTY",
-          "AHEAD",
-          "BEHIND",
-          "UNPUSHED",
-          "AGE",
-          "PATH"
-        ]
-      end
+      [
+        "REPO",
+        "WORKSPACE",
+        "BRANCH",
+        "DIRTY",
+        "AHEAD",
+        "BEHIND",
+        "UNPUSHED",
+        "AGE"
+      ] ++ if(verbose, do: ["HASH", "MIRROR"], else: [])
 
     table_rows =
       Enum.map(rows, fn row ->
         base = [
-          row.kind_name,
           row.repo,
           row.workspace || "-",
           row.branch || "(detached)",
@@ -252,11 +237,18 @@ defmodule Gitspace.CLI.Inventory do
           row.age
         ]
 
-        if wide, do: base ++ [row.source, row.path], else: base ++ [row.path]
+        if verbose do
+          base ++ [short_hash(row.hash), row.mirror || "-"]
+        else
+          base
+        end
       end)
 
     Output.table(headers, table_rows)
   end
+
+  defp short_hash(nil), do: "-"
+  defp short_hash(hash), do: String.slice(hash, 0, 12)
 
   defp render_workspace_status(%{workspace: workspace}) do
     labels = if workspace.labels == [], do: "-", else: Enum.join(workspace.labels, ", ")
@@ -313,7 +305,7 @@ defmodule Gitspace.CLI.Inventory do
 
   defp render_repo_status(%{repo: repo, checkouts: rows}) do
     IO.puts("repository #{repo}")
-    render_ls(%{checkouts: rows, wide: false})
+    render_ls(%{checkouts: rows, verbose: false})
   end
 
   defp render_show_workspace(%{workspace: workspace}) do
@@ -337,7 +329,7 @@ defmodule Gitspace.CLI.Inventory do
     IO.puts("  mirror:    #{repo.bare_path || "(external)"}")
     IO.puts("  default:   #{repo.default_branch || "?"}")
     IO.puts("")
-    render_ls(%{checkouts: rows, wide: true})
+    render_ls(%{checkouts: rows, verbose: true})
   end
 
   defp render_path(data) do

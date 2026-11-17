@@ -29,7 +29,7 @@ Product scope, CLI contract and acceptance plan live in the planning repository:
 | Recovery | `reindex` — rediscover mirrors from disk, rebuild workspaces from markers |
 | Machine surface | `--json` on every command, exit codes 0–7, `--verbose` prints git argv |
 
-132 checks (128 tests, 3 properties, 1 doctest) in ~20 s.
+138 checks (134 tests, 3 properties, 1 doctest) in ~21 s.
 
 ## Commands
 
@@ -120,6 +120,17 @@ gitspace repo add git@gitlab.com:beta/config.git --name beta-config
 gitspace repo alias acme-config my-config         # permanent alias change
 ```
 
+`repo add` also accepts an existing clone or worktree instead of a URL:
+
+```sh
+gitspace repo add ~/src/ferroclass              # uses its only remote
+gitspace repo add ~/src/app --remote upstream   # picks one remote explicitly
+```
+
+With one remote, its URL is registered automatically. With several, `repo add` refuses and
+lists the candidates until you choose one with `--remote <name>`. A local git repository with
+no remotes is still mirrored from its path, as before.
+
 Aliases may change when repositories are added; checkout directories never move. Member
 directories are chosen per checkout and recorded in the workspace marker:
 
@@ -136,6 +147,22 @@ The same remote written in another URL form (`git@…`, `https://…`, with or w
 matched by its canonical remote key and is not duplicated. Default ports are omitted; other
 ports remain part of the key. `gitspace repo ls` shows the remote, alias, and mirror hash behind
 each repository.
+
+## Listing
+
+`gitspace ls` is compact by default: repository alias, workspace, branch, dirty/ahead/behind/
+unpushed counts, and age. It intentionally omits paths and mirror details so a normal table
+fits in roughly 100 characters.
+
+```sh
+gitspace ls
+gitspace ls --verbose      # adds HASH and MIRROR
+gitspace ls --wide         # old name for --verbose
+gitspace ls --json         # full rows, including path and mirror metadata
+```
+
+Use `gitspace path <target>` or `gitspace show <target>` when the checkout path is what you
+need.
 
 ## Decisions
 

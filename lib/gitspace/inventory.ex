@@ -113,6 +113,8 @@ defmodule Gitspace.Inventory do
       state: checkout.state,
       source: checkout.source,
       kind_name: checkout.kind,
+      hash: mirror_hash(repo.bare_path),
+      mirror: repo.bare_path,
       dirty: checkout.dirty,
       ahead: checkout.ahead,
       behind: checkout.behind,
@@ -217,6 +219,9 @@ defmodule Gitspace.Inventory do
       true -> "#{div(seconds, 2_592_000)}M"
     end
   end
+
+  defp mirror_hash(nil), do: nil
+  defp mirror_hash(path), do: Path.basename(path, ".git")
 
   defp member_row(config, workspace, member, checkout) do
     base = checkout_row(config, checkout, %{workspace: workspace, ownership: member.ownership})

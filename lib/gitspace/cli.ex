@@ -30,7 +30,12 @@ defmodule Gitspace.CLI do
   def run(args, global \\ nil) do
     args = Enum.map(args, &to_string/1)
     global = global || global(args)
-    Application.put_env(:gitspace, :verbose, global.verbose)
+
+    Application.put_env(
+      :gitspace,
+      :verbose,
+      global.verbose and command_name(args) != "ls"
+    )
 
     try do
       args
@@ -143,6 +148,12 @@ defmodule Gitspace.CLI do
     }
   end
 
+  defp command_name(args) do
+    args
+    |> Enum.drop_while(&String.starts_with?(&1, "-"))
+    |> List.first()
+  end
+
   defp version do
     vsn =
       case Application.spec(:gitspace, :vsn) do
@@ -207,7 +218,9 @@ defmodule Gitspace.CLI do
         """
         USAGE
           gitspace ls [--repo R] [--workspace W] [--label L] [--state S]
-                      [--kind worktree|clone] [--source managed|external] [--wide]
+                      [--kind worktree|clone] [--source managed|external] [--verbose]
+
+        --verbose (or the old --wide) adds HASH and MIRROR to the table.
         """
 
       "status" ->
@@ -247,7 +260,7 @@ defmodule Gitspace.CLI do
       "repo" ->
         """
         USAGE
-          gitspace repo add <url> [--name N] [--no-fetch]
+          gitspace repo add <url-or-path> [--name N] [--remote NAME] [--no-fetch]
           gitspace repo ls
           gitspace repo fetch [<repo>|--all] [--prune]
           gitspace repo rm <repo> [--force] [--dry-run] [--yes]

@@ -4,7 +4,9 @@ defmodule Gitspace.CLI.Repo do
   alias Gitspace.{Error, Repos}
   alias Gitspace.CLI.{Helpers, Output}
 
-  defp add_strict, do: [name: :string, no_fetch: :boolean] ++ Helpers.global_strict()
+  defp add_strict,
+    do: [name: :string, remote: :string, no_fetch: :boolean] ++ Helpers.global_strict()
+
   defp list_strict, do: Helpers.global_strict()
   defp fetch_strict, do: [all: :boolean, prune: :boolean] ++ Helpers.global_strict()
   defp rm_strict, do: [force: :boolean, dry_run: :boolean] ++ Helpers.global_strict()
@@ -23,10 +25,15 @@ defmodule Gitspace.CLI.Repo do
 
   defp add(_global, args) do
     with {:ok, opts, rest} <- Helpers.parse(args, add_strict()),
-         {:ok, url} <- one_arg(rest, "gitspace repo add <url>"),
+         {:ok, source} <- one_arg(rest, "gitspace repo add <url-or-path> [--remote NAME]"),
          {:ok, config} <- Helpers.load_config(),
          :ok <- Helpers.start_index(config),
-         {:ok, repo} <- Repos.add(config, url, name: opts[:name], no_fetch: opts[:no_fetch]) do
+         {:ok, repo} <-
+           Repos.add(config, source,
+             name: opts[:name],
+             remote: opts[:remote],
+             no_fetch: opts[:no_fetch]
+           ) do
       data = %{
         repo: repo_map(repo, 0),
         fetched: !opts[:no_fetch]
@@ -214,11 +221,17 @@ defmodule Gitspace.CLI.Repo do
   defp help do
     """
     USAGE
-      gitspace repo add <url> [--name N] [--no-fetch]
+      gitspace repo add <url-or-path> [--name N] [--remote NAME] [--no-fetch]
       gitspace repo ls
       gitspace repo fetch [<repo>|--all] [--prune]
       gitspace repo rm <repo> [--force] [--dry-run] [--yes]
       gitspace repo alias <repo> <name>
+
+    ADD FROM A CHECKOUT
+      Point `repo add` at an existing clone or worktree. With one remote its
+      URL is registered automatically. With several, choose one with
+      `--remote <name>`. A local git repository without remotes is mirrored
+      from its path, as before.
     """
   end
 
