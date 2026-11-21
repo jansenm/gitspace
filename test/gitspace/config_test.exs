@@ -22,7 +22,7 @@ defmodule Gitspace.ConfigTest do
     config = %Config{
       path: path,
       data_dir: Path.join(root, "data"),
-      checkouts_dir: Path.join(root, "work")
+      projects_root: Path.join(root, "work")
     }
 
     assert :ok = Config.save(config)
@@ -31,8 +31,8 @@ defmodule Gitspace.ConfigTest do
 
     assert {:ok, loaded} = Config.load()
     assert loaded.data_dir == config.data_dir
-    assert loaded.checkouts_dir == config.checkouts_dir
-    assert loaded.branch_template == "feature_{work}"
+    assert loaded.projects_root == config.projects_root
+    assert loaded.branch_template == "feature/{topic}"
     assert loaded.git_minimum == "2.40"
   end
 
@@ -40,21 +40,21 @@ defmodule Gitspace.ConfigTest do
     config = %Config{
       path: path,
       data_dir: Path.join(root, "data"),
-      checkouts_dir: Path.join(root, "work")
+      projects_root: Path.join(root, "work")
     }
 
     assert :ok = Config.save(config)
     System.put_env("GITSPACE_DATA", Path.join(root, "other-data"))
-    System.put_env("GITSPACE_CHECKOUTS", Path.join(root, "other-work"))
+    System.put_env("GITSPACE_PROJECTS_ROOT", Path.join(root, "other-work"))
 
     on_exit(fn ->
       System.delete_env("GITSPACE_DATA")
-      System.delete_env("GITSPACE_CHECKOUTS")
+      System.delete_env("GITSPACE_PROJECTS_ROOT")
     end)
 
     assert {:ok, loaded} = Config.load()
     assert loaded.data_dir == Path.join(root, "other-data")
-    assert loaded.checkouts_dir == Path.join(root, "other-work")
+    assert loaded.projects_root == Path.join(root, "other-work")
   end
 
   test "ENV-2 detects file-sync roots" do
@@ -64,7 +64,7 @@ defmodule Gitspace.ConfigTest do
   end
 
   test "a missing checkout directory means not configured" do
-    System.delete_env("GITSPACE_CHECKOUTS")
+    System.delete_env("GITSPACE_PROJECTS_ROOT")
     assert {:error, :not_configured} = Config.load()
   end
 end

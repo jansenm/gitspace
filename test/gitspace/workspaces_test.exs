@@ -1,7 +1,7 @@
 defmodule Gitspace.WorkspacesTest do
   use Gitspace.IndexCase, async: false
 
-  alias Gitspace.{Fixtures, Marker, Repos, Workspaces}
+  alias Gitspace.{Fixtures, Marker, Projects, Repos, Workspaces}
   alias Gitspace.Git.Worktree
 
   test "REC-1 recovers owned and borrowed members, labels and missing paths", %{config: config} do
@@ -14,8 +14,9 @@ defmodule Gitspace.WorkspacesTest do
     ui_source = Fixtures.source_repo!()
     {:ok, _ui} = Repos.add(config, Fixtures.repo_url(ui_source), name: "ui")
 
-    owned_path = Path.join([config.checkouts_dir, "JENKINS-123", "demo"])
-    borrowed_path = Path.join([config.checkouts_dir, "main", "lib"])
+    {:ok, _project} = Projects.create(config, "demo", repo: ["demo"])
+    owned_path = Path.join([config.projects_root, "demo", "JENKINS-123", "demo"])
+    borrowed_path = Path.join([config.projects_root, "demo", "main", "lib"])
 
     File.mkdir_p!(Path.dirname(owned_path))
     File.mkdir_p!(Path.dirname(borrowed_path))
@@ -28,7 +29,9 @@ defmodule Gitspace.WorkspacesTest do
     work_dir = Path.dirname(owned_path)
 
     marker =
-      Marker.build("JENKINS-123",
+      Marker.build("demo/JENKINS-123",
+        project: "demo",
+        topic: "JENKINS-123",
         description: "move the deploy job",
         labels: ["jira-123"],
         members: [
@@ -60,7 +63,7 @@ defmodule Gitspace.WorkspacesTest do
     assert summary.members == 3
     assert summary.issues == []
 
-    assert {:ok, workspace} = Workspaces.get(config, "JENKINS-123")
+    assert {:ok, workspace} = Workspaces.get(config, "demo/JENKINS-123")
     assert workspace.description == "move the deploy job"
     assert Enum.map(workspace.labels, & &1.label) == ["jira-123"]
     assert length(workspace.members) == 3
@@ -83,7 +86,8 @@ defmodule Gitspace.WorkspacesTest do
   end
 
   test "invalid markers are reported, not hidden", %{config: config} do
-    broken = Path.join([config.checkouts_dir, "BROKEN", ".gitspace.json"])
+    {:ok, _project} = Projects.create(config, "broken")
+    broken = Path.join([config.projects_root, "broken", "BROKEN", ".gitspace.json"])
     File.mkdir_p!(Path.dirname(broken))
     File.write!(broken, "{not json")
 

@@ -1,11 +1,13 @@
 defmodule Gitspace.CLI.Repo do
   @moduledoc false
 
-  alias Gitspace.{Error, Repos}
+  alias Gitspace.{Error, Projects, Repos}
   alias Gitspace.CLI.{Helpers, Output}
 
   defp add_strict,
-    do: [name: :string, remote: :string, no_fetch: :boolean] ++ Helpers.global_strict()
+    do:
+      [name: :string, remote: :string, project: :string, no_fetch: :boolean] ++
+        Helpers.global_strict()
 
   defp list_strict, do: Helpers.global_strict()
   defp fetch_strict, do: [all: :boolean, prune: :boolean] ++ Helpers.global_strict()
@@ -32,10 +34,12 @@ defmodule Gitspace.CLI.Repo do
            Repos.add(config, source,
              name: opts[:name],
              remote: opts[:remote],
+             project: opts[:project],
              no_fetch: opts[:no_fetch]
            ) do
       data = %{
         repo: repo_map(repo, 0),
+        project: opts[:project],
         fetched: !opts[:no_fetch]
       }
 
@@ -48,9 +52,14 @@ defmodule Gitspace.CLI.Repo do
          :ok <- Helpers.no_extra_args(rest),
          {:ok, config} <- Helpers.load_config(),
          :ok <- Helpers.start_index(config) do
+      projects = Projects.list(config)
+
       repositories =
         Repos.list(config)
-        |> Enum.map(fn %{repo: repo, checkouts: count} -> repo_map(repo, count) end)
+        |> Enum.map(fn %{repo: repo, checkouts: count} ->
+          names = Enum.filter(projects, &(repo.remote_key in &1.members)) |> Enum.map(& &1.name)
+          Map.put(repo_map(repo, count), :projects, names)
+        end)
 
       {:ok, %{repositories: repositories}, &render_list/1}
     end
@@ -163,6 +172,11 @@ defmodule Gitspace.CLI.Repo do
     repo = data.repo
     IO.puts("registered #{repo.slug}")
     IO.puts("  remote:   #{repo.remote_url}")
+
+    if data[:project] do
+      IO.puts("  project:  #{data.project}")
+    end
+
     IO.puts("  mirror:   #{repo.bare_path}")
     IO.puts("  default:  #{repo.default_branch || "?"}")
 
@@ -173,10 +187,11 @@ defmodule Gitspace.CLI.Repo do
 
   defp render_list(%{repositories: repositories}) do
     Output.table(
-      ["SLUG", "REMOTE", "STATE", "DEFAULT", "CHECKOUTS", "HASH", "MIRROR"],
+      ["SLUG", "PROJECT", "REMOTE", "STATE", "DEFAULT", "CHECKOUTS", "HASH", "MIRROR"],
       Enum.map(repositories, fn repo ->
         [
           repo.slug,
+          Enum.join(repo[:projects] || [], ","),
           repo.remote_url,
           repo.state,
           repo.default_branch,
@@ -221,7 +236,7 @@ defmodule Gitspace.CLI.Repo do
   defp help do
     """
     USAGE
-      gitspace repo add <url-or-path> [--name N] [--remote NAME] [--no-fetch]
+      gitspace repo add <url-or-path> [--name N] [--remote NAME] [--project P] [--no-fetch]
       gitspace repo ls
       gitspace repo fetch [<repo>|--all] [--prune]
       gitspace repo rm <repo> [--force] [--dry-run] [--yes]

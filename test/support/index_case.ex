@@ -20,11 +20,11 @@ defmodule Gitspace.IndexCase do
     config = %Config{
       path: Path.join(root, "config.toml"),
       data_dir: Path.join(root, "data"),
-      checkouts_dir: Path.join(root, "work")
+      projects_root: Path.join(root, "work")
     }
 
     File.mkdir_p!(config.data_dir)
-    File.mkdir_p!(config.checkouts_dir)
+    File.mkdir_p!(config.projects_root)
     :ok = Gitspace.Index.ensure_started(config)
 
     on_exit(fn -> Gitspace.Index.stop() end)

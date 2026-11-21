@@ -4,7 +4,7 @@ defmodule Gitspace.CLI.Config do
   alias Gitspace.{Config, Error, Layout}
   alias Gitspace.CLI.{Helpers, Output}
 
-  @keys ~w(paths.data paths.checkouts branch.template git.minimum_version status.max_age_seconds)
+  @keys ~w(paths.data projects.root branch.template git.minimum_version status.max_age_seconds)
 
   def run(_global, args) do
     case args do
@@ -24,7 +24,7 @@ defmodule Gitspace.CLI.Config do
       {:ok,
        %{
          config_path: Config.config_path(),
-         configured: not is_nil(config.checkouts_dir),
+         configured: not is_nil(config.projects_root),
          values: values(config),
          sources: sources(config)
        }, &render_list/1}
@@ -83,7 +83,7 @@ defmodule Gitspace.CLI.Config do
 
   defp load_file_config do
     case Config.load_file() do
-      {:ok, %Config{checkouts_dir: nil}} ->
+      {:ok, %Config{projects_root: nil}} ->
         {:error,
          Error.new(:not_configured, "gitspace is not configured", hint: "run `gitspace setup`")}
 
@@ -109,11 +109,12 @@ defmodule Gitspace.CLI.Config do
     end
   end
 
-  defp apply_setting(%Config{} = config, "paths.checkouts", value, opts) do
+  defp apply_setting(%Config{} = config, "projects.root", value, opts) do
     path = Path.expand(value)
 
     with :ok <- check_sync_root(path, opts) do
-      {:ok, %Config{config | checkouts_dir: path}, nil}
+      {:ok, %Config{config | projects_root: path},
+       "existing projects keep their stored paths; only new projects use this root"}
     end
   end
 
@@ -164,7 +165,7 @@ defmodule Gitspace.CLI.Config do
   defp values(config) do
     %{
       "paths.data" => config.data_dir,
-      "paths.checkouts" => config.checkouts_dir,
+      "projects.root" => config.projects_root,
       "branch.template" => config.branch_template,
       "git.minimum_version" => config.git_minimum,
       "status.max_age_seconds" => config.status_max_age
@@ -216,7 +217,10 @@ defmodule Gitspace.CLI.Config do
   defp one_arg(_rest, usage), do: {:error, Error.new(:usage, "usage: #{usage}")}
 
   defp env_override?("paths.data"), do: env_set?("GITSPACE_DATA")
-  defp env_override?("paths.checkouts"), do: env_set?("GITSPACE_CHECKOUTS")
+
+  defp env_override?("projects.root"),
+    do: env_set?("GITSPACE_PROJECTS_ROOT") or env_set?("GITSPACE_CHECKOUTS")
+
   defp env_override?(_key), do: false
 
   defp env_set?(variable) do
@@ -267,7 +271,7 @@ defmodule Gitspace.CLI.Config do
 
     KEYS
       paths.data
-      paths.checkouts
+      projects.root
       branch.template
       git.minimum_version
       status.max_age_seconds

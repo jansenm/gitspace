@@ -6,8 +6,8 @@ defmodule Gitspace.Config do
   `$XDG_CONFIG_HOME/gitspace/config.toml` (or `GITSPACE_CONFIG`). Data lives
   under `$XDG_DATA_HOME/gitspace` unless overridden.
 
-  `GITSPACE_DATA` and `GITSPACE_CHECKOUTS` make the tool usable in tests and
-  ephemeral environments without running `setup` first.
+  `GITSPACE_DATA` and `GITSPACE_PROJECTS_ROOT` make the tool usable in tests
+  and ephemeral environments without running `setup` first.
   """
 
   @schema_version 1
@@ -15,15 +15,15 @@ defmodule Gitspace.Config do
 
   defstruct path: nil,
             data_dir: nil,
-            checkouts_dir: nil,
-            branch_template: "feature_{work}",
+            projects_root: nil,
+            branch_template: "feature/{topic}",
             git_minimum: "2.40",
             status_max_age: 3600
 
   @type t :: %__MODULE__{
           path: Path.t() | nil,
           data_dir: Path.t() | nil,
-          checkouts_dir: Path.t() | nil,
+          projects_root: Path.t() | nil,
           branch_template: String.t(),
           git_minimum: String.t(),
           status_max_age: pos_integer()
@@ -32,7 +32,7 @@ defmodule Gitspace.Config do
   @spec load() :: {:ok, t()} | {:error, term()}
   def load do
     case load_optional() do
-      {:ok, %__MODULE__{checkouts_dir: nil}} -> {:error, :not_configured}
+      {:ok, %__MODULE__{projects_root: nil}} -> {:error, :not_configured}
       other -> other
     end
   end
@@ -119,8 +119,12 @@ defmodule Gitspace.Config do
   @spec default_data_dir() :: Path.t()
   def default_data_dir, do: data_home()
 
+  @spec default_projects_root() :: Path.t()
+  def default_projects_root, do: Path.join(System.user_home!(), "work")
+
+  @doc "Deprecated alias for `default_projects_root/0`."
   @spec default_checkout_dir() :: Path.t()
-  def default_checkout_dir, do: Path.join(System.user_home!(), "work")
+  def default_checkout_dir, do: default_projects_root()
 
   @spec db_path(t()) :: Path.t()
   def db_path(%__MODULE__{data_dir: data_dir}), do: Path.join(data_dir, "index.sqlite3")
@@ -144,7 +148,7 @@ defmodule Gitspace.Config do
 
   @spec ensure_dirs(t()) :: :ok | {:error, Gitspace.Error.t()}
   def ensure_dirs(%__MODULE__{} = config) do
-    dirs = [config.data_dir, repos_dir(config), config.checkouts_dir]
+    dirs = [config.data_dir, repos_dir(config), config.projects_root]
 
     Enum.reduce_while(dirs, :ok, fn dir, :ok ->
       with :ok <- File.mkdir_p(dir),
@@ -155,7 +159,7 @@ defmodule Gitspace.Config do
           {:halt,
            {:error,
             Gitspace.Error.new(:refused, "cannot use #{dir}: #{format_reason(reason)}",
-              hint: "choose a writable directory with `gitspace setup --data/--checkouts`"
+              hint: "choose a writable directory with `gitspace setup --data/--projects`"
             )}}
       end
     end)
@@ -195,8 +199,15 @@ defmodule Gitspace.Config do
        %__MODULE__{
          path: path,
          data_dir: expand(get_in_map(data, ["paths", "data"], default_data_dir())),
-         checkouts_dir: expand(get_in_map(data, ["paths", "checkouts"], nil)),
-         branch_template: get_in_map(data, ["branch", "template"], "feature_{work}"),
+         projects_root:
+           expand(
+             get_in_map(
+               data,
+               ["projects", "root"],
+               get_in_map(data, ["paths", "checkouts"], nil)
+             )
+           ),
+         branch_template: get_in_map(data, ["branch", "template"], "feature/{topic}"),
          git_minimum: get_in_map(data, ["git", "minimum_version"], "2.40"),
          status_max_age: get_in_map(data, ["status", "max_age_seconds"], 3600)
        }}
@@ -207,7 +218,13 @@ defmodule Gitspace.Config do
     %{
       config
       | data_dir: expand(env_or("GITSPACE_DATA", config.data_dir)),
-        checkouts_dir: expand(env_or("GITSPACE_CHECKOUTS", config.checkouts_dir))
+        projects_root:
+          expand(
+            env_or(
+              "GITSPACE_PROJECTS_ROOT",
+              env_or("GITSPACE_CHECKOUTS", config.projects_root)
+            )
+          )
     }
   end
 
@@ -219,11 +236,11 @@ defmodule Gitspace.Config do
       Path.type(config.data_dir) != :absolute ->
         {:error, {:relative_path, config.data_dir}}
 
-      is_binary(config.checkouts_dir) and Path.type(config.checkouts_dir) != :absolute ->
-        {:error, {:relative_path, config.checkouts_dir}}
+      is_binary(config.projects_root) and Path.type(config.projects_root) != :absolute ->
+        {:error, {:relative_path, config.projects_root}}
 
-      is_binary(config.checkouts_dir) and config.checkouts_dir == config.data_dir ->
-        {:error, :same_data_and_checkouts}
+      is_binary(config.projects_root) and config.projects_root == config.data_dir ->
+        {:error, :same_data_and_projects}
 
       not is_integer(config.status_max_age) or config.status_max_age <= 0 ->
         {:error, :invalid_status_max_age}
@@ -236,10 +253,8 @@ defmodule Gitspace.Config do
   defp to_map(%__MODULE__{} = config) do
     %{
       "schema_version" => @schema_version,
-      "paths" => %{
-        "data" => config.data_dir,
-        "checkouts" => config.checkouts_dir
-      },
+      "paths" => %{"data" => config.data_dir},
+      "projects" => %{"root" => config.projects_root},
       "branch" => %{"template" => config.branch_template},
       "git" => %{"minimum_version" => config.git_minimum},
       "status" => %{"max_age_seconds" => config.status_max_age}

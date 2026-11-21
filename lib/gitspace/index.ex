@@ -7,7 +7,7 @@ defmodule Gitspace.Index do
   rebuilds it from git and the workspace markers.
   """
 
-  alias Gitspace.{Checkouts, Config, Repo, Repos, Workspaces}
+  alias Gitspace.{Checkouts, Config, Projects, Repo, Repos, Workspaces}
   alias Gitspace.Index.{Checkout, Repository}
 
   @spec ensure_started(Config.t(), keyword()) :: :ok
@@ -92,6 +92,7 @@ defmodule Gitspace.Index do
 
     {:ok,
      %{
+       projects: length(Projects.list(config)),
        repositories: length(repo_results),
        discovered_repositories: discovered.discovered,
        imported_checkouts: imported,

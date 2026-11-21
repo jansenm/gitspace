@@ -32,17 +32,17 @@ defmodule Gitspace.CLI.ConfigTest do
     assert data["configured"] == true
     assert data["config_path"] == config.path
     assert data["values"]["paths.data"] == config.data_dir
-    assert data["values"]["paths.checkouts"] == config.checkouts_dir
-    assert data["values"]["branch.template"] == "feature_{work}"
+    assert data["values"]["projects.root"] == config.projects_root
+    assert data["values"]["branch.template"] == "feature/{topic}"
     assert data["sources"]["paths.data"] == "file"
   end
 
   test "config get returns one effective value", %{config: config} do
-    {output, 0} = cli(["config", "get", "paths.checkouts", "--json"])
+    {output, 0} = cli(["config", "get", "projects.root", "--json"])
     data = Jason.decode!(output)["data"]
 
-    assert data["key"] == "paths.checkouts"
-    assert data["value"] == config.checkouts_dir
+    assert data["key"] == "projects.root"
+    assert data["value"] == config.projects_root
   end
 
   test "config set validates and persists a value", %{config: config} do
@@ -55,7 +55,7 @@ defmodule Gitspace.CLI.ConfigTest do
 
     assert {:ok, reloaded} = Config.load_file()
     assert reloaded.branch_template == "work/{work}"
-    assert reloaded.checkouts_dir == config.checkouts_dir
+    assert reloaded.projects_root == config.projects_root
   end
 
   test "config set rejects invalid values without writing the file", %{config: config} do
@@ -67,8 +67,8 @@ defmodule Gitspace.CLI.ConfigTest do
 
     assert {:ok, reloaded} = Config.load_file()
     assert reloaded.status_max_age == 3600
-    assert reloaded.branch_template == "feature_{work}"
-    assert reloaded.checkouts_dir == config.checkouts_dir
+    assert reloaded.branch_template == "feature/{topic}"
+    assert reloaded.projects_root == config.projects_root
   end
 
   test "unknown configuration keys are usage errors" do
@@ -81,18 +81,18 @@ defmodule Gitspace.CLI.ConfigTest do
 
   test "config set refuses a file-sync root unless forced", %{config: config} do
     {output, 5} =
-      cli(["config", "set", "paths.checkouts", "/data/mjansen/nextcloud/shared/work", "--json"])
+      cli(["config", "set", "projects.root", "/data/mjansen/nextcloud/shared/work", "--json"])
 
     assert Jason.decode!(output)["error"]["code"] == "refused"
 
     assert {:ok, reloaded} = Config.load_file()
-    assert reloaded.checkouts_dir == config.checkouts_dir
+    assert reloaded.projects_root == config.projects_root
 
     {output, 0} =
       cli([
         "config",
         "set",
-        "paths.checkouts",
+        "projects.root",
         "/data/mjansen/nextcloud/shared/work",
         "--force",
         "--json"
@@ -120,7 +120,7 @@ defmodule Gitspace.CLI.ConfigTest do
 
     assert {:ok, reloaded} = Config.load_file()
     assert reloaded.data_dir == new_data
-    assert reloaded.checkouts_dir == config.checkouts_dir
+    assert reloaded.projects_root == config.projects_root
   end
 
   test "a missing configuration is reported, not guessed" do
@@ -132,7 +132,7 @@ defmodule Gitspace.CLI.ConfigTest do
     {output, 0} = cli(["config", "list", "--json"])
     data = Jason.decode!(output)["data"]
     assert data["configured"] == false
-    assert data["sources"]["paths.checkouts"] == "unset"
+    assert data["sources"]["projects.root"] == "unset"
   end
 
   test "config --help shows the command surface", _context do

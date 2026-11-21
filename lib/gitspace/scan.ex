@@ -8,7 +8,7 @@ defmodule Gitspace.Scan do
 
   import Ecto.Query
 
-  alias Gitspace.{Checkouts, Config, Error, Git, Layout, Repo, Repos}
+  alias Gitspace.{Checkouts, Config, Error, Git, Layout, Projects, Repo, Repos}
   alias Gitspace.Index.{Checkout, Repository}
 
   @default_ignores ~w(
@@ -19,7 +19,10 @@ defmodule Gitspace.Scan do
   @spec scan(Config.t(), [Path.t()], keyword()) :: {:ok, [map()]} | {:error, Error.t()}
   def scan(%Config{} = config, paths, opts \\ []) do
     started =
-      if(paths == [], do: [config.checkouts_dir], else: paths)
+      if(paths == [],
+        do: Enum.uniq([config.projects_root | Enum.map(Projects.list(config), & &1.path)]),
+        else: paths
+      )
       |> Enum.map(&Path.expand/1)
 
     max_depth = Keyword.get(opts, :max_depth, 6)
@@ -306,14 +309,15 @@ defmodule Gitspace.Scan do
   end
 
   defp managed_source(config, path) do
-    root = Path.expand(config.checkouts_dir)
     expanded = Path.expand(path)
 
-    if expanded == root or String.starts_with?(expanded, root <> "/") do
-      "managed"
-    else
-      "external"
-    end
+    managed? =
+      Enum.any?([config.projects_root | Enum.map(Projects.list(config), & &1.path)], fn root ->
+        root = Path.expand(root)
+        expanded == root or String.starts_with?(expanded, root <> "/")
+      end)
+
+    if managed?, do: "managed", else: "external"
   end
 
   defp bare_repo?(path) do

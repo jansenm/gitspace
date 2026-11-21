@@ -53,12 +53,16 @@ defmodule Gitspace.Layout do
   @doc """
   Derives the branch from the work name.
 
-  The default template is `feature_{work}`; the result must be a valid branch.
+  The default template is `feature/{topic}`. `{work}` is accepted as a
+  backwards-compatible placeholder for `{topic}`.
   """
   @spec branch_for(String.t(), String.t()) :: {:ok, String.t()} | {:error, atom()}
-  def branch_for(work, template \\ "feature_{work}") do
+  def branch_for(work, template \\ "feature/{topic}") do
     with {:ok, slug} <- work_slug(work) do
-      branch = String.replace(template, "{work}", slug)
+      branch =
+        template
+        |> String.replace("{topic}", slug)
+        |> String.replace("{work}", slug)
 
       if valid_branch?(branch), do: {:ok, branch}, else: {:error, :invalid_branch}
     end

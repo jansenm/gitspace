@@ -3,7 +3,7 @@ defmodule Gitspace.Repos do
 
   import Ecto.Query
 
-  alias Gitspace.{Aliases, Config, Error, Git, Layout, MirrorIndex, Repo}
+  alias Gitspace.{Aliases, Config, Error, Git, Layout, MirrorIndex, Projects, Repo}
   alias Gitspace.Git.Mirror
   alias Gitspace.Index.Checkout
   alias Gitspace.Index.Repository
@@ -43,29 +43,42 @@ defmodule Gitspace.Repos do
           saved = Repo.get!(Repository, saved.id)
 
           cond do
-            opts[:no_fetch] ->
-              with :ok <- sync_index(config), do: {:ok, saved}
-
-            reference ->
-              mark_fetched(saved)
+            is_binary(opts[:project]) ->
+              with {:ok, _project} <- Projects.ensure_project(config, opts[:project]),
+                   {:ok, _project} <- Projects.add_members(config, opts[:project], [saved.slug]) do
+                finish_add(config, saved, reference, opts)
+              end
 
             true ->
-              case fetch(config, saved) do
-                {:ok, fetched} ->
-                  {:ok, fetched}
-
-                {:error, %Error{} = error} ->
-                  {:error,
-                   %{
-                     error
-                     | details: Map.merge(error.details, %{repo: saved.slug, registered: true})
-                   }}
-              end
+              finish_add(config, saved, reference, opts)
           end
 
         {:error, %Error{} = error} ->
           rollback_new_repo(saved, upgrade?, error)
       end
+    end
+  end
+
+  defp finish_add(config, saved, reference, opts) do
+    cond do
+      opts[:no_fetch] ->
+        with :ok <- sync_index(config), do: {:ok, saved}
+
+      reference ->
+        mark_fetched(saved)
+
+      true ->
+        case fetch(config, saved) do
+          {:ok, fetched} ->
+            {:ok, fetched}
+
+          {:error, %Error{} = error} ->
+            {:error,
+             %{
+               error
+               | details: Map.merge(error.details, %{repo: saved.slug, registered: true})
+             }}
+        end
     end
   end
 
@@ -366,7 +379,16 @@ defmodule Gitspace.Repos do
   @spec remove(Config.t(), String.t(), keyword()) :: {:ok, map()} | {:error, Error.t()}
   def remove(%Config{} = config, selector, opts \\ []) do
     with {:ok, repo} <- get(config, selector) do
+      project_names = Projects.projects_for_repo(config, repo)
+
       cond do
+        project_names != [] ->
+          {:error,
+           Error.new(:refused, "#{repo.slug} is a member of: #{Enum.join(project_names, ", ")}",
+             hint: "remove it from the project first with `gitspace project remove`",
+             details: %{projects: project_names}
+           )}
+
         repo.state == "external" ->
           {:error,
            Error.new(:refused, "#{repo.slug} is an external repository",

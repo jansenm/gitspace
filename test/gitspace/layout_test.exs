@@ -47,7 +47,7 @@ defmodule Gitspace.LayoutTest do
 
   test "branches are derived from the work name" do
     assert Layout.branch_for("mt4711-update-dependencies") ==
-             {:ok, "feature_mt4711-update-dependencies"}
+             {:ok, "feature/mt4711-update-dependencies"}
 
     assert Layout.branch_for("JENKINS-123", "feature/{work}") ==
              {:ok, "feature/JENKINS-123"}

@@ -65,7 +65,7 @@ defmodule Gitspace.ScanTest do
     source: source
   } do
     {:ok, repo} = Repos.add(config, Fixtures.repo_url(source), name: "demo")
-    path = Path.join([config.checkouts_dir, "demo", "demo"])
+    path = Path.join([config.projects_root, "demo", "main", "demo"])
     File.mkdir_p!(Path.dirname(path))
     {:ok, _} = Worktree.add(repo.bare_path, path, "origin/main", branch: "main")
 

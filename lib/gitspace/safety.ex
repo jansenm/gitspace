@@ -112,7 +112,7 @@ defmodule Gitspace.Safety do
   @doc "The exact commands a user can run to recover an anchored commit."
   @spec restore_hint(String.t(), String.t()) :: String.t()
   def restore_hint(work, keep_ref) do
-    "gitspace co <repo>@#{keep_ref} --name #{work}-recovered"
+    "gitspace co <project>@#{keep_ref} --topic #{work}-recovered"
   end
 
   defp sanitize_id(id) do

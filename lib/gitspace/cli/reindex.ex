@@ -16,6 +16,7 @@ defmodule Gitspace.CLI.Reindex do
 
   defp render(summary) do
     IO.puts("reindexed")
+    IO.puts("  projects:          #{Map.get(summary, :projects, 0)}")
     IO.puts("  repositories:     #{summary.repositories}")
     IO.puts("  discovered:       #{summary.discovered_repositories}")
     IO.puts("  imported:         #{summary.imported_checkouts}")
@@ -31,6 +32,9 @@ defmodule Gitspace.CLI.Reindex do
       IO.puts(:stderr, "warning: #{orphan.workspace} has no marker (run `gitspace doctor`)")
     end)
   end
+
+  defp format_issue(%{kind: :missing_project_path, project: project, path: path}),
+    do: "missing_project_path #{project}: #{path}"
 
   defp format_issue(%{kind: :hash_mismatch} = issue) do
     "hash_mismatch #{issue.path}: expected #{String.slice(issue.expected, 0, 12)}, got #{String.slice(issue.actual, 0, 12)}"

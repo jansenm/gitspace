@@ -6,14 +6,16 @@ defmodule Gitspace.CLI.Co do
 
   def run(global, args) do
     with {:ok, opts, rest} <- Helpers.parse(args, strict()),
-         {:ok, target} <- one_arg(rest, "gitspace co <repo>@<ref>"),
-         {:ok, repo, ref} <- split_target(target),
-         {:ok, name} <- co_name(opts),
+         {:ok, target} <- one_arg(rest, "gitspace co <project>[@<ref>]"),
+         {:ok, project, ref} <- split_target(target),
          {:ok, config} <- Helpers.load_config(),
          :ok <- Helpers.start_index(config) do
       create_opts = [
-        name: name,
+        topic: opts[:topic],
+        only: Keyword.get_values(opts, :only),
+        exclude: Keyword.get_values(opts, :exclude),
         as: opts[:as],
+        new_branch: opts[:new_branch],
         branch: opts[:branch],
         detach: opts[:detach],
         labels: Keyword.get_values(opts, :label),
@@ -22,7 +24,7 @@ defmodule Gitspace.CLI.Co do
         on_occupied: occupied_handler(global)
       ]
 
-      case Create.co(config, repo, ref, create_opts) do
+      case Create.co(config, project, ref, create_opts) do
         {:ok, result} ->
           {:ok, co_data(result, ref), &render/1}
 
@@ -37,36 +39,16 @@ defmodule Gitspace.CLI.Co do
 
   defp strict do
     [
-      ticket: :string,
-      name: :string,
+      topic: :string,
+      only: :keep,
+      exclude: :keep,
       as: :string,
+      new_branch: :boolean,
       branch: :string,
       detach: :boolean,
       label: :keep,
       fetch: :boolean
     ] ++ Helpers.global_strict()
-  end
-
-  defp co_name(opts) do
-    case {opts[:ticket], opts[:name]} do
-      {nil, nil} ->
-        {:ok, nil}
-
-      {ticket, nil} ->
-        {:ok, ticket}
-
-      {nil, name} ->
-        {:ok, name}
-
-      {ticket, name} when ticket == name ->
-        {:ok, ticket}
-
-      {_ticket, _name} ->
-        {:error,
-         Error.new(:usage, "--ticket and --name are aliases; use only one",
-           hint: "for example: gitspace co api@main --ticket JENKINS-123"
-         )}
-    end
   end
 
   defp occupied_handler(global) do
@@ -77,13 +59,16 @@ defmodule Gitspace.CLI.Co do
 
   defp split_target(target) do
     case String.split(target, "@", parts: 2) do
-      [repo, ref] when repo != "" and ref != "" ->
-        {:ok, repo, ref}
+      [project] when project != "" ->
+        {:ok, project, nil}
+
+      [project, ref] when project != "" and ref != "" ->
+        {:ok, project, ref}
 
       _ ->
         {:error,
-         Error.new(:usage, "usage: gitspace co <repo>@<ref>",
-           hint: "for example: gitspace co api@hotfix/timeout"
+         Error.new(:usage, "usage: gitspace co <project>[@<ref>]",
+           hint: "for example: gitspace co vemags@development --topic MT4711 --new-branch"
          )}
     end
   end
@@ -92,25 +77,43 @@ defmodule Gitspace.CLI.Co do
   defp one_arg(_rest, usage), do: {:error, Error.new(:usage, "usage: #{usage}")}
 
   defp co_data(result, ref) do
-    member =
+    first =
       case result.members do
         [member | _] -> member
         [] -> %{}
       end
 
     %{
+      project: result.project,
+      topic: result.topic,
+      workspace: result.workspace,
       work: result.workspace,
+      path: result.path,
+      marker: result.marker_path,
+      ref: ref,
+      labels: result.labels,
+      members: Enum.map(result.members, &member_map/1),
+      name: first[:name],
+      repo: first[:repo],
+      head: first[:head],
+      branch: first[:branch],
+      detached: first[:detached],
+      ownership: first[:ownership],
+      reused: result.members != [] and Enum.all?(result.members, &(&1.action == "reused"))
+    }
+  end
+
+  defp member_map(member) do
+    %{
+      repo: member[:repo],
       name: member[:name],
       path: member[:path],
-      repo: member[:repo],
-      ref: ref,
-      head: member[:head],
       branch: member[:branch],
       detached: member[:detached],
+      ref: member[:ref],
+      head: member[:head],
       ownership: member[:ownership],
-      labels: result.labels,
-      reused: member[:action] == "reused",
-      marker: result.marker_path
+      action: member[:action]
     }
   end
 
@@ -131,29 +134,29 @@ defmodule Gitspace.CLI.Co do
     action =
       cond do
         data.reused -> "already checked out"
-        data.detached -> "created detached"
-        true -> "created"
+        Enum.all?(data.members, &(&1.action == "created")) -> "created"
+        true -> "updated"
       end
 
     IO.puts("#{action}: #{data.path}")
-    IO.puts("  work:     #{data.work}")
-    IO.puts("  repo:     #{data.repo}")
-
-    if data.name do
-      IO.puts("  name:     #{data.name}")
-    end
-
-    IO.puts("  ref:      #{data.ref}")
-    IO.puts("  branch:   #{data.branch || "(detached)"}")
-
-    if data.head do
-      IO.puts("  head:     #{String.slice(data.head, 0, 12)}")
-    end
+    IO.puts("  project:  #{data.project}")
+    IO.puts("  topic:    #{data.topic}")
+    IO.puts("  ref:      #{data.ref || "(each default branch)"}")
 
     IO.puts("  labels:   #{if data.labels == [], do: "-", else: Enum.join(data.labels, ", ")}")
 
-    if data.ownership == "borrowed" do
-      IO.puts("  borrowed: the existing checkout was kept in place")
-    end
+    IO.puts("")
+
+    Output.table(
+      ["ACTION", "MEMBER", "BRANCH", "PATH"],
+      Enum.map(data.members, fn member ->
+        [
+          member.action,
+          member.name || member.repo,
+          member.branch || "(detached)",
+          member.path
+        ]
+      end)
+    )
   end
 end

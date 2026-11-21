@@ -9,17 +9,46 @@ defmodule Gitspace.Workspaces do
 
   import Ecto.Query
 
-  alias Gitspace.{Checkouts, Config, Error, Marker, Repo}
+  alias Gitspace.{Checkouts, Config, Error, Marker, Projects, Repo}
   alias Gitspace.Index.{Checkout, Repository, Workspace, WorkspaceLabel, WorkspaceMember}
 
   @spec reindex(Config.t()) :: {:ok, map()}
   def reindex(%Config{} = config) do
-    {:ok, markers, bad} = Marker.find_all(config.checkouts_dir)
+    projects = Projects.list(config)
+
+    {markers, bad, project_issues} =
+      Enum.reduce(projects, {[], [], []}, fn project, {markers, bad, issues} ->
+        cond do
+          not File.dir?(project.path) ->
+            {markers, bad,
+             [
+               %{
+                 kind: :missing_project_path,
+                 project: project.name,
+                 path: project.path
+               }
+               | issues
+             ]}
+
+          true ->
+            {:ok, found, invalid} = Marker.find_all(project.path)
+
+            found =
+              Enum.map(found, fn {dir, marker} ->
+                {dir,
+                 marker
+                 |> Map.put_new("project", project.name)
+                 |> Map.put_new("topic", Path.basename(dir))}
+              end)
+
+            {markers ++ found, bad ++ invalid, issues}
+        end
+      end)
 
     issues =
       Enum.map(bad, fn {path, reason} ->
         %{kind: :invalid_marker, path: path, reason: inspect(reason)}
-      end)
+      end) ++ project_issues
 
     {workspaces, members, issues} =
       Enum.reduce(markers, {0, 0, issues}, fn {dir, marker}, {ws_count, member_count, issues} ->
@@ -54,6 +83,8 @@ defmodule Gitspace.Workspaces do
 
   @spec get(Config.t(), String.t()) :: {:ok, Workspace.t()} | {:error, Error.t()}
   def get(%Config{} = _config, name) do
+    name = String.trim(name)
+
     query =
       from(w in Workspace,
         where: w.name == ^name and w.state == "active",
@@ -61,8 +92,43 @@ defmodule Gitspace.Workspaces do
       )
 
     case Repo.one(query) do
-      nil -> {:error, Error.new(:not_found, "workspace not found: #{name}")}
-      workspace -> {:ok, workspace}
+      %Workspace{} = workspace ->
+        {:ok, workspace}
+
+      nil ->
+        # A bare topic is accepted when it is unique across projects.
+        matches =
+          from(w in Workspace,
+            where: w.state == "active" and like(w.name, ^"%/#{name}"),
+            preload: [members: [checkout: :repository], labels: []]
+          )
+          |> Repo.all()
+
+        case matches do
+          [workspace] ->
+            {:ok, workspace}
+
+          [] ->
+            {:error, Error.new(:not_found, "workspace not found: #{name}")}
+
+          many ->
+            names = Enum.map(many, & &1.name)
+
+            {:error,
+             Error.new(:ambiguous, "workspace name is ambiguous: #{name}",
+               hint: "use one of: #{Enum.join(names, ", ")}",
+               details: %{matches: names}
+             )}
+        end
+    end
+  end
+
+  @doc "Project and topic for a workspace whose name is `project/topic`."
+  @spec parts(Workspace.t()) :: {String.t() | nil, String.t()}
+  def parts(%Workspace{name: name}) do
+    case String.split(name, "/", parts: 2) do
+      [project, topic] -> {project, topic}
+      [topic] -> {nil, topic}
     end
   end
 

@@ -9,7 +9,7 @@ defmodule Gitspace.CLI.WorkspaceTest do
     previous = System.get_env("GITSPACE_CONFIG")
     System.put_env("GITSPACE_CONFIG", config.path)
     System.delete_env("GITSPACE_DATA")
-    System.delete_env("GITSPACE_CHECKOUTS")
+    System.delete_env("GITSPACE_PROJECTS_ROOT")
 
     on_exit(fn ->
       if previous do
@@ -19,7 +19,7 @@ defmodule Gitspace.CLI.WorkspaceTest do
       end
 
       System.delete_env("GITSPACE_DATA")
-      System.delete_env("GITSPACE_CHECKOUTS")
+      System.delete_env("GITSPACE_PROJECTS_ROOT")
     end)
 
     source_a = Fixtures.source_repo!(branches: ["hotfix/timeout"], tags: ["v1.0.0"])
@@ -37,8 +37,11 @@ defmodule Gitspace.CLI.WorkspaceTest do
 
     assert data["ok"]
     assert data["schema_version"] == 1
-    assert data["data"]["work"] == "main"
-    assert data["data"]["path"] == Path.join([data_root(), "work", "main", "a"])
+    assert data["data"]["work"] == "a/main"
+
+    assert data["data"]["members"] |> hd() |> Map.get("path") ==
+             Path.join([data_root(), "work", "a", "main", "a"])
+
     assert data["data"]["ref"] == "main"
     assert data["data"]["branch"] == "main"
     assert data["data"]["labels"] == ["one", "two"]
@@ -71,7 +74,7 @@ defmodule Gitspace.CLI.WorkspaceTest do
 
     assert data["dry_run"] == true
     assert data["created"] == true
-    assert data["workspace"] == "MT-4711"
+    assert data["workspace"] == "a/MT-4711"
     assert data["labels"] == ["jira"]
     assert Enum.map(data["members"], & &1["action"]) == ["create", "create"]
     refute File.exists?(data["marker_path"])
@@ -87,7 +90,7 @@ defmodule Gitspace.CLI.WorkspaceTest do
 
     {status, 0} = cli(["workspace", "status", "MT-4711", "--json"])
     workspace = Jason.decode!(status)["data"]["workspace"]
-    assert workspace["name"] == "MT-4711"
+    assert workspace["name"] == "a/MT-4711"
     assert length(workspace["members"]) == 2
   end
 
@@ -100,7 +103,7 @@ defmodule Gitspace.CLI.WorkspaceTest do
     assert error["code"] == "branch_occupied"
     assert error["details"]["branch"] == "main"
     assert error["hint"] =~ "--detach"
-    refute File.exists?(Path.join([data_root(), "work", "occupied"]))
+    refute File.exists?(Path.join([data_root(), "work", "a", "occupied"]))
   end
 
   test "CREATE-11 partial creation exits 7 and a re-run completes" do
@@ -118,7 +121,7 @@ defmodule Gitspace.CLI.WorkspaceTest do
 
     error = Jason.decode!(output)["error"]
     assert error["code"] == "partial"
-    assert error["details"]["workspace"] == "partial"
+    assert error["details"]["workspace"] == "a/partial"
     assert [member] = error["details"]["members"]
     assert member["repo"] == "a"
     assert [failure] = error["details"]["failures"]
@@ -148,7 +151,7 @@ defmodule Gitspace.CLI.WorkspaceTest do
   end
 
   test "CREATE-10 a path conflict exits 4 and leaves the path untouched" do
-    path = Path.join([data_root(), "work", "conflict", "a"])
+    path = Path.join([data_root(), "work", "a", "conflict", "a"])
     File.mkdir_p!(path)
     File.write!(Path.join(path, "keep.txt"), "do not overwrite")
 
@@ -181,7 +184,7 @@ defmodule Gitspace.CLI.WorkspaceTest do
 
     {created, 0} = cli(["co", "a@later", "--fetch", "--json"])
     data = Jason.decode!(created)["data"]
-    assert data["work"] == "later"
+    assert data["work"] == "a/later"
     assert data["branch"] == "later"
   end
 
@@ -193,7 +196,7 @@ defmodule Gitspace.CLI.WorkspaceTest do
 
     assert [member] = data["members"]
     assert member["ownership"] == "borrowed"
-    assert member["path"] == Path.join([data_root(), "work", "main", "a"])
+    assert member["path"] == Path.join([data_root(), "work", "a", "main", "a"])
     assert member["branch"] == "main"
   end
 
@@ -201,7 +204,9 @@ defmodule Gitspace.CLI.WorkspaceTest do
     {co, 0} = cli(["co", "a@main", "--as", "checkout", "--json"])
     co_data = Jason.decode!(co)["data"]
     assert co_data["name"] == "checkout"
-    assert co_data["path"] == Path.join([data_root(), "work", "main", "checkout"])
+
+    assert hd(co_data["members"])["path"] ==
+             Path.join([data_root(), "work", "a", "main", "checkout"])
 
     {created, 0} =
       cli([
@@ -218,9 +223,9 @@ defmodule Gitspace.CLI.WorkspaceTest do
     data = Jason.decode!(created)["data"]
     assert [member] = data["members"]
     assert member["name"] == "acme"
-    assert member["path"] == Path.join([data_root(), "work", "aliased", "acme"])
+    assert member["path"] == Path.join([data_root(), "work", "b", "aliased", "acme"])
 
-    {path_output, 0} = cli(["path", "aliased:acme", "--json"])
+    {path_output, 0} = cli(["path", "b/aliased:acme", "--json"])
     assert Jason.decode!(path_output)["data"]["path"] == member["path"]
 
     {output, 2} =
@@ -229,18 +234,23 @@ defmodule Gitspace.CLI.WorkspaceTest do
     assert Jason.decode!(output)["error"]["code"] == "usage"
   end
 
-  test "co --ticket names the workspace independently of the ref" do
-    {output, 0} = cli(["co", "a@main", "--ticket", "JENKINS-42", "--json"])
-    data = Jason.decode!(output)["data"]
-    assert data["work"] == "JENKINS-42"
-    assert data["ref"] == "main"
-    assert data["path"] == Path.join([data_root(), "work", "JENKINS-42", "a"])
+  test "co --topic names the workspace and --new-branch creates an owned branch" do
+    {output, 0} =
+      cli(["co", "a@main", "--topic", "JENKINS-42", "--new-branch", "--json"])
 
-    {again, 0} = cli(["co", "a@main", "--ticket", "JENKINS-42", "--json"])
+    data = Jason.decode!(output)["data"]
+    assert data["work"] == "a/JENKINS-42"
+    assert data["ref"] == "main"
+    assert data["branch"] == "feature/JENKINS-42"
+    assert hd(data["members"])["path"] == Path.join([data_root(), "work", "a", "JENKINS-42", "a"])
+
+    {again, 0} =
+      cli(["co", "a@main", "--topic", "JENKINS-42", "--new-branch", "--json"])
+
     assert Jason.decode!(again)["data"]["reused"] == true
 
     {conflict, 2} =
-      cli(["co", "a@main", "--ticket", "JENKINS-42", "--name", "other", "--json"])
+      cli(["co", "a@main", "--topic", "JENKINS-42", "--only", "a", "--exclude", "a", "--json"])
 
     assert Jason.decode!(conflict)["error"]["code"] == "usage"
   end
@@ -286,7 +296,7 @@ defmodule Gitspace.CLI.WorkspaceTest do
     {path_output, 0} = cli(["path", "three:c", "--json"])
 
     assert Jason.decode!(path_output)["data"]["path"] ==
-             Path.join([data_root(), "work", "main", "c"])
+             Path.join([data_root(), "work", "c", "main", "c"])
   end
 
   test "workspace ls reports active workspaces as JSON" do
@@ -294,7 +304,7 @@ defmodule Gitspace.CLI.WorkspaceTest do
     {output, 0} = cli(["workspace", "ls", "--json"])
 
     assert [workspace] = Jason.decode!(output)["data"]["workspaces"]
-    assert workspace["name"] == "listed"
+    assert workspace["name"] == "a/listed"
     assert workspace["labels"] == ["x"]
     assert workspace["members"] == 1
 
@@ -304,13 +314,13 @@ defmodule Gitspace.CLI.WorkspaceTest do
 
   test "help covers co and workspace" do
     {top, 0} = cli(["--help"])
-    assert top =~ "co <repo>@<ref>"
+    assert top =~ "co <project>[@<ref>]"
     assert top =~ "workspace new|ls|status"
 
     {co, 0} = cli(["co", "--help"])
-    assert co =~ "gitspace co <repo>@<ref>"
-    assert co =~ "--ticket"
-    assert co =~ "JENKINS-123"
+    assert co =~ "gitspace co <project>[@<ref>]"
+    assert co =~ "--new-branch"
+    assert co =~ "MT4711"
 
     {workspace, 0} = cli(["workspace", "--help"])
     assert workspace =~ "gitspace workspace new <name>"

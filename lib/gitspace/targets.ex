@@ -6,7 +6,7 @@ defmodule Gitspace.Targets do
   substring. Ambiguity is an error, never a guess.
   """
 
-  alias Gitspace.{Checkouts, Config, Error, Marker, Repos, Workspaces}
+  alias Gitspace.{Checkouts, Config, Error, Marker, Projects, Repos, Workspaces}
   alias Gitspace.Index.{Checkout, Repository, Workspace}
 
   @type resolved ::
@@ -14,6 +14,7 @@ defmodule Gitspace.Targets do
           | {:checkout, Checkout.t()}
           | {:member, Workspace.t(), map()}
           | {:repo, Repository.t()}
+          | {:project, Projects.t()}
 
   @spec resolve(Config.t(), String.t()) :: {:ok, resolved()} | {:error, Error.t()}
   def resolve(%Config{} = config, target) do
@@ -22,6 +23,24 @@ defmodule Gitspace.Targets do
     cond do
       target == "" ->
         {:error, Error.new(:usage, "target is required")}
+
+      String.starts_with?(target, "project:") ->
+        target
+        |> String.replace_prefix("project:", "")
+        |> then(&Projects.get(config, &1))
+        |> case do
+          {:ok, project} -> {:ok, {:project, project}}
+          {:error, error} -> {:error, error}
+        end
+
+      String.starts_with?(target, "repo:") ->
+        target
+        |> String.replace_prefix("repo:", "")
+        |> then(&Repos.get(config, &1))
+        |> case do
+          {:ok, repo} -> {:ok, {:repo, repo}}
+          {:error, error} -> {:error, error}
+        end
 
       String.contains?(target, ":") ->
         resolve_member(config, target)
@@ -48,25 +67,23 @@ defmodule Gitspace.Targets do
            }}
 
         {:workspace, workspace} ->
-          case workspace.members do
-            [member] ->
-              {:ok,
-               %{
-                 path: member.checkout.path,
-                 kind: :workspace,
-                 target: target,
-                 handle: handle(workspace, member)
-               }}
+          root =
+            case workspace.marker_path do
+              nil -> nil
+              marker -> Path.dirname(marker)
+            end
 
-            members ->
-              handles = Enum.map(members, &handle(workspace, &1))
-
-              {:error,
-               Error.new(:ambiguous, "#{workspace.name} has #{length(members)} members",
-                 hint: "use one of: #{Enum.join(handles, ", ")}",
-                 details: %{members: handles}
-               )}
+          if root do
+            {:ok, %{path: root, kind: :workspace, target: target}}
+          else
+            {:error,
+             Error.new(:error, "workspace #{workspace.name} has no recorded path",
+               hint: "run `gitspace doctor --reindex`"
+             )}
           end
+
+        {:project, project} ->
+          {:ok, %{path: project.path, kind: :project, target: target}}
 
         {:repo, repo} ->
           checkouts = Checkouts.list(config, repo: repo.slug)
@@ -117,9 +134,15 @@ defmodule Gitspace.Targets do
         {:ok, {:workspace, workspace}}
 
       {:error, _} ->
-        case Repos.get(config, target) do
-          {:ok, repo} -> {:ok, {:repo, repo}}
-          {:error, _} -> resolve_path_or_suffix(config, target)
+        case Projects.get(config, target) do
+          {:ok, project} ->
+            {:ok, {:project, project}}
+
+          {:error, _} ->
+            case Repos.get(config, target) do
+              {:ok, repo} -> {:ok, {:repo, repo}}
+              {:error, _} -> resolve_path_or_suffix(config, target)
+            end
         end
     end
   end
@@ -174,7 +197,8 @@ defmodule Gitspace.Targets do
 
   defp resolve_suffix(config, target) do
     candidates =
-      workspace_candidates(config) ++ repo_candidates(config) ++ checkout_candidates(config)
+      workspace_candidates(config) ++
+        project_candidates(config) ++ repo_candidates(config) ++ checkout_candidates(config)
 
     matches =
       Enum.filter(candidates, fn candidate -> String.contains?(candidate.label, target) end)
@@ -203,6 +227,12 @@ defmodule Gitspace.Targets do
   defp workspace_candidates(config) do
     Enum.map(Workspaces.list(config), fn workspace ->
       %{label: workspace.name, key: {:workspace, workspace.id}, value: {:workspace, workspace}}
+    end)
+  end
+
+  defp project_candidates(config) do
+    Enum.map(Projects.list(config), fn project ->
+      %{label: project.name, key: {:project, project.name}, value: {:project, project}}
     end)
   end
 

@@ -8,7 +8,7 @@ defmodule Gitspace.Create do
   completes it.
   """
 
-  alias Gitspace.{Checkouts, Config, Error, Layout, Marker, Repos, Workspaces}
+  alias Gitspace.{Checkouts, Config, Error, Layout, Marker, Projects, Repos, Workspaces}
   alias Gitspace.Git.{Mirror, Refs, Worktree}
   alias Gitspace.Index.Repository
 
@@ -25,6 +25,8 @@ defmodule Gitspace.Create do
           }
 
   @type result :: %{
+          project: String.t(),
+          topic: String.t(),
           workspace: String.t(),
           path: Path.t(),
           marker_path: Path.t(),
@@ -35,84 +37,281 @@ defmodule Gitspace.Create do
           members: [member()]
         }
 
-  @spec co(Config.t(), String.t() | Repository.t(), String.t(), keyword()) ::
+  @spec co(Config.t(), String.t(), String.t() | nil, keyword()) ::
           {:ok, result()} | {:partial, result(), [map()]} | {:error, Error.t()}
-  def co(%Config{} = config, repo_selector, ref, opts \\ []) do
-    with :ok <- validate_ref(ref),
-         {:ok, repo} <- resolve_repo(config, repo_selector),
-         :ok <- require_mirror(repo),
-         :ok <- validate_co_options(opts),
-         {:ok, work} <- co_work(ref, opts) do
-      spec = %{
-        repo: repo,
-        member_name: opts[:as],
-        ownership: "owned",
-        ref: ref,
-        branch_mode: co_branch_mode(opts)
-      }
+  def co(%Config{} = config, target, ref, opts \\ []) do
+    with {:ok, project} <- resolve_project_target(config, target),
+         {:ok, members} <- Projects.resolve_members(config, project),
+         {:ok, selected} <- select_members(members, opts),
+         {:ok, topic} <- co_topic(ref, opts),
+         :ok <- validate_co_options(opts, topic),
+         {:ok, branch_mode} <- co_branch_mode(opts) do
+      branch_mode = if is_nil(ref) and branch_mode == :ref, do: :default, else: branch_mode
+
+      specs =
+        Enum.map(selected, fn repo ->
+          %{
+            repo: repo,
+            member_name: single_member_name(selected, opts),
+            ownership: "owned",
+            ref: ref,
+            branch_mode: branch_mode
+          }
+        end)
 
       workspace_new(
         config,
-        work,
-        [spec],
+        topic,
+        specs,
         [],
-        Keyword.merge(opts, single_repo: repo, created_by: "co")
+        Keyword.merge(opts,
+          project: project.name,
+          project_path: project.path,
+          topic: topic,
+          created_by: "co"
+        )
       )
+    end
+  end
+
+  defp resolve_project_target(config, target) do
+    case Projects.get(config, target) do
+      {:ok, project} ->
+        {:ok, project}
+
+      {:error, %Error{code: :not_found}} ->
+        case Repos.get(config, target) do
+          {:ok, repo} ->
+            case Projects.projects_for_repo(config, repo) do
+              [name | _] -> Projects.get(config, name)
+              [] -> Projects.ensure_implicit(config, repo)
+            end
+
+          {:error, error} ->
+            {:error, error}
+        end
+
+      {:error, error} ->
+        {:error, error}
+    end
+  end
+
+  defp select_members(members, opts) do
+    only = normalize_member_list(opts[:only])
+    exclude = normalize_member_list(opts[:exclude])
+
+    cond do
+      only != [] and exclude != [] ->
+        {:error, Error.new(:usage, "--only and --exclude are mutually exclusive")}
+
+      members == [] ->
+        {:error,
+         Error.new(:usage, "project has no members", hint: "add one with `gitspace project add`")}
+
+      only != [] ->
+        selected = Enum.filter(members, &(&1.slug in only))
+        unknown = only -- Enum.map(selected, & &1.slug)
+
+        cond do
+          unknown != [] ->
+            {:error,
+             Error.new(:usage, "not a project member: #{Enum.join(unknown, ", ")}",
+               hint: "members: #{Enum.map_join(members, ", ", & &1.slug)}"
+             )}
+
+          selected == [] ->
+            {:error, Error.new(:usage, "no members selected")}
+
+          true ->
+            {:ok, selected}
+        end
+
+      exclude != [] ->
+        selected = Enum.reject(members, &(&1.slug in exclude))
+        unknown = exclude -- Enum.map(members, & &1.slug)
+
+        cond do
+          unknown != [] ->
+            {:error,
+             Error.new(:usage, "not a project member: #{Enum.join(unknown, ", ")}",
+               hint: "members: #{Enum.map_join(members, ", ", & &1.slug)}"
+             )}
+
+          selected == [] ->
+            {:error, Error.new(:usage, "no members selected")}
+
+          true ->
+            {:ok, selected}
+        end
+
+      true ->
+        {:ok, members}
+    end
+  end
+
+  defp normalize_member_list(nil), do: []
+
+  defp normalize_member_list(value) when is_binary(value) do
+    value
+    |> String.split(",", trim: true)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.uniq()
+  end
+
+  defp normalize_member_list(values) when is_list(values) do
+    values
+    |> Enum.flat_map(&normalize_member_list/1)
+    |> Enum.uniq()
+  end
+
+  defp single_member_name([_repo], opts), do: opts[:as]
+  defp single_member_name(_members, _opts), do: nil
+
+  defp co_topic(ref, opts) do
+    cond do
+      is_binary(opts[:name]) and not is_binary(opts[:topic]) ->
+        normalize_topic(opts[:name])
+
+      opts[:new_branch] == true and not is_binary(opts[:topic]) ->
+        {:error,
+         Error.new(:usage, "--new-branch requires --topic",
+           hint: "for example: gitspace co vemags@development --topic MT4711 --new-branch"
+         )}
+
+      is_binary(opts[:topic]) ->
+        normalize_topic(opts[:topic])
+
+      is_binary(opts[:branch]) ->
+        case Layout.work_slug(opts[:branch]) do
+          {:ok, _} -> normalize_topic(opts[:branch])
+          {:error, reason} -> {:error, Error.new(:usage, "invalid topic: #{reason}")}
+        end
+
+      is_binary(ref) ->
+        case Layout.ref_slug(ref) do
+          {:ok, slug} ->
+            {:ok, slug}
+
+          {:error, reason} ->
+            {:error, Error.new(:usage, "cannot derive a topic from #{ref}: #{reason}")}
+        end
+
+      true ->
+        {:error,
+         Error.new(:usage, "--topic is required when no ref names the work",
+           hint: "for example: gitspace co vemags --topic MT4711 --new-branch"
+         )}
+    end
+  end
+
+  defp normalize_topic(topic) do
+    case Layout.work_slug(topic) do
+      {:ok, _} ->
+        {:ok, String.trim(topic)}
+
+      {:error, reason} ->
+        {:error, Error.new(:usage, "invalid topic #{inspect(topic)}: #{reason}")}
+    end
+  end
+
+  defp co_branch_mode(opts) do
+    cond do
+      opts[:detach] -> {:ok, :detach}
+      is_binary(opts[:branch]) -> {:ok, {:create, opts[:branch]}}
+      opts[:new_branch] -> {:ok, :derive}
+      true -> {:ok, :ref}
+    end
+  end
+
+  defp validate_co_options(opts, topic) do
+    cond do
+      opts[:detach] == true and is_binary(opts[:branch]) ->
+        {:error, Error.new(:usage, "--branch and --detach are mutually exclusive")}
+
+      opts[:detach] == true and opts[:new_branch] == true ->
+        {:error, Error.new(:usage, "--new-branch and --detach are mutually exclusive")}
+
+      is_binary(opts[:branch]) and opts[:new_branch] == true ->
+        {:error, Error.new(:usage, "--branch and --new-branch are mutually exclusive")}
+
+      opts[:new_branch] == true and topic == nil ->
+        {:error, Error.new(:usage, "--new-branch requires --topic")}
+
+      true ->
+        :ok
     end
   end
 
   @spec workspace_new(Config.t(), String.t(), [map()], [map()], keyword()) ::
           {:ok, result()} | {:partial, result(), [map()]} | {:error, Error.t()}
   def workspace_new(%Config{} = config, name, owned_specs, borrowed_specs, opts \\ []) do
-    with {:ok, name} <- normalize_name(name),
+    with {:ok, topic} <- normalize_name(name),
          {:ok, specs} <- resolve_specs(config, owned_specs, borrowed_specs),
          :ok <- validate_specs(specs, opts),
-         {:ok, work_dir} <- work_dir(config, name),
-         {:ok, existing} <- load_existing(config, work_dir, name),
-         :ok <- single_repo_check(existing, specs, opts),
-         {:ok, plans, failures} <- plan_all(config, name, work_dir, specs, existing, opts),
+         {:ok, project} <- resolve_project(config, specs, opts),
+         {:ok, full_name, work_dir} <- workspace_location(config, project, topic),
+         {:ok, existing} <- load_existing(config, work_dir, full_name),
+         opts = Keyword.merge(opts, project: project.name, topic: topic, workspace: full_name),
+         {:ok, plans, failures} <- plan_all(config, full_name, work_dir, specs, existing, opts),
          :ok <- validate_plan_names(existing, plans) do
       if opts[:dry_run] do
-        dry_run(config, name, work_dir, existing, plans, failures, opts)
+        dry_run(config, full_name, work_dir, existing, plans, failures, opts)
       else
-        execute(config, name, work_dir, existing, plans, failures, opts)
+        execute(config, full_name, work_dir, existing, plans, failures, opts)
       end
     end
   end
 
-  defp co_branch_mode(opts) do
+  defp resolve_project(config, specs, opts) do
     cond do
-      opts[:detach] -> :detach
-      is_binary(opts[:branch]) -> {:create, opts[:branch]}
-      true -> :ref
-    end
-  end
+      is_binary(opts[:project]) ->
+        Projects.get(config, opts[:project])
 
-  defp validate_co_options(opts) do
-    if opts[:detach] == true and is_binary(opts[:branch]) do
-      {:error, Error.new(:usage, "--branch and --detach are mutually exclusive")}
-    else
-      :ok
-    end
-  end
+      specs == [] ->
+        {:error, Error.new(:usage, "at least one member is required")}
 
-  defp co_work(ref, opts) do
-    case opts[:name] do
-      nil ->
-        case Layout.ref_slug(ref) do
-          {:ok, slug} ->
-            {:ok, slug}
+      true ->
+        repo = hd(specs).repo
 
-          {:error, reason} ->
-            {:error, Error.new(:usage, "cannot derive a work name from #{ref}: #{reason}")}
+        case Projects.projects_for_repo(config, repo) do
+          [name | _] ->
+            Projects.get(config, name)
+
+          [] ->
+            Projects.ensure_implicit(config, repo)
         end
+    end
+  end
 
-      name ->
-        normalize_name(name)
+  defp workspace_location(_config, project, topic) do
+    with {:ok, slug} <- Layout.work_slug(topic) do
+      root = Path.expand(project.path)
+      dir = Path.expand(Path.join(root, slug))
+      full_name = "#{project.name}/#{topic}"
+
+      cond do
+        dir == root ->
+          {:error, Error.new(:refused, "workspace path must be below the project path")}
+
+        not String.starts_with?(dir, root <> "/") ->
+          {:error, Error.new(:refused, "workspace path escapes the project path")}
+
+        true ->
+          {:ok, full_name, dir}
+      end
     end
   end
 
   defp normalize_name(name) when is_binary(name) do
+    if String.contains?(name, ":") do
+      {:error, Error.new(:usage, "workspace name cannot contain ':': #{inspect(name)}")}
+    else
+      normalize_name_slug(name)
+    end
+  end
+
+  defp normalize_name_slug(name) do
     case Layout.work_slug(name) do
       {:ok, _slug} ->
         {:ok, String.trim(name)}
@@ -226,19 +425,14 @@ defmodule Gitspace.Create do
           {:error, Error.new(:usage, "invalid branch: #{branch}")}
         end
 
-      spec.branch_mode in [:ref, :detach] and is_nil(spec.ref) ->
-        {:error, Error.new(:usage, "a ref is required for this checkout")}
+      spec.branch_mode == :ref and is_nil(spec.ref) ->
+        {:error, Error.new(:usage, "a ref is required for a direct checkout")}
+
+      spec.branch_mode == :detach and is_nil(spec.ref) ->
+        {:error, Error.new(:usage, "a ref is required for a detached checkout")}
 
       true ->
         :ok
-    end
-  end
-
-  defp validate_ref(ref) do
-    if Layout.valid_ref?(ref) do
-      :ok
-    else
-      {:error, Error.new(:usage, "invalid ref: #{ref}")}
     end
   end
 
@@ -261,37 +455,6 @@ defmodule Gitspace.Create do
     %{error | hint: "register it with `gitspace repo add <url> --name #{selector}`"}
   end
 
-  defp require_mirror(repo) do
-    cond do
-      repo.state == "external" or is_nil(repo.bare_path) ->
-        {:error,
-         Error.new(:refused, "repository #{repo.slug} is external",
-           hint: "register its remote with `gitspace repo add <url> --name #{repo.slug}`"
-         )}
-
-      not File.dir?(repo.bare_path) ->
-        {:error,
-         Error.new(:refused, "mirror for #{repo.slug} is missing",
-           hint: "run `gitspace repo add <url> --name #{repo.slug}` again"
-         )}
-
-      true ->
-        :ok
-    end
-  end
-
-  defp work_dir(config, name) do
-    {:ok, slug} = Layout.work_slug(name)
-    root = Path.expand(config.checkouts_dir)
-    dir = Path.expand(Path.join(root, slug))
-
-    if dir == root or String.starts_with?(dir, root <> "/") do
-      {:ok, dir}
-    else
-      {:error, Error.new(:refused, "workspace path escapes the checkout root")}
-    end
-  end
-
   defp load_existing(config, work_dir, name) do
     marker_path = Path.join(work_dir, Marker.marker_filename())
     database = database_workspace(config, name)
@@ -307,7 +470,7 @@ defmodule Gitspace.Create do
                Error.new(
                  :conflict,
                  "workspace directory already belongs to #{marker["workspace"]}",
-                 hint: "choose another name with --name",
+                 hint: "choose another topic name",
                  details: %{path: work_dir, existing: marker["workspace"]}
                )}
             end
@@ -403,36 +566,6 @@ defmodule Gitspace.Create do
     end
   end
 
-  defp single_repo_check(existing, specs, opts) do
-    case opts[:single_repo] do
-      nil ->
-        :ok
-
-      repo ->
-        others =
-          existing.members
-          |> Enum.reject(&member_matches_repo?(&1, repo))
-          |> Enum.map(&member_label/1)
-
-        cond do
-          others != [] ->
-            {:error,
-             Error.new(
-               :conflict,
-               "workspace already contains other repositories: #{Enum.join(others, ", ")}",
-               hint:
-                 "use `gitspace workspace new` for a multi-repo workspace, or choose another --name"
-             )}
-
-          length(specs) != 1 ->
-            {:error, Error.new(:usage, "co takes exactly one repository")}
-
-          true ->
-            :ok
-        end
-    end
-  end
-
   defp plan_all(config, name, work_dir, specs, existing, opts) do
     {plans, failures} =
       Enum.reduce(specs, {[], []}, fn spec, {plans, failures} ->
@@ -517,8 +650,6 @@ defmodule Gitspace.Create do
     end
   end
 
-  defp member_label(member), do: member["name"] || member["repo"] || member["remote"]
-
   defp plan_owned(config, name, work_dir, spec, existing_member, opts) do
     with :ok <- ownership_matches(existing_member, "owned"),
          :ok <- existing_member_name_matches(existing_member, spec[:member_name]),
@@ -577,7 +708,7 @@ defmodule Gitspace.Create do
     end
   end
 
-  defp owned_desired(config, name, spec, path, opts) do
+  defp owned_desired(config, _name, spec, path, opts) do
     base = %{
       repo: spec.repo,
       ownership: "owned",
@@ -595,8 +726,8 @@ defmodule Gitspace.Create do
 
     case spec.branch_mode do
       :derive ->
-        with {:ok, repo, info} <- default_info(config, spec.repo, opts),
-             {:ok, branch} <- derived_branch(config, name, opts) do
+        with {:ok, repo, info} <- start_info(config, spec.repo, spec.ref, opts),
+             {:ok, branch} <- derived_branch(config, opts) do
           {:ok,
            %{
              base
@@ -609,8 +740,22 @@ defmodule Gitspace.Create do
            }}
         end
 
+      :default ->
+        with {:ok, repo, info} <- default_info(config, spec.repo, opts) do
+          {:ok,
+           %{
+             base
+             | repo: repo,
+               desired_branch: info.branch,
+               start_ref: info.start,
+               start_sha: info.sha,
+               head: info.sha,
+               branch_exists?: Refs.local_branch?(repo.bare_path, info.branch)
+           }}
+        end
+
       :detach ->
-        with {:ok, repo, info} <- ref_info(config, spec.repo, spec.ref, opts) do
+        with {:ok, repo, info} <- start_info(config, spec.repo, spec.ref, opts) do
           {:ok,
            %{
              base
@@ -624,7 +769,7 @@ defmodule Gitspace.Create do
 
       {:create, branch} ->
         with :ok <- validate_branch(branch),
-             {:ok, repo, info} <- ref_info(config, spec.repo, spec.ref, opts) do
+             {:ok, repo, info} <- start_info(config, spec.repo, spec.ref, opts) do
           {:ok,
            %{
              base
@@ -665,18 +810,21 @@ defmodule Gitspace.Create do
     end
   end
 
-  defp derived_branch(config, name, opts) do
+  defp start_info(config, repo, nil, opts), do: default_info(config, repo, opts)
+  defp start_info(config, repo, ref, opts), do: ref_info(config, repo, ref, opts)
+
+  defp derived_branch(config, opts) do
     case opts[:branch] do
       nil ->
-        case Layout.branch_for(name, config.branch_template) do
+        topic = opts[:topic] || opts[:workspace]
+
+        case Layout.branch_for(topic, config.branch_template) do
           {:ok, branch} -> {:ok, branch}
           {:error, reason} -> {:error, Error.new(:usage, "cannot derive a branch: #{reason}")}
         end
 
       branch ->
-        with :ok <- validate_branch(branch) do
-          {:ok, branch}
-        end
+        with :ok <- validate_branch(branch), do: {:ok, branch}
     end
   end
 
@@ -1400,6 +1548,8 @@ defmodule Gitspace.Create do
       end
 
     Marker.build(name,
+      project: opts[:project],
+      topic: opts[:topic],
       description: description,
       labels: Enum.uniq(existing.labels ++ List.wrap(opts[:labels])),
       created_at: existing.created_at || DateTime.utc_now() |> DateTime.to_iso8601(),
@@ -1528,6 +1678,8 @@ defmodule Gitspace.Create do
       end
 
     %{
+      project: opts[:project],
+      topic: opts[:topic],
       workspace: name,
       path: work_dir,
       marker_path: Path.join(work_dir, Marker.marker_filename()),

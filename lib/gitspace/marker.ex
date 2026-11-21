@@ -2,9 +2,9 @@ defmodule Gitspace.Marker do
   @moduledoc """
   The workspace recovery marker.
 
-  `<root>/<work>/.gitspace.json` makes a work directory self-describing so the
-  index can be rebuilt after deletion or corruption. It is tool-owned, never a
-  user-facing manifest, and must never contain secrets.
+  `<project.path>/<topic>/.gitspace.json` makes a workspace self-describing so
+  the index can be rebuilt after deletion or corruption. It is tool-owned,
+  never a user-facing manifest, and must never contain secrets.
   """
 
   @marker_file ".gitspace.json"
@@ -119,6 +119,8 @@ defmodule Gitspace.Marker do
     %{
       "schema_version" => @schema_version,
       "workspace" => workspace,
+      "project" => Map.get(attrs, :project),
+      "topic" => Map.get(attrs, :topic),
       "description" => Map.get(attrs, :description),
       "labels" => Map.get(attrs, :labels, []),
       "created_at" => Map.get(attrs, :created_at, DateTime.utc_now() |> DateTime.to_iso8601()),

@@ -26,6 +26,7 @@ defmodule Gitspace.CLI.Workspace do
          :ok <- Helpers.start_index(config) do
       create_opts =
         [
+          project: opts[:project],
           branch: opts[:branch],
           labels: Keyword.get_values(opts, :label),
           fetch: opts[:fetch],
@@ -49,6 +50,7 @@ defmodule Gitspace.CLI.Workspace do
 
   defp new_strict do
     [
+      project: :string,
       own: :keep,
       borrow: :keep,
       as: :keep,
@@ -184,6 +186,7 @@ defmodule Gitspace.CLI.Workspace do
         config
         |> Workspaces.list()
         |> filter_label(opts[:label])
+        |> filter_project(opts[:project])
         |> Enum.map(&workspace_map/1)
 
       {:ok, %{workspaces: workspaces}, &render_list/1}
@@ -191,7 +194,7 @@ defmodule Gitspace.CLI.Workspace do
   end
 
   defp ls_strict do
-    [label: :string, active: :boolean, torn_down: :boolean, all: :boolean] ++
+    [label: :string, project: :string, active: :boolean, torn_down: :boolean, all: :boolean] ++
       Helpers.global_strict()
   end
 
@@ -200,6 +203,14 @@ defmodule Gitspace.CLI.Workspace do
   defp filter_label(workspaces, label) do
     Enum.filter(workspaces, fn workspace ->
       Enum.any?(workspace.labels, &(&1.label == label))
+    end)
+  end
+
+  defp filter_project(workspaces, nil), do: workspaces
+
+  defp filter_project(workspaces, project) do
+    Enum.filter(workspaces, fn workspace ->
+      workspace.name == project or String.starts_with?(workspace.name, project <> "/")
     end)
   end
 
@@ -291,10 +302,11 @@ defmodule Gitspace.CLI.Workspace do
   def help do
     """
     USAGE
-      gitspace workspace new <name> [--own <repo>[@<ref>]]... [--borrow <repo>[@<ref>]]...
-                                    [--branch B] [--label L]... [--description D]
+      gitspace workspace new <name> [--project P] [--own <repo>[@<ref>]]...
+                                    [--borrow <repo>[@<ref>]]... [--branch B]
+                                    [--label L]... [--description D]
                                     [--as <repo>=<dir>]... [--fetch] [--dry-run] [--json]
-      gitspace workspace ls [--label L] [--all] [--json]
+      gitspace workspace ls [--project P] [--label L] [--all] [--json]
       gitspace workspace status <name> [--refresh] [--json]
 
     OWNED MEMBERS

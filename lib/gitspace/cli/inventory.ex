@@ -1,7 +1,7 @@
 defmodule Gitspace.CLI.Inventory do
   @moduledoc false
 
-  alias Gitspace.{Error, Inventory, Targets}
+  alias Gitspace.{Error, Inventory, Targets, Workspaces}
   alias Gitspace.CLI.{Helpers, Output}
 
   def inbox(_global, args) do
@@ -22,6 +22,8 @@ defmodule Gitspace.CLI.Inventory do
         Inventory.ls(config,
           repo: opts[:repo],
           workspace: opts[:workspace],
+          project: opts[:project],
+          topic: opts[:topic],
           label: opts[:label],
           state: opts[:state],
           kind: opts[:kind],
@@ -71,6 +73,10 @@ defmodule Gitspace.CLI.Inventory do
         {:checkout, checkout} ->
           {:ok, %{checkout: Inventory.show_checkout(config, checkout)}, &render_show_checkout/1}
 
+        {:project, project} ->
+          {:ok, %{project: project, workspaces: project_workspaces(config, project)},
+           &render_show_project/1}
+
         {:repo, repo} ->
           {:ok,
            %{
@@ -118,6 +124,13 @@ defmodule Gitspace.CLI.Inventory do
              refreshed: !!opts[:refresh]
            }, &render_checkout_status/1}
 
+        {:project, project} ->
+          {:ok,
+           %{
+             project: project,
+             checkouts: Inventory.ls(config, project: project.name)
+           }, &render_project_status/1}
+
         {:repo, repo} ->
           {:ok, %{repo: repo.slug, checkouts: Inventory.ls(config, repo: repo.slug)},
            &render_repo_status/1}
@@ -129,6 +142,8 @@ defmodule Gitspace.CLI.Inventory do
     [
       repo: :string,
       workspace: :string,
+      project: :string,
+      topic: :string,
       label: :string,
       state: :string,
       kind: :string,
@@ -214,8 +229,9 @@ defmodule Gitspace.CLI.Inventory do
 
     headers =
       [
-        "REPO",
-        "WORKSPACE",
+        "PROJECT",
+        "TOPIC",
+        "MEMBER",
         "BRANCH",
         "DIRTY",
         "AHEAD",
@@ -227,8 +243,9 @@ defmodule Gitspace.CLI.Inventory do
     table_rows =
       Enum.map(rows, fn row ->
         base = [
-          row.repo,
-          row.workspace || "-",
+          row.project || "-",
+          row.topic || "-",
+          row.member || row.repo,
           row.branch || "(detached)",
           number(row.dirty, row.stale),
           number(row.ahead, row.stale),
@@ -322,6 +339,40 @@ defmodule Gitspace.CLI.Inventory do
           Enum.map_join(checkout.workspaces, ", ", fn m -> "#{m.workspace} (#{m.ownership})" end)
       )
     end
+  end
+
+  defp project_workspaces(config, project) do
+    Workspaces.list(config)
+    |> Enum.filter(fn workspace ->
+      workspace.name == project.name or String.starts_with?(workspace.name, project.name <> "/")
+    end)
+  end
+
+  defp render_show_project(%{project: project, workspaces: workspaces}) do
+    IO.puts("#{project.name}")
+    IO.puts("  path:    #{project.path}")
+    IO.puts("  members: #{length(project.members)}")
+    IO.puts("  source:  #{project.source}")
+
+    if project.description do
+      IO.puts("  describe: #{project.description}")
+    end
+
+    if workspaces != [] do
+      IO.puts("")
+      IO.puts("workspaces:")
+
+      Enum.each(workspaces, fn workspace ->
+        IO.puts("  #{workspace.name}  #{workspace.marker_path}")
+      end)
+    end
+  end
+
+  defp render_project_status(%{project: project, checkouts: rows}) do
+    IO.puts("project #{project.name}")
+    IO.puts("  path: #{project.path}")
+    IO.puts("")
+    render_ls(%{checkouts: rows, verbose: false})
   end
 
   defp render_show_repo(%{repo: repo, checkouts: rows}) do

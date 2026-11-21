@@ -1,9 +1,9 @@
 # gitspace (M2)
 
-A workspace-centric git checkout manager. This repository now implements the **creation and
-inventory path**: configure gitspace, register mirrors, create one-repo checkouts and
-multi-repo workspaces, discover and link existing checkouts, see what needs attention, and
-rebuild the index from git and markers. Teardown and pruning are M3.
+A workspace-centric git checkout manager. This repository implements the **creation and
+inventory path**: configure gitspace, register mirrors, define projects, check out topics,
+discover and link existing checkouts, see what needs attention, and rebuild the index from git
+and markers. Teardown and pruning are M3.
 
 Product scope, CLI contract and acceptance plan live in the planning repository:
 
@@ -21,7 +21,7 @@ Product scope, CLI contract and acceptance plan live in the planning repository:
 
 | Area | Commands |
 |---|---|
-| Creation | `co`, `workspace new`, `workspace ls`, `workspace status` |
+| Creation | `project new|ls|show|add|remove|rm`, `co`, `workspace new|ls|status` |
 | Setup, config and health | `setup`, `config [list|get|set]`, `doctor`, `doctor --fix`, `doctor --reindex` |
 | Mirrors | `repo add`, `repo ls`, `repo fetch`, `repo alias`, `repo rm` |
 | Discovery | `scan` (read-only), `link`, `unlink` |
@@ -29,7 +29,7 @@ Product scope, CLI contract and acceptance plan live in the planning repository:
 | Recovery | `reindex` — rediscover mirrors from disk, rebuild workspaces from markers |
 | Machine surface | `--json` on every command, exit codes 0–7, `--verbose` prints git argv |
 
-140 checks (136 tests, 3 properties, 1 doctest) in ~21 s.
+147 checks (143 tests, 3 properties, 1 doctest) in ~25 s.
 
 ## Commands
 
@@ -53,13 +53,16 @@ make install DESTDIR=/tmp/stage PREFIX=/usr/local
 First run:
 
 ```sh
-gitspace setup --data ~/.local/share/gitspace --checkouts /data/work
+gitspace setup --data ~/.local/share/gitspace --projects /data/work
 gitspace config
 gitspace repo add git@github.com:org/repo.git
 gitspace repo ls
-gitspace co api@hotfix/timeout
-gitspace workspace new JENKINS-123 --own api --own web --borrow shared-lib@main
-gitspace workspace status JENKINS-123
+gitspace project new api --repo api
+gitspace co api@main --topic dev
+gitspace co api@main --topic JENKINS-123 --new-branch
+gitspace project new webapp --repo api --repo web
+gitspace co webapp@main --topic JENKINS-123 --new-branch --only api,web
+gitspace workspace status webapp/JENKINS-123
 gitspace scan ~/src
 gitspace link ~/src/old-api
 gitspace
@@ -69,7 +72,7 @@ gitspace doctor
 ```
 
 Configuration is TOML at `$XDG_CONFIG_HOME/gitspace/config.toml` (or `GITSPACE_CONFIG`).
-`GITSPACE_DATA` and `GITSPACE_CHECKOUTS` override the paths. The index is
+`GITSPACE_DATA` and `GITSPACE_PROJECTS_ROOT` override the paths. The index is
 `<data>/index.sqlite3`; mirrors live under `<data>/repos/<sha256>.git`, with the readable
 `<data>/repos/remotes.txt` index beside them.
 
@@ -77,28 +80,87 @@ Configuration is TOML at `$XDG_CONFIG_HOME/gitspace/config.toml` (or `GITSPACE_C
 environment or a default. `config set` rewrites the file only; an environment override still
 wins at runtime and is reported after the write.
 
-## Creation model
+## Projects, topics and workspaces
 
-- `co <repo>@<ref> --ticket JENKINS-123` creates a one-repo workspace named for the
-  ticket. `--name` is an alias for `--ticket`. Without either, the workspace name defaults to
-  the sanitized ref (`hotfix/timeout` → `hotfix-timeout`). The path is
-  `<checkouts>/<workspace>/<member>`, where the member defaults to the repository alias.
-- `workspace new <name>` already takes the ticket as its first argument, so
-  `workspace new JENKINS-123 --own api --own web` is the multi-repo form.
-- A branch ref checks out that branch (creating the local branch from `origin` when needed).
-  A tag or commit is detached. `--branch` creates a named branch from the ref; `--detach`
-  forces detached.
-- `workspace new <name> --own <repo>` derives `feature_<work>` from the repository's default
-  branch. `--branch` overrides; an explicit `repo@ref` opts out and checks out that ref as-is.
-- `--borrow <repo>[@<ref>]` references an existing checkout. It is never moved, branched or
-  deleted. With several checkouts, `@<ref>` selects one by branch or commit.
-- Creation is ensure-only: matching members are reused, conflicting paths or branches are
-  errors, and nothing is overwritten. Re-running a subset leaves existing members untouched.
-- An occupied branch prompts for borrow / new branch / detach / cancel on a terminal. With
-  `--json` or no terminal it is a `branch_occupied` error (exit 4).
-- Worktrees are created first; the marker is written only for successful members. A missing
-  ref or failed member yields exit 7, and re-running the same command completes the workspace.
-- `--fetch` is opt-in and only runs when a requested ref is missing. Warm mirrors work offline.
+A **project** is a named set of registered repositories. A **topic** is the piece of work.
+Their combination is a **workspace**, and every checkout has exactly one shape:
+
+```text
+<projects.root>/<project>/<topic>/<member>
+```
+
+```text
+/data/work/ferroclass/dev/ferroclass
+/data/work/ferroclass/release-2.4/ferroclass
+/data/work/vemags/MT4711/api
+/data/work/vemags/MT4711/web
+```
+
+There is no one-repo path special case: a one-repo project is the normal case, and it can grow
+later without moving existing checkouts.
+
+```sh
+gitspace project new vemags --repo api --repo web --description "VEMAGS services"
+gitspace project add vemags legacy
+gitspace project show vemags
+gitspace project ls
+gitspace project remove vemags legacy
+```
+
+By default a project lives at `projects.root/<name>`. `--at` names the project directory
+itself, used verbatim and required to end with the project name:
+
+```sh
+gitspace project new acme-java --at /mnt/customer/acme-java
+```
+
+Projects are user intent and live in `<data>/projects.toml`. A project can contain one repo or
+many; a repository may belong to more than one project. `repo add --project P` registers and
+links in one step.
+
+### `co` and branch modes
+
+`co` always targets a project. If no project exists but a registered repository has that name,
+a one-repo project is created implicitly.
+
+```sh
+gitspace co ferroclass@main --topic dev
+gitspace co ferroclass@release/2.4
+gitspace co vemags@development --topic MT4711 --new-branch
+gitspace co vemags@feature/MT4711 --topic MT4711
+gitspace co vemags@development --topic MT4711 --new-branch --only api,web
+gitspace co vemags@feature/MT4711 --topic MT4711 --exclude legacy
+```
+
+`@<ref>` is the starting point. The branch mode decides the resulting HEAD:
+
+| Flags | Result |
+|---|---|
+| none | check out the ref directly (branch, or detached for tag/SHA) |
+| `--new-branch` | create an owned branch from `feature/{topic}` |
+| `--branch B` | create the explicit owned branch `B` from the ref |
+| `--detach` | detached checkout at the ref |
+
+`--new-branch` requires `--topic`. Re-running the same command resumes an existing owned branch
+when it is free. An occupied branch asks for borrow / new branch / detach / cancel on a
+terminal; with `--json` or no terminal it is a `branch_occupied` error (exit 4).
+`--branch` and `--detach` are mutually exclusive, as are `--new-branch` and `--detach`.
+
+`--only M,...` and `--exclude M,...` select the project members for this invocation, and are
+mutually exclusive. The default is every member. Re-running with more members adds them to the
+same workspace; exclusions never delete existing members.
+
+`workspace new` remains the explicit form and accepts `--project`, `--own`, `--borrow`,
+`--as repo=name`, labels, descriptions and `--dry-run`. It uses the same project/topic/member
+path.
+
+Creation is ensure-only: matching members are reused, conflicting paths or branches are
+errors, and nothing is overwritten. Worktrees are created first; the marker is written after
+successful members. A missing ref or failed member yields exit 7, and re-running the same
+command completes the workspace. `--fetch` is opt-in and only runs when a requested ref is
+missing. Warm mirrors work offline.
+
+The marker lives at `<project.path>/<topic>/.gitspace.json`, outside every member checkout.
 
 ## Repository aliases, mirrors and collisions
 
@@ -148,9 +210,9 @@ gitspace co api@main --as api-main
 gitspace workspace new JENKINS-123 --own api --as api=v2-api --own web
 ```
 
-All checkouts remain top-level under `<checkouts>/<workspace>/`; there are no per-repository or
-group subdirectories. Existing member names are immutable: asking for a different `--as` name
-for an existing member is a conflict.
+All owned checkouts remain direct children of the topic workspace:
+`<project.path>/<topic>/<member>`. Existing member names are immutable: asking for a different
+`--as` name for an existing member is a conflict.
 
 The same remote written in another URL form (`git@…`, `https://…`, with or without `.git`) is
 matched by its canonical remote key and is not duplicated. Default ports are omitted; other
@@ -159,7 +221,7 @@ each repository.
 
 ## Listing
 
-`gitspace ls` is compact by default: repository alias, workspace, branch, dirty/ahead/behind/
+`gitspace ls` is compact by default: project, topic, member, branch, dirty/ahead/behind/
 unpushed counts, and age. It intentionally omits paths and mirror details so a normal table
 fits in roughly 100 characters.
 
@@ -167,6 +229,8 @@ fits in roughly 100 characters.
 gitspace ls
 gitspace ls --verbose      # adds HASH and MIRROR
 gitspace ls --wide         # old name for --verbose
+gitspace ls --project P    # one project
+gitspace ls --topic T      # one topic across projects
 gitspace ls --json         # full rows, including path and mirror metadata
 ```
 
@@ -186,10 +250,10 @@ need.
 - **Config:** TOML via `toml_elixir ~> 3.3`.
 - **Index:** `ecto_sqlite3` + `exqlite`, pool size 1, WAL, migrations on demand.
 - **Recovery:** the SQLite index is disposable; mirrors are rediscovered from
-  `<data>/repos/*.git`, `remotes.txt` is rebuilt from the mirrors, and workspaces from
-  `<root>/<work>/.gitspace.json` markers.
-- **Checkout paths:** the workspace marker is authoritative. Alias changes never move an
-  existing checkout; member names are chosen at creation and stay immutable.
+  `<data>/repos/*.git`, `remotes.txt` is rebuilt from the mirrors, projects from
+  `<data>/projects.toml`, and workspaces from `<project>/<topic>/.gitspace.json` markers.
+- **Checkout paths:** the workspace marker is authoritative. Project paths and topic names are
+  chosen at creation and never re-derived; alias changes never move an existing checkout.
 - **Status cache:** 1 h TTL. `ls` and the inbox read the cache; `status --refresh` computes.
   The first view refreshes up to 20 checkouts that have never been measured.
 - **Creation:** ensure-only and marker-first for recovery. Worktrees are created before the

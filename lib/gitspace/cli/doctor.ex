@@ -3,7 +3,7 @@ defmodule Gitspace.CLI.Doctor do
 
   import Ecto.Query
 
-  alias Gitspace.{Config, Git, Index, Marker, Repo, Repos, Safety}
+  alias Gitspace.{Config, Git, Index, Marker, Projects, Repo, Repos, Safety}
   alias Gitspace.Git.Worktree
   alias Gitspace.Index.{Checkout, Workspace}
   alias Gitspace.CLI.Helpers
@@ -74,11 +74,15 @@ defmodule Gitspace.CLI.Doctor do
   end
 
   defp check_paths(config) do
-    paths = [
-      {"data", config.data_dir},
-      {"checkouts", config.checkouts_dir},
-      {"repos", Config.repos_dir(config)}
-    ]
+    paths =
+      [
+        {"data", config.data_dir},
+        {"projects", config.projects_root},
+        {"repos", Config.repos_dir(config)}
+      ] ++
+        Enum.map(Projects.list(config), fn project ->
+          {"project #{project.name}", project.path}
+        end)
 
     problems =
       Enum.flat_map(paths, fn {label, path} ->
@@ -90,7 +94,7 @@ defmodule Gitspace.CLI.Doctor do
       end)
 
     if problems == [] do
-      check("paths", "ok", "data, checkouts and repos are writable")
+      check("paths", "ok", "data, projects and repos are writable")
     else
       check("paths", "fail", Enum.join(problems, "; "))
     end
@@ -216,7 +220,18 @@ defmodule Gitspace.CLI.Doctor do
 
   defp check_workspaces(config) do
     active = Repo.aggregate(from(w in Workspace, where: w.state == "active"), :count)
-    {:ok, markers, bad} = Marker.find_all(config.checkouts_dir)
+
+    {markers, bad} =
+      config
+      |> Projects.list()
+      |> Enum.reduce({[], []}, fn project, {markers, bad} ->
+        if File.dir?(project.path) do
+          {:ok, found, invalid} = Marker.find_all(project.path)
+          {markers ++ found, bad ++ invalid}
+        else
+          {markers, bad ++ [{project.path, :missing_project_path}]}
+        end
+      end)
 
     marker_paths =
       MapSet.new(markers, fn {dir, _} -> Path.join(dir, Marker.marker_filename()) end)
@@ -247,7 +262,10 @@ defmodule Gitspace.CLI.Doctor do
   end
 
   defp check_sync(config) do
-    synced = Enum.filter([config.data_dir, config.checkouts_dir], &Config.sync_root?/1)
+    synced =
+      [config.data_dir, config.projects_root | Enum.map(Projects.list(config), & &1.path)]
+      |> Enum.uniq()
+      |> Enum.filter(&Config.sync_root?/1)
 
     if synced == [] do
       check("sync", "ok", "no sync roots in use")

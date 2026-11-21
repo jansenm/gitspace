@@ -70,9 +70,13 @@ defmodule Gitspace.Inventory do
       |> Enum.flat_map(& &1.risk.reasons)
       |> Enum.uniq()
 
+    {project, topic} = Workspaces.parts(workspace)
+
     %{
       kind: :workspace,
       name: workspace.name,
+      project: project,
+      topic: topic,
       description: workspace.description,
       labels: Enum.map(workspace.labels, & &1.label),
       members: members,
@@ -101,11 +105,16 @@ defmodule Gitspace.Inventory do
         _ -> Repo.get!(Gitspace.Index.Repository, checkout.repository_id)
       end
 
+    {project, topic} = membership_parts(membership)
+
     %{
       kind: :checkout,
       id: checkout.id,
       repo: repo.slug,
       workspace: membership && membership.workspace.name,
+      project: project,
+      topic: topic,
+      member: membership && (Map.get(membership, :name) || repo.slug),
       ownership: membership && membership.ownership,
       path: checkout.path,
       branch: checkout.branch,
@@ -136,6 +145,20 @@ defmodule Gitspace.Inventory do
     |> Enum.map(fn checkout ->
       checkout_row(config, checkout, Map.get(memberships, checkout.id))
     end)
+    |> Enum.filter(&match_project(&1, filters[:project]))
+    |> Enum.filter(&match_topic(&1, filters[:topic]))
+  end
+
+  defp match_project(_row, nil), do: true
+  defp match_project(row, project), do: row.project == project
+
+  defp match_topic(_row, nil), do: true
+  defp match_topic(row, topic), do: row.topic == topic
+
+  defp membership_parts(nil), do: {nil, nil}
+
+  defp membership_parts(membership) do
+    Workspaces.parts(membership.workspace)
   end
 
   @spec workspace_status(Config.t(), String.t(), keyword()) ::

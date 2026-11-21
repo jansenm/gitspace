@@ -15,8 +15,8 @@ defmodule Gitspace.CreateTest do
 
   test "CREATE-1/5 co creates at a branch and is idempotent", %{config: config} do
     assert {:ok, result} = Create.co(config, "a", "main")
-    assert result.workspace == "main"
-    assert result.path == Path.join(config.checkouts_dir, "main")
+    assert result.workspace == "a/main"
+    assert result.path == Path.join([config.projects_root, "a", "main"])
     assert File.exists?(result.marker_path)
 
     assert [member] = result.members
@@ -26,7 +26,7 @@ defmodule Gitspace.CreateTest do
     assert member.ref == "main"
     refute member.detached
     assert member.action == "created"
-    assert member.path == Path.join([config.checkouts_dir, "main", "a"])
+    assert member.path == Path.join([config.projects_root, "a", "main", "a"])
     assert File.dir?(member.path)
 
     assert {:ok, again} = Create.co(config, "a", "main")
@@ -34,14 +34,14 @@ defmodule Gitspace.CreateTest do
     assert reused.action == "reused"
     assert reused.path == member.path
 
-    assert {:ok, workspace} = Workspaces.get(config, "main")
+    assert {:ok, workspace} = Workspaces.get(config, "a/main")
     assert length(workspace.members) == 1
   end
 
   test "CREATE-2 refs with slashes derive a sanitized work name", %{config: config} do
     assert {:ok, result} = Create.co(config, "a", "hotfix/timeout")
-    assert result.workspace == "hotfix-timeout"
-    assert result.path == Path.join(config.checkouts_dir, "hotfix-timeout")
+    assert result.workspace == "a/hotfix-timeout"
+    assert result.path == Path.join([config.projects_root, "a", "hotfix-timeout"])
 
     assert [member] = result.members
     assert member.branch == "hotfix/timeout"
@@ -95,17 +95,17 @@ defmodule Gitspace.CreateTest do
     assert result.description == "update dependencies"
 
     assert Enum.map(result.members, & &1.branch) ==
-             ["feature_mt4711-update-dependencies", "feature_mt4711-update-dependencies"]
+             ["feature/mt4711-update-dependencies", "feature/mt4711-update-dependencies"]
 
     assert Enum.all?(result.members, &(&1.action == "created"))
     assert Enum.all?(result.members, &File.dir?(&1.path))
 
     marker = Marker.read!(result.path)
-    assert marker["workspace"] == "mt4711-update-dependencies"
+    assert marker["workspace"] == "a/mt4711-update-dependencies"
     assert marker["labels"] == ["jira-mt4711"]
     assert marker["description"] == "update dependencies"
 
-    assert {:ok, workspace} = Workspaces.get(config, "mt4711-update-dependencies")
+    assert {:ok, workspace} = Workspaces.get(config, "a/mt4711-update-dependencies")
     assert length(workspace.members) == 2
     assert Enum.map(workspace.labels, & &1.label) == ["jira-mt4711"]
   end
@@ -148,8 +148,8 @@ defmodule Gitspace.CreateTest do
     assert error.code == :branch_occupied
     assert error.exit_code == 4
     assert error.details.branch == "main"
-    assert error.details.path == Path.join([config.checkouts_dir, "holder", "a"])
-    refute File.exists?(Path.join(config.checkouts_dir, "occupied"))
+    assert error.details.path == Path.join([config.projects_root, "a", "holder", "a"])
+    refute File.exists?(Path.join(config.projects_root, "occupied"))
 
     assert {:ok, detached} =
              Create.workspace_new(config, "occupied-detach", [occupied], [],
@@ -174,19 +174,19 @@ defmodule Gitspace.CreateTest do
 
     assert [borrowed_member] = borrowed.members
     assert borrowed_member.ownership == "borrowed"
-    assert borrowed_member.path == Path.join([config.checkouts_dir, "holder", "a"])
+    assert borrowed_member.path == Path.join([config.projects_root, "a", "holder", "a"])
 
     assert {:ok, _feature_holder} =
              Create.co(config, "a", "main",
                name: "feature-holder",
-               branch: "feature_occupied-derive"
+               branch: "feature/occupied-derive"
              )
 
     assert {:error, derived_occupied} =
              Create.workspace_new(config, "occupied-derive", [owned("a")], [])
 
     assert derived_occupied.code == :branch_occupied
-    assert derived_occupied.details.branch == "feature_occupied-derive"
+    assert derived_occupied.details.branch == "feature/occupied-derive"
   end
 
   test "CREATE-9 duplicate members and --branch with --borrow are usage errors", %{
@@ -206,7 +206,7 @@ defmodule Gitspace.CreateTest do
   end
 
   test "CREATE-10 an existing path is a conflict and is left untouched", %{config: config} do
-    path = Path.join([config.checkouts_dir, "conflict", "a"])
+    path = Path.join([config.projects_root, "a", "conflict", "a"])
     File.mkdir_p!(path)
     File.write!(Path.join(path, "keep.txt"), "do not overwrite")
 
@@ -215,7 +215,7 @@ defmodule Gitspace.CreateTest do
     assert error.exit_code == 4
 
     assert File.read!(Path.join(path, "keep.txt")) == "do not overwrite"
-    refute File.exists?(Path.join([config.checkouts_dir, "conflict", ".gitspace.json"]))
+    refute File.exists?(Path.join([config.projects_root, "a", "conflict", ".gitspace.json"]))
   end
 
   test "CREATE-11 a missing ref creates a partial workspace; re-run completes it", %{
@@ -237,7 +237,7 @@ defmodule Gitspace.CreateTest do
     assert failure.repo == "b"
     assert failure.code == :not_found
 
-    assert {:ok, workspace} = Workspaces.get(config, "partial-create")
+    assert {:ok, workspace} = Workspaces.get(config, "a/partial-create")
     assert length(workspace.members) == 1
 
     assert {:ok, completed} =
@@ -247,7 +247,7 @@ defmodule Gitspace.CreateTest do
     assert actions["a"] == "reused"
     assert actions["b"] == "created"
 
-    assert {:ok, workspace} = Workspaces.get(config, "partial-create")
+    assert {:ok, workspace} = Workspaces.get(config, "a/partial-create")
     assert length(workspace.members) == 2
   end
 
@@ -271,7 +271,7 @@ defmodule Gitspace.CreateTest do
     assert subset.labels == ["one", "two"]
     assert subset.description == "kept"
 
-    assert {:ok, workspace} = Workspaces.get(config, "subset")
+    assert {:ok, workspace} = Workspaces.get(config, "a/subset")
     assert length(workspace.members) == 2
   end
 
@@ -281,12 +281,17 @@ defmodule Gitspace.CreateTest do
     assert {:ok, result} =
              Create.workspace_new(config, "My Work/ü", [owned("a")], [])
 
-    assert result.workspace == "My Work/ü"
+    assert result.workspace == "a/My Work/ü"
     assert Path.basename(result.path) == "My-Work"
-    assert String.starts_with?(result.path, Path.expand(config.checkouts_dir) <> "/")
+
+    assert String.starts_with?(
+             result.path,
+             Path.expand(Path.join(config.projects_root, "a")) <> "/"
+           )
+
     assert [member] = result.members
-    assert member.branch == "feature_My-Work"
-    assert Marker.read!(result.path)["workspace"] == "My Work/ü"
+    assert member.branch == "feature/My-Work"
+    assert Marker.read!(result.path)["workspace"] == "a/My Work/ü"
   end
 
   test "CREATE-14 a warm mirror works without the source; missing refs hint at fetch", %{
@@ -323,7 +328,7 @@ defmodule Gitspace.CreateTest do
 
     assert [main_member] = on_main.members
     assert main_member.ownership == "borrowed"
-    assert main_member.path == Path.join([config.checkouts_dir, "main", "a"])
+    assert main_member.path == Path.join([config.projects_root, "a", "main", "a"])
     assert main_member.branch == "main"
     refute main_member.detached
 
@@ -338,7 +343,7 @@ defmodule Gitspace.CreateTest do
     assert [tag_member] = on_tag.members
     assert tag_member.ownership == "borrowed"
     assert tag_member.detached
-    assert tag_member.path == Path.join([config.checkouts_dir, "v1.0.0", "a"])
+    assert tag_member.path == Path.join([config.projects_root, "a", "v1.0.0", "a"])
   end
 
   test "dry-run plans without creating directories or markers", %{config: config} do
@@ -350,7 +355,7 @@ defmodule Gitspace.CreateTest do
     assert Enum.map(result.members, & &1.action) == ["create", "create"]
     refute File.exists?(result.path)
     refute File.exists?(result.marker_path)
-    assert {:error, _} = Workspaces.get(config, "dry-run")
+    assert {:error, _} = Workspaces.get(config, "a/dry-run")
   end
 
   test "the configured branch template drives derived branches", %{config: config} do
@@ -386,7 +391,7 @@ defmodule Gitspace.CreateTest do
     assert Enum.map(marker["members"], & &1["name"]) == ["acme", "beta"]
     assert Enum.all?(marker["members"], &is_binary(&1["remote"]))
 
-    assert {:ok, workspace} = Workspaces.get(config, "aliased")
+    assert {:ok, workspace} = Workspaces.get(config, "a/aliased")
     names = workspace.members |> Enum.map(& &1.name) |> Enum.sort()
     assert names == ["acme", "beta"]
 
@@ -450,7 +455,7 @@ defmodule Gitspace.CreateTest do
     assert summary.workspaces == 1
     assert summary.workspace_members == 2
 
-    assert {:ok, workspace} = Workspaces.get(config, "recovered")
+    assert {:ok, workspace} = Workspaces.get(config, "a/recovered")
     assert length(workspace.members) == 2
     assert Enum.map(workspace.labels, & &1.label) == ["recover"]
     assert workspace.description == "survives"

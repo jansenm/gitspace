@@ -5,19 +5,20 @@ defmodule Gitspace.CLI.Setup do
   alias Gitspace.CLI.{Helpers, Output}
 
   defp strict do
-    [data: :string, checkouts: :string, force: :boolean] ++ Helpers.global_strict()
+    [data: :string, projects: :string, checkouts: :string, force: :boolean] ++
+      Helpers.global_strict()
   end
 
   def run(_global, args) do
     with {:ok, opts, rest} <- Helpers.parse(args, strict()),
          :ok <- Helpers.no_extra_args(rest),
          {:ok, config} <- load_existing() do
-      if configured_file?() and is_nil(opts[:data]) and is_nil(opts[:checkouts]) do
+      if configured_file?() and is_nil(opts[:data]) and is_nil(project_root_opt(opts)) do
         {:ok,
          %{
            config_path: Config.config_path(),
            data_dir: config.data_dir,
-           checkouts_dir: config.checkouts_dir,
+           projects_root: config.projects_root,
            db_path: Config.db_path(config),
            created: false
          }, &render/1}
@@ -43,14 +44,14 @@ defmodule Gitspace.CLI.Setup do
   defp configure(config, opts) do
     data = opts[:data] || config.data_dir || Config.default_data_dir()
 
-    with {:ok, data, checkouts} <- choose_paths(config, opts, data),
-         :ok <- check_sync_roots(data, checkouts, opts),
-         {:ok, saved} <- save(config, data, checkouts) do
+    with {:ok, data, projects_root} <- choose_paths(config, opts, data),
+         :ok <- check_sync_roots(data, projects_root, opts),
+         {:ok, saved} <- save(config, data, projects_root) do
       {:ok,
        %{
          config_path: Config.config_path(),
          data_dir: saved.data_dir,
-         checkouts_dir: saved.checkouts_dir,
+         projects_root: saved.projects_root,
          db_path: Config.db_path(saved),
          created: true
        }, &render/1}
@@ -58,7 +59,7 @@ defmodule Gitspace.CLI.Setup do
   end
 
   defp choose_paths(config, opts, data) do
-    existing = opts[:checkouts] || config.checkouts_dir
+    existing = project_root_opt(opts) || config.projects_root
 
     cond do
       existing ->
@@ -66,20 +67,21 @@ defmodule Gitspace.CLI.Setup do
 
       Output.tty?() ->
         with {:ok, data} <- prompt("Data directory", data),
-             {:ok, checkouts} <- prompt("Checkout root", Config.default_checkout_dir()) do
-          {:ok, Path.expand(data), Path.expand(checkouts)}
+             {:ok, projects_root} <-
+               prompt("Projects root", Config.default_projects_root()) do
+          {:ok, Path.expand(data), Path.expand(projects_root)}
         end
 
       true ->
         {:error,
-         Error.new(:usage, "--checkouts is required without a terminal",
-           hint: "re-run with --data <dir> --checkouts <dir>"
+         Error.new(:usage, "--projects is required without a terminal",
+           hint: "re-run with --data <dir> --projects <dir>"
          )}
     end
   end
 
-  defp check_sync_roots(data, checkouts, opts) do
-    synced = Enum.filter([data, checkouts], &Config.sync_root?/1)
+  defp check_sync_roots(data, projects_root, opts) do
+    synced = Enum.filter([data, projects_root], &Config.sync_root?/1)
 
     cond do
       synced == [] ->
@@ -96,12 +98,12 @@ defmodule Gitspace.CLI.Setup do
     end
   end
 
-  defp save(%Config{} = config, data, checkouts) do
+  defp save(%Config{} = config, data, projects_root) do
     config = %Config{
       config
       | path: Config.config_path(),
         data_dir: data,
-        checkouts_dir: checkouts
+        projects_root: projects_root
     }
 
     with :ok <- Config.ensure_dirs(config),
@@ -123,6 +125,8 @@ defmodule Gitspace.CLI.Setup do
        )}
   end
 
+  defp project_root_opt(opts), do: opts[:projects] || opts[:checkouts]
+
   defp prompt(label, default) do
     case IO.gets("#{label} [#{default}]: ") do
       :eof ->
@@ -141,7 +145,7 @@ defmodule Gitspace.CLI.Setup do
     IO.puts("gitspace is already configured")
     IO.puts("  config:    #{data.config_path}")
     IO.puts("  data:      #{data.data_dir}")
-    IO.puts("  checkouts: #{data.checkouts_dir}")
+    IO.puts("  projects:  #{data.projects_root}")
     IO.puts("  index:     #{data.db_path}")
   end
 
@@ -149,7 +153,7 @@ defmodule Gitspace.CLI.Setup do
     IO.puts("gitspace configured")
     IO.puts("  config:    #{data.config_path}")
     IO.puts("  data:      #{data.data_dir}")
-    IO.puts("  checkouts: #{data.checkouts_dir}")
+    IO.puts("  projects:  #{data.projects_root}")
     IO.puts("  index:     #{data.db_path}")
   end
 end

@@ -1,14 +1,14 @@
 defmodule Gitspace.CLITest do
   use Gitspace.IndexCase, async: false
 
-  alias Gitspace.{Config, Fixtures, Git, Index, Marker, Repos}
+  alias Gitspace.{Config, Fixtures, Git, Index, Marker, Projects, Repos}
   alias Gitspace.Git.Worktree
   alias Gitspace.Index.Repository
 
   setup %{config: config} do
     :ok = Config.save(config)
     System.delete_env("GITSPACE_DATA")
-    System.delete_env("GITSPACE_CHECKOUTS")
+    System.delete_env("GITSPACE_PROJECTS_ROOT")
     previous = System.get_env("GITSPACE_CONFIG")
     System.put_env("GITSPACE_CONFIG", config.path)
 
@@ -23,13 +23,16 @@ defmodule Gitspace.CLITest do
     source = Fixtures.source_repo!()
     {:ok, repo} = Repos.add(config, Fixtures.repo_url(source), name: "demo")
 
-    path = Path.join([config.checkouts_dir, "JENKINS-123", "demo"])
+    {:ok, _project} = Projects.create(config, "demo", repo: ["demo"])
+    path = Path.join([config.projects_root, "demo", "JENKINS-123", "demo"])
     File.mkdir_p!(Path.dirname(path))
     {:ok, _} = Worktree.add(repo.bare_path, path, "origin/main", branch: "feature_JENKINS-123")
 
     Marker.write!(Path.dirname(path), %{
       "schema_version" => 1,
-      "workspace" => "JENKINS-123",
+      "workspace" => "demo/JENKINS-123",
+      "project" => "demo",
+      "topic" => "JENKINS-123",
       "description" => "move the deploy job",
       "labels" => ["jira-123"],
       "members" => [
@@ -53,7 +56,7 @@ defmodule Gitspace.CLITest do
 
     assert data["ok"] == true
     assert data["schema_version"] == 1
-    assert data["data"]["workspace"]["name"] == "JENKINS-123"
+    assert data["data"]["workspace"]["name"] == "demo/JENKINS-123"
     assert data["data"]["workspace"]["labels"] == ["jira-123"]
     assert [member] = data["data"]["workspace"]["members"]
     assert member["path"] == path
@@ -65,18 +68,19 @@ defmodule Gitspace.CLITest do
     data = Jason.decode!(output)
     assert [checkout] = data["data"]["checkouts"]
     assert checkout["repo"] == "demo"
-    assert checkout["workspace"] == "JENKINS-123"
+    assert checkout["workspace"] == "demo/JENKINS-123"
     assert checkout["mirror"] == repo.bare_path
     assert checkout["hash"] == Path.basename(repo.bare_path, ".git")
 
-    {path_output, 0} = cli(["path", "JENKINS-123:demo", "--json"])
+    {path_output, 0} = cli(["path", "demo/JENKINS-123:demo", "--json"])
     assert Jason.decode!(path_output)["data"]["path"] == path
   end
 
   test "ls is compact by default and --verbose adds hash and mirror", %{repo: repo} do
     {plain, 0} = cli(["ls"])
-    assert plain =~ "REPO"
-    assert plain =~ "WORKSPACE"
+    assert plain =~ "PROJECT"
+    assert plain =~ "TOPIC"
+    assert plain =~ "MEMBER"
     refute plain =~ "PATH"
     refute plain =~ "MIRROR"
     refute plain =~ "HASH"
@@ -128,7 +132,7 @@ defmodule Gitspace.CLITest do
 
     {status_output, 0} = cli(["status", "JENKINS-123", "--json"])
     workspace = Jason.decode!(status_output)["data"]["workspace"]
-    assert workspace["name"] == "JENKINS-123"
+    assert workspace["name"] == "demo/JENKINS-123"
     assert workspace["labels"] == ["jira-123"]
   end
 

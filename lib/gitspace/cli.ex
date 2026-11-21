@@ -9,6 +9,7 @@ defmodule Gitspace.CLI do
     Doctor,
     Inventory,
     Output,
+    Project,
     Reindex,
     Repo,
     Scan,
@@ -96,6 +97,9 @@ defmodule Gitspace.CLI do
 
         "workspace" ->
           Workspace.run(global, command_args)
+
+        "project" ->
+          Project.run(global, command_args)
 
         "status" ->
           Inventory.status(global, command_args)
@@ -193,8 +197,9 @@ defmodule Gitspace.CLI do
 
     COMMANDS
       ls                           all indexed checkouts
-      co <repo>@<ref> [--ticket T] create a one-repo workspace
-      workspace new|ls|status      create or inspect multi-repo workspaces
+      co <project>[@<ref>]         check out a project topic
+      workspace new|ls|status      create or inspect workspaces
+      project new|ls|show|add|remove|rm  project definitions
       status [target]              inbox, or one workspace/checkout/repository
       show <target>                details and provenance
       path <target>                print a checkout path
@@ -204,7 +209,7 @@ defmodule Gitspace.CLI do
       unlink <path>                forget an external checkout
       doctor [--fix] [--reindex]   health checks
       config [list|get|set]        show or change the active configuration
-      setup                        choose data and checkout directories
+      setup                        choose data and projects directories
       reindex                      rebuild the index from git and markers
 
     GLOBAL
@@ -233,18 +238,27 @@ defmodule Gitspace.CLI do
       "co" ->
         """
         USAGE
-          gitspace co <repo>@<ref> [--ticket NAME] [--as DIR] [--branch B]
-                                  [--detach] [--label L]... [--fetch] [--json]
+          gitspace co <project>[@<ref>] [--topic T] [--only M,...] [--exclude M,...]
+                                      [--new-branch] [--branch B] [--detach]
+                                      [--as DIR] [--label L]... [--fetch] [--json]
 
-        --ticket NAME names the one-repo workspace, usually a ticket such as
-        JENKINS-123. Without it the workspace is named after the sanitized ref.
-        --name is an alias for --ticket.
+        @<ref> is the starting point. With no branch flag the ref is checked
+        out directly. --new-branch creates an owned branch from the template
+        (default feature/{topic}); --branch creates that explicit branch from
+        the ref. --detach checks out the ref without a branch.
+
+        --only and --exclude are mutually exclusive. By default every member
+        of the project is checked out.
 
         EXAMPLES
-          gitspace co api@feature/JENKINS-123 --ticket JENKINS-123
-          gitspace co api@main --ticket compare-1.8 --detach
-          gitspace co api@v1.9.0 --name compare-1.9
+          gitspace co ferroclass@main --topic dev
+          gitspace co vemags@development --topic MT4711 --new-branch
+          gitspace co vemags@development --topic MT4711 --new-branch --only api,web
+          gitspace co vemags@feature/MT4711 --topic MT4711 --exclude legacy
         """
+
+      "project" ->
+        Project.help()
 
       "workspace" ->
         Workspace.help()
@@ -264,7 +278,7 @@ defmodule Gitspace.CLI do
       "repo" ->
         """
         USAGE
-          gitspace repo add <url-or-path> [--name N] [--remote NAME] [--no-fetch]
+          gitspace repo add <url-or-path> [--name N] [--remote NAME] [--project P] [--no-fetch]
           gitspace repo ls
           gitspace repo fetch [<repo>|--all] [--prune]
           gitspace repo rm <repo> [--force] [--dry-run] [--yes]
@@ -303,7 +317,7 @@ defmodule Gitspace.CLI do
 
         KEYS
           paths.data
-          paths.checkouts
+          projects.root
           branch.template
           git.minimum_version
           status.max_age_seconds
@@ -312,7 +326,7 @@ defmodule Gitspace.CLI do
       "setup" ->
         """
         USAGE
-          gitspace setup [--data DIR] [--checkouts DIR] [--force]
+          gitspace setup [--data DIR] [--projects DIR] [--force]
         """
 
       "reindex" ->
