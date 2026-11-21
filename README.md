@@ -23,13 +23,14 @@ Product scope, CLI contract and acceptance plan live in the planning repository:
 |---|---|
 | Creation | `project new|ls|show|add|remove|rm`, `co`, `workspace new|ls|status` |
 | Setup, config and health | `setup`, `config [list|get|set]`, `doctor`, `doctor --fix`, `doctor --reindex` |
+| Completion | `completion bash|zsh|fish` |
 | Mirrors | `repo add`, `repo ls`, `repo fetch`, `repo alias`, `repo rm` |
 | Discovery | `scan` (read-only), `link`, `unlink` |
 | Inventory | `gitspace`, `ls`, `status`, `show`, `path` |
 | Recovery | `reindex` — rediscover mirrors from disk, rebuild workspaces from markers |
 | Machine surface | `--json` on every command, exit codes 0–7, `--verbose` prints git argv |
 
-148 checks (144 tests, 3 properties, 1 doctest) in ~47 s.
+152 checks (148 tests, 3 properties, 1 doctest) in ~43 s.
 
 ## Commands
 
@@ -69,6 +70,7 @@ gitspace
 gitspace ls --repo repo
 gitspace status <workspace>
 gitspace doctor
+gitspace completion bash
 ```
 
 Configuration is TOML at `$XDG_CONFIG_HOME/gitspace/config.toml` (or `GITSPACE_CONFIG`).
@@ -220,6 +222,23 @@ The same remote written in another URL form (`git@…`, `https://…`, with or w
 matched by its canonical remote key and is not duplicated. Default ports are omitted; other
 ports remain part of the key. `gitspace repo ls` shows the remote, alias, and mirror hash behind
 each repository.
+
+## Shell completion
+
+```sh
+# bash
+source <(gitspace completion bash)
+
+# zsh
+gitspace completion zsh > "${fpath[1]}/_gitspace"
+
+# fish
+gitspace completion fish | source
+```
+
+Completions cover commands, subcommands, flags, project names, repository aliases,
+workspace handles, bare topics, project members and config keys. They call the hidden
+`gitspace __complete` command, so they follow the live index rather than a static snapshot.
 
 ## Listing
 

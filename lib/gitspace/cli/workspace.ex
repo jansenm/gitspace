@@ -301,6 +301,12 @@ defmodule Gitspace.CLI.Workspace do
   @doc false
   def help do
     """
+    WORKSPACES AND PROJECTS
+      A project is a named set of repositories. A workspace is the on-disk instance
+      for one project + topic. `gitspace co` is the normal checkout path; this
+      command exists for explicit owned/borrowed member lists, labels, descriptions,
+      member directory names and dry runs.
+
     USAGE
       gitspace workspace new <name> [--project P] [--own <repo>[@<ref>]]...
                                     [--borrow <repo>[@<ref>]]... [--branch B]

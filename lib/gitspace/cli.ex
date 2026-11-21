@@ -4,6 +4,7 @@ defmodule Gitspace.CLI do
   alias Gitspace.Error
 
   alias Gitspace.CLI.{
+    Completion,
     Config,
     Co,
     Doctor,
@@ -134,6 +135,12 @@ defmodule Gitspace.CLI do
         "config" ->
           Config.run(global, command_args)
 
+        "completion" ->
+          Completion.run(global, command_args)
+
+        "__complete" ->
+          Completion.complete(command_args)
+
         "help" ->
           help()
 
@@ -198,7 +205,7 @@ defmodule Gitspace.CLI do
     COMMANDS
       ls                           all indexed checkouts
       co <project>[@<ref>]         check out a project topic
-      workspace new|ls|status      create or inspect workspaces
+      workspace new|ls|status      explicit workspace creation and inspection
       project new|ls|show|add|remove|rm  project definitions
       status [target]              inbox, or one workspace/checkout/repository
       show <target>                details and provenance
@@ -209,6 +216,7 @@ defmodule Gitspace.CLI do
       unlink <path>                forget an external checkout
       doctor [--fix] [--reindex]   health checks
       config [list|get|set]        show or change the active configuration
+      completion bash|zsh|fish     print a shell completion script
       setup                        choose data and projects directories
       reindex                      rebuild the index from git and markers
 
@@ -321,6 +329,23 @@ defmodule Gitspace.CLI do
           branch.template
           git.minimum_version
           status.max_age_seconds
+        """
+
+      "completion" ->
+        """
+        USAGE
+          gitspace completion bash
+          gitspace completion zsh
+          gitspace completion fish
+
+        Bash:
+          source <(gitspace completion bash)
+
+        Zsh:
+          gitspace completion zsh > "${fpath[1]}/_gitspace"
+
+        Fish:
+          gitspace completion fish | source
         """
 
       "setup" ->
