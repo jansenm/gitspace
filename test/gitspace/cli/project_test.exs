@@ -191,6 +191,10 @@ defmodule Gitspace.CLI.ProjectTest do
     error = Jason.decode!(output)["error"]
     assert error["code"] == "refused"
     assert error["hint"] =~ "vemags/dev"
+
+    {forced, 0} = cli(["project", "rm", "vemags", "--force", "--json"])
+    assert Jason.decode!(forced)["data"]["workspaces_kept"] == 1
+    assert File.dir?(Path.join([Config.load!().projects_root, "vemags", "dev", "a"]))
   end
 
   defp cli(args) do

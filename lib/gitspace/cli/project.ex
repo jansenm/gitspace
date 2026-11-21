@@ -101,16 +101,30 @@ defmodule Gitspace.CLI.Project do
   end
 
   defp rm(_global, args) do
-    with {:ok, _opts, rest} <- Helpers.parse(args, Helpers.global_strict()),
+    with {:ok, opts, rest} <- Helpers.parse(args, rm_strict()),
          {:ok, name} <- one_arg(rest, "gitspace project rm <name>"),
          {:ok, config} <- Helpers.load_config(),
          :ok <- Helpers.start_index(config),
          {:ok, project} <- Projects.get(config, name),
-         :ok <- ensure_no_workspaces(config, project),
+         :ok <- maybe_ensure_no_workspaces(config, project, opts[:force]),
+         workspaces = Enum.count(Workspaces.list(config), &workspace_in_project?(&1, project)),
          :ok <- Projects.delete(config, project.name) do
-      {:ok, %{project: project.name, path: project.path}, &render_removed/1}
+      {:ok,
+       %{
+         project: project.name,
+         path: project.path,
+         workspaces_kept: workspaces,
+         forced: !!opts[:force]
+       }, &render_removed/1}
     end
   end
+
+  defp rm_strict, do: [force: :boolean] ++ Helpers.global_strict()
+
+  defp maybe_ensure_no_workspaces(_config, _project, true), do: :ok
+
+  defp maybe_ensure_no_workspaces(config, project, _force),
+    do: ensure_no_workspaces(config, project)
 
   defp ensure_no_workspaces(config, project) do
     case Enum.filter(Workspaces.list(config), &workspace_in_project?(&1, project)) do
@@ -230,9 +244,15 @@ defmodule Gitspace.CLI.Project do
     IO.puts("  members: #{length(project.members)}")
   end
 
-  defp render_removed(%{project: name, path: path}) do
-    IO.puts("removed project #{name}")
-    IO.puts("  path: #{path} (directory kept)")
+  defp render_removed(data) do
+    IO.puts("removed project #{data.project}")
+    IO.puts("  path: #{data.path} (directory kept)")
+
+    if data.workspaces_kept > 0 do
+      IO.puts(
+        "  workspaces kept: #{data.workspaces_kept} (run `gitspace reindex` to report them as orphans)"
+      )
+    end
   end
 
   defp render_help(%{help: help}), do: IO.puts(help)
@@ -248,7 +268,7 @@ defmodule Gitspace.CLI.Project do
       gitspace project show <name> [--json]
       gitspace project add <name> <repo>...
       gitspace project remove <name> <repo>...
-      gitspace project rm <name> [--json]
+      gitspace project rm <name> [--force] [--json]
 
     PATHS
       By default a project lives at projects.root/<name>. --at names the
@@ -257,6 +277,10 @@ defmodule Gitspace.CLI.Project do
     MEMBERSHIP
       A project is a named set of registered repositories. `add` and `remove`
       change future checkouts only; existing workspaces are never moved.
+
+    REMOVING
+      `project rm` refuses while workspaces exist. `--force` removes only the
+      definition and keeps every checkout directory in place.
     """
   end
 end
