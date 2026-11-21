@@ -205,7 +205,7 @@ defmodule Gitspace.CLI do
     COMMANDS
       ls                           all indexed checkouts
       co <project>[@<ref>]         check out a project topic
-      workspace new|ls|status      explicit workspace creation and inspection
+      workspace new|ls|status|rm   explicit workspace creation, inspection and removal
       project new|ls|show|add|remove|rm  project definitions
       status [target]              inbox, or one workspace/checkout/repository
       show <target>                details and provenance

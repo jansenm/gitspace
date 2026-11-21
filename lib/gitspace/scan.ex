@@ -97,7 +97,7 @@ defmodule Gitspace.Scan do
         {:error,
          Error.new(:refused, "#{checkout.path} is a managed checkout",
            hint:
-             "use `gitspace workspace down` or `gitspace prune`; unlink only forgets external checkouts"
+             "use `gitspace workspace rm` or `gitspace prune`; unlink only forgets external checkouts"
          )}
       else
         repo = Repo.get(Repository, checkout.repository_id)

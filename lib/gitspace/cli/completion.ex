@@ -13,7 +13,7 @@ defmodule Gitspace.CLI.Completion do
   @commands ~w(ls co workspace project status show path repo scan link unlink doctor setup reindex config completion help)
 
   @subcommands %{
-    "workspace" => ~w(new ls status help),
+    "workspace" => ~w(new ls status rm help),
     "project" => ~w(new ls show add remove rm help),
     "repo" => ~w(add ls fetch rm alias help),
     "config" => ~w(list get set help),
@@ -35,6 +35,7 @@ defmodule Gitspace.CLI.Completion do
       ~w(--project --own --borrow --as --branch --label --description --fetch --dry-run),
     "workspace:ls" => ~w(--project --label --all),
     "workspace:status" => ~w(--refresh),
+    "workspace:rm" => ~w(--force --dry-run),
     "status" => ~w(--refresh),
     "config:set" => ~w(--force),
     "setup" => ~w(--data --projects --checkouts --force),
@@ -184,8 +185,8 @@ defmodule Gitspace.CLI.Completion do
     end
   end
 
-  defp positional_values("workspace", "status", []) do
-    workspaces()
+  defp positional_values("workspace", sub, []) when sub in ["status", "rm"] do
+    workspace_targets()
   end
 
   defp positional_values("config", sub, []) when sub in ["get", "set"] do
@@ -247,13 +248,6 @@ defmodule Gitspace.CLI.Completion do
     end)
   end
 
-  defp workspaces do
-    dynamic(fn config ->
-      _ = Helpers.start_index(config)
-      Enum.map(Workspaces.list(config), & &1.name)
-    end)
-  end
-
   defp topics do
     dynamic(fn config ->
       _ = Helpers.start_index(config)
@@ -281,7 +275,24 @@ defmodule Gitspace.CLI.Completion do
   end
 
   defp all_targets do
-    projects() ++ workspaces() ++ repos()
+    projects() ++ workspace_targets() ++ repos()
+  end
+
+  defp workspace_targets do
+    dynamic(fn config ->
+      _ = Helpers.start_index(config)
+
+      config
+      |> Workspaces.list()
+      |> Enum.flat_map(fn workspace ->
+        members =
+          Enum.map(workspace.members, fn member ->
+            "#{workspace.name}:#{member.name || member.checkout.repository.slug}"
+          end)
+
+        [workspace.name | members]
+      end)
+    end)
   end
 
   defp dynamic(fun) do

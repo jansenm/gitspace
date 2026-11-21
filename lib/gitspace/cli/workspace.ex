@@ -1,7 +1,7 @@
 defmodule Gitspace.CLI.Workspace do
   @moduledoc false
 
-  alias Gitspace.{Create, Error, Workspaces}
+  alias Gitspace.{Create, Error, Teardown, Workspaces}
   alias Gitspace.CLI.{Helpers, Inventory, Output, Prompt}
 
   def run(global, args) do
@@ -9,6 +9,7 @@ defmodule Gitspace.CLI.Workspace do
       ["new" | rest] -> new(global, rest)
       ["ls" | rest] -> list(global, rest)
       ["status" | rest] -> status(global, rest)
+      ["rm" | rest] -> remove(global, rest)
       [] -> {:ok, %{help: help()}, &render_help/1}
       ["help"] -> {:ok, %{help: help()}, &render_help/1}
       [other | _] -> {:error, Error.new(:usage, "unknown workspace command: #{other}")}
@@ -231,6 +232,73 @@ defmodule Gitspace.CLI.Workspace do
     }
   end
 
+  defp remove(global, args) do
+    with {:ok, opts, rest} <- Helpers.parse(args, rm_strict()),
+         {:ok, target} <- one_arg(rest, "gitspace workspace rm <workspace>[:<member>]"),
+         {:ok, workspace_name, member_name} <- split_rm_target(target),
+         {:ok, config} <- Helpers.load_config(),
+         :ok <- Helpers.start_index(config),
+         {:ok, workspace} <- Workspaces.get(config, workspace_name),
+         {:ok, plan} <- Teardown.plan(config, workspace, member: member_name),
+         :ok <- precheck_risky(plan, opts) do
+      if opts[:dry_run] do
+        case Teardown.execute(config, plan, dry_run: true) do
+          {:ok, result} -> {:ok, result, &render_rm/1}
+          {:partial, result, failures} -> {:partial, result, &render_rm/1, rm_partial(failures)}
+          {:error, error} -> {:error, error}
+        end
+      else
+        question =
+          case member_name do
+            nil -> "remove workspace #{workspace.name} and its owned checkouts?"
+            member -> "remove member #{workspace.name}:#{member}?"
+          end
+
+        with :ok <- Helpers.require_confirmation(global, opts, question) do
+          case Teardown.execute(config, plan, force: opts[:force]) do
+            {:ok, result} -> {:ok, result, &render_rm/1}
+            {:partial, result, failures} -> {:partial, result, &render_rm/1, rm_partial(failures)}
+            {:error, error} -> {:error, error}
+          end
+        end
+      end
+    end
+  end
+
+  defp rm_strict do
+    [force: :boolean, dry_run: :boolean] ++ Helpers.global_strict()
+  end
+
+  defp split_rm_target(target) do
+    case String.split(target, ":", parts: 2) do
+      [workspace] when workspace != "" ->
+        {:ok, workspace, nil}
+
+      [workspace, member] when workspace != "" and member != "" ->
+        {:ok, workspace, member}
+
+      _ ->
+        {:error, Error.new(:usage, "usage: gitspace workspace rm <workspace>[:<member>]")}
+    end
+  end
+
+  defp precheck_risky(plan, opts) do
+    cond do
+      !!opts[:dry_run] or !!opts[:force] -> :ok
+      plan.risky == [] -> :ok
+      true -> {:error, Teardown.risky_error(plan)}
+    end
+  end
+
+  defp rm_partial(failures) do
+    names = failures |> Enum.map(& &1.repo) |> Enum.uniq() |> Enum.join(", ")
+
+    Error.new(:partial, "workspace removal was partial: #{names}",
+      hint: "fix the reported members and re-run",
+      details: %{failures: Enum.map(failures, &Map.drop(&1, [:error]))}
+    )
+  end
+
   defp status(_global, []),
     do: {:error, Error.new(:usage, "usage: gitspace workspace status <name>")}
 
@@ -296,6 +364,48 @@ defmodule Gitspace.CLI.Workspace do
     )
   end
 
+  defp render_rm(result) do
+    action = if result.dry_run, do: "would remove", else: "removed"
+    IO.puts("#{action} workspace #{result.workspace}")
+    IO.puts("  path:     #{result.path}")
+    IO.puts("  marker:   #{result.marker_path}")
+
+    if result.removed != [] do
+      IO.puts("")
+
+      Output.table(
+        ["ACTION", "MEMBER", "OWN", "BRANCH", "PATH"],
+        Enum.map(result.removed, fn member ->
+          [
+            member.action,
+            member.name,
+            member.ownership,
+            member.branch || "(detached)",
+            member.path
+          ]
+        end)
+      )
+    end
+
+    if result.risky != [] do
+      IO.puts("")
+      IO.puts("risky members:")
+
+      Enum.each(result.risky, fn member ->
+        IO.puts("  #{member.member}: #{Enum.join(member.reasons, ", ")}")
+      end)
+    end
+
+    if result.tombstoned do
+      IO.puts("")
+      IO.puts("workspace removed; the name may be reused")
+    end
+
+    if result.directory_kept do
+      IO.puts("directory kept because it still contains files")
+    end
+  end
+
   defp render_help(%{help: help}), do: IO.puts(help)
 
   @doc false
@@ -307,6 +417,13 @@ defmodule Gitspace.CLI.Workspace do
       command exists for explicit owned/borrowed member lists, labels, descriptions,
       member directory names and dry runs.
 
+    REMOVAL
+      `workspace rm <workspace>` removes every member and tombstones the workspace.
+      `workspace rm <workspace>:<member>` removes one membership; removing the last
+      one tombstones the workspace. Borrowed checkouts are unlinked, never deleted.
+      Risky owned members are refused unless --force archives their work under
+      <data>/trash first. Branches are kept.
+
     USAGE
       gitspace workspace new <name> [--project P] [--own <repo>[@<ref>]]...
                                     [--borrow <repo>[@<ref>]]... [--branch B]
@@ -314,6 +431,7 @@ defmodule Gitspace.CLI.Workspace do
                                     [--as <repo>=<dir>]... [--fetch] [--dry-run] [--json]
       gitspace workspace ls [--project P] [--label L] [--all] [--json]
       gitspace workspace status <name> [--refresh] [--json]
+      gitspace workspace rm <workspace>[:<member>] [--force] [--dry-run] [--yes] [--json]
 
     OWNED MEMBERS
       The branch defaults to feature_<name> (configurable). --branch overrides it.

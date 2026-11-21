@@ -71,6 +71,13 @@ defmodule Gitspace.CLI.CompletionTest do
     {members, 0} = cli(["__complete", "3", "co", "vemags", "--only", ""])
     assert lines(members) == ["api", "web"]
 
+    {subcommands, 0} = cli(["__complete", "1", "workspace", ""])
+    assert "rm" in lines(subcommands)
+
+    {targets, 0} = cli(["__complete", "2", "workspace", "rm", ""])
+    assert "vemags/dev" in lines(targets)
+    assert "vemags/dev:api" in lines(targets)
+
     {repos, 0} = cli(["__complete", "3", "project", "add", "vemags", ""])
     assert "api" in lines(repos)
     assert "web" in lines(repos)

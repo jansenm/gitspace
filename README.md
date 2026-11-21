@@ -21,7 +21,7 @@ Product scope, CLI contract and acceptance plan live in the planning repository:
 
 | Area | Commands |
 |---|---|
-| Creation | `project new|ls|show|add|remove|rm`, `co`, `workspace new|ls|status` |
+| Creation | `project new|ls|show|add|remove|rm`, `co`, `workspace new|ls|status|rm` |
 | Setup, config and health | `setup`, `config [list|get|set]`, `doctor`, `doctor --fix`, `doctor --reindex` |
 | Completion | `completion bash|zsh|fish` |
 | Mirrors | `repo add`, `repo ls`, `repo fetch`, `repo alias`, `repo rm` |
@@ -30,7 +30,7 @@ Product scope, CLI contract and acceptance plan live in the planning repository:
 | Recovery | `reindex` — rediscover mirrors from disk, rebuild workspaces from markers |
 | Machine surface | `--json` on every command, exit codes 0–7, `--verbose` prints git argv |
 
-152 checks (148 tests, 3 properties, 1 doctest) in ~43 s.
+160 checks (156 tests, 3 properties, 1 doctest) in ~30 s.
 
 ## Commands
 
@@ -222,6 +222,23 @@ The same remote written in another URL form (`git@…`, `https://…`, with or w
 matched by its canonical remote key and is not duplicated. Default ports are omitted; other
 ports remain part of the key. `gitspace repo ls` shows the remote, alias, and mirror hash behind
 each repository.
+
+## Removing workspaces
+
+```sh
+gitspace workspace rm vemags/MT4711          # every member, then the workspace
+gitspace workspace rm vemags/MT4711:api      # one member
+gitspace workspace rm vemags/MT4711 --dry-run
+```
+
+- Owned members are removed as git worktrees; borrowed members are unlinked and their
+  checkouts stay in place.
+- Removing the last member tombstones the workspace. The project directory and definition
+  remain.
+- Risky owned members (dirty, untracked, or unpushed work) are refused. `--force` anchors
+  HEAD and saves the tracked diff plus untracked files under `<data>/trash` before removal.
+- Branches are never deleted.
+- `--yes` is required without a terminal; `--dry-run` shows the plan without changing anything.
 
 ## Shell completion
 
