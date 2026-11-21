@@ -136,7 +136,7 @@ defmodule Gitspace.CLI.WorkspaceTest do
 
     data = Jason.decode!(completed)["data"]
     actions = Map.new(data["members"], &{&1["repo"], &1["action"]})
-    assert actions["a"] == "reused"
+    assert actions["a"] == "kept"
     assert actions["b"] == "created"
   end
 

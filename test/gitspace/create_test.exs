@@ -31,7 +31,7 @@ defmodule Gitspace.CreateTest do
 
     assert {:ok, again} = Create.co(config, "a", "main")
     assert [reused] = again.members
-    assert reused.action == "reused"
+    assert reused.action == "kept"
     assert reused.path == member.path
 
     assert {:ok, workspace} = Workspaces.get(config, "a/main")
@@ -244,7 +244,7 @@ defmodule Gitspace.CreateTest do
              Create.workspace_new(config, "partial-create", [owned("a"), owned("b")], [])
 
     actions = Map.new(completed.members, &{&1.repo, &1.action})
-    assert actions["a"] == "reused"
+    assert actions["a"] == "kept"
     assert actions["b"] == "created"
 
     assert {:ok, workspace} = Workspaces.get(config, "a/partial-create")
@@ -266,7 +266,7 @@ defmodule Gitspace.CreateTest do
              Create.workspace_new(config, "subset", [owned("a")], [], labels: ["two"])
 
     actions = Map.new(subset.members, &{&1.repo, &1.action})
-    assert actions["a"] == "reused"
+    assert actions["a"] == "kept"
     assert actions["b"] == "kept"
     assert subset.labels == ["one", "two"]
     assert subset.description == "kept"
@@ -398,7 +398,7 @@ defmodule Gitspace.CreateTest do
     assert {:ok, again} = Create.workspace_new(config, "aliased", [owned("a")], [])
     assert [acme, beta] = Enum.sort_by(again.members, & &1.name)
     assert acme.name == "acme"
-    assert acme.action == "reused"
+    assert acme.action == "kept"
     assert beta.name == "beta"
     assert beta.action == "kept"
   end
@@ -414,7 +414,7 @@ defmodule Gitspace.CreateTest do
     assert {:ok, again} = Create.workspace_new(config, "alias-move", [owned("renamed")], [])
     assert [kept] = again.members
     assert kept.path == old_path
-    assert kept.action == "reused"
+    assert kept.action == "kept"
     assert kept.repo == "renamed"
     assert File.dir?(old_path)
     refute File.exists?(Path.join(result.path, "renamed"))
@@ -429,7 +429,7 @@ defmodule Gitspace.CreateTest do
     assert {:ok, second} = Create.co(config, "renamed-b", "main", name: "alias-co")
     assert [member] = second.members
     assert member.path == path
-    assert member.action == "reused"
+    assert member.action == "kept"
   end
 
   test "duplicate member names are refused", %{config: config} do

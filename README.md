@@ -29,7 +29,7 @@ Product scope, CLI contract and acceptance plan live in the planning repository:
 | Recovery | `reindex` — rediscover mirrors from disk, rebuild workspaces from markers |
 | Machine surface | `--json` on every command, exit codes 0–7, `--verbose` prints git argv |
 
-147 checks (143 tests, 3 properties, 1 doctest) in ~25 s.
+148 checks (144 tests, 3 properties, 1 doctest) in ~47 s.
 
 ## Commands
 
@@ -147,8 +147,10 @@ terminal; with `--json` or no terminal it is a `branch_occupied` error (exit 4).
 `--branch` and `--detach` are mutually exclusive, as are `--new-branch` and `--detach`.
 
 `--only M,...` and `--exclude M,...` select the project members for this invocation, and are
-mutually exclusive. The default is every member. Re-running with more members adds them to the
-same workspace; exclusions never delete existing members.
+mutually exclusive. The default is every member. **A repository that already has a checkout in
+the topic workspace is ignored**, even when the requested ref or branch mode differs. Re-running
+after adding a project member therefore adds only the missing member; no `--only` is needed.
+Exclusions never delete existing members.
 
 `workspace new` remains the explicit form and accepts `--project`, `--own`, `--borrow`,
 `--as repo=name`, labels, descriptions and `--dry-run`. It uses the same project/topic/member

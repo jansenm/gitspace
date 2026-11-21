@@ -89,8 +89,38 @@ defmodule Gitspace.CLI.ProjectTest do
 
     again_data = Jason.decode!(again)["data"]
     actions = Map.new(again_data["members"], &{&1["repo"], &1["action"]})
-    assert actions["a"] == "reused"
+    assert actions["a"] == "kept"
     assert actions["b"] == "kept"
+  end
+
+  test "adding a project member does not disturb existing checkouts" do
+    {_project, 0} =
+      cli(["project", "new", "vemags", "--repo", "a", "--json"])
+
+    {_first, 0} =
+      cli(["co", "vemags", "--topic", "MT4711", "--new-branch", "--json"])
+
+    {_added, 0} = cli(["project", "add", "vemags", "b", "--json"])
+
+    {output, 0} =
+      cli(["co", "vemags", "--topic", "MT4711", "--new-branch", "--json"])
+
+    actions = Map.new(Jason.decode!(output)["data"]["members"], &{&1["repo"], &1["action"]})
+    assert actions["a"] == "kept"
+    assert actions["b"] == "created"
+
+    {_added, 0} = cli(["project", "add", "vemags", "c", "--json"])
+
+    # Existing members are ignored even when the requested branch mode differs.
+    {output, 0} = cli(["co", "vemags", "--topic", "MT4711", "--json"])
+    members = Jason.decode!(output)["data"]["members"]
+    actions = Map.new(members, &{&1["repo"], &1["action"]})
+    assert actions["a"] == "kept"
+    assert actions["b"] == "kept"
+    assert actions["c"] == "created"
+
+    c = Enum.find(members, &(&1["repo"] == "c"))
+    assert c["branch"] == "main"
   end
 
   test "co supports --exclude and rejects --only with --exclude" do

@@ -8,7 +8,7 @@ defmodule Gitspace.Create do
   completes it.
   """
 
-  alias Gitspace.{Checkouts, Config, Error, Layout, Marker, Projects, Repos, Workspaces}
+  alias Gitspace.{Checkouts, Config, Error, Layout, Marker, Projects, Repo, Repos, Workspaces}
   alias Gitspace.Git.{Mirror, Refs, Worktree}
   alias Gitspace.Index.Repository
 
@@ -40,7 +40,9 @@ defmodule Gitspace.Create do
   @spec co(Config.t(), String.t(), String.t() | nil, keyword()) ::
           {:ok, result()} | {:partial, result(), [map()]} | {:error, Error.t()}
   def co(%Config{} = config, target, ref, opts \\ []) do
-    with {:ok, project} <- resolve_project_target(config, target),
+    with :ok <- validate_co_ref(ref),
+         :ok <- validate_co_branch(opts[:branch]),
+         {:ok, project} <- resolve_project_target(config, target),
          {:ok, members} <- Projects.resolve_members(config, project),
          {:ok, selected} <- select_members(members, opts),
          {:ok, topic} <- co_topic(ref, opts),
@@ -73,6 +75,17 @@ defmodule Gitspace.Create do
       )
     end
   end
+
+  defp validate_co_ref(nil), do: :ok
+
+  defp validate_co_ref(ref) do
+    if Layout.valid_ref?(ref),
+      do: :ok,
+      else: {:error, Error.new(:usage, "invalid ref: #{ref}")}
+  end
+
+  defp validate_co_branch(nil), do: :ok
+  defp validate_co_branch(branch), do: validate_branch(branch)
 
   defp resolve_project_target(config, target) do
     case Projects.get(config, target) do
@@ -571,6 +584,7 @@ defmodule Gitspace.Create do
       Enum.reduce(specs, {[], []}, fn spec, {plans, failures} ->
         case plan_member(config, name, work_dir, spec, existing, opts) do
           {:ok, plan} -> {[plan | plans], failures}
+          {:skip, _member} -> {plans, failures}
           {:error, error} -> {plans, [failure(spec, error) | failures]}
         end
       end)
@@ -597,12 +611,44 @@ defmodule Gitspace.Create do
     }
   end
 
-  defp plan_member(config, name, work_dir, %{ownership: "owned"} = spec, existing, opts) do
-    plan_owned(config, name, work_dir, spec, find_member(existing, spec.repo), opts)
+  defp plan_member(config, name, work_dir, spec, existing, opts) do
+    case find_member(existing, spec.repo) do
+      nil ->
+        plan_new_member(config, name, work_dir, spec, opts)
+
+      member ->
+        if member_checkout_present?(member, work_dir) do
+          skip_existing_member(member, spec)
+        else
+          plan_new_member(config, name, work_dir, spec, opts)
+        end
+    end
   end
 
-  defp plan_member(config, _name, _work_dir, %{ownership: "borrowed"} = spec, existing, _opts) do
-    plan_borrowed(config, spec, find_member(existing, spec.repo))
+  defp member_checkout_present?(%{"ownership" => "owned"} = member, work_dir) do
+    relative = member["rel_path"] || member["name"] || member["repo"]
+    is_binary(relative) and File.dir?(Path.join(work_dir, relative))
+  end
+
+  defp member_checkout_present?(%{"ownership" => "borrowed", "path" => path}, _work_dir) do
+    is_binary(path) and File.dir?(path)
+  end
+
+  defp member_checkout_present?(_member, _work_dir), do: false
+
+  defp skip_existing_member(member, spec) do
+    with :ok <- ownership_matches(member, spec.ownership),
+         :ok <- existing_member_name_matches(member, spec[:member_name]) do
+      {:skip, member}
+    end
+  end
+
+  defp plan_new_member(config, name, work_dir, %{ownership: "owned"} = spec, opts) do
+    plan_owned(config, name, work_dir, spec, nil, opts)
+  end
+
+  defp plan_new_member(config, _name, _work_dir, %{ownership: "borrowed"} = spec, _opts) do
+    plan_borrowed(config, spec, nil)
   end
 
   defp validate_plan_names(existing, plans) do
@@ -1571,6 +1617,20 @@ defmodule Gitspace.Create do
       end)
       |> Enum.map(&marker_member/1)
     )
+    |> Enum.map(&refresh_member_alias/1)
+  end
+
+  defp refresh_member_alias(member) do
+    case member["remote"] do
+      key when is_binary(key) ->
+        case Repo.get_by(Repository, remote_key: key) do
+          nil -> member
+          repo -> Map.put(member, "repo", repo.slug)
+        end
+
+      _ ->
+        member
+    end
   end
 
   defp marker_member(result) do

@@ -99,7 +99,9 @@ defmodule Gitspace.CLI.Co do
       branch: first[:branch],
       detached: first[:detached],
       ownership: first[:ownership],
-      reused: result.members != [] and Enum.all?(result.members, &(&1.action == "reused"))
+      reused:
+        result.members != [] and
+          Enum.all?(result.members, &(&1.action in ["reused", "kept"]))
     }
   end
 
