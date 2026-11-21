@@ -366,7 +366,14 @@ defmodule Gitspace.CLI.Workspace do
 
   defp render_rm(result) do
     action = if result.dry_run, do: "would remove", else: "removed"
-    IO.puts("#{action} workspace #{result.workspace}")
+
+    title =
+      case result.member do
+        nil -> "workspace #{result.workspace}"
+        member -> "member #{result.workspace}:#{member}"
+      end
+
+    IO.puts("#{action} #{title}")
     IO.puts("  path:     #{result.path}")
     IO.puts("  marker:   #{result.marker_path}")
 

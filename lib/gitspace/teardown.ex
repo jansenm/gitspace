@@ -550,7 +550,7 @@ defmodule Gitspace.Teardown do
       dry_run: dry_run,
       tombstoned: tombstoned,
       directory_removed: directory_removed,
-      directory_kept: not directory_removed and File.dir?(dir),
+      directory_kept: tombstoned and not directory_removed and File.dir?(dir),
       removed: Enum.map(removed, &public_target/1),
       risky: Enum.map(plan.risky, &public_risky/1),
       failures: Enum.map(failures, &Map.drop(&1, [:error]))
