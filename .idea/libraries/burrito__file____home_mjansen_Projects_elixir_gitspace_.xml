@@ -1,0 +1,14 @@
+<component name="libraryTable">
+  <library name="burrito [file:///home/mjansen/Projects/elixir/gitspace]" type="mix">
+    <CLASSES>
+      <root url="file://$PROJECT_DIR$/_build/dev/lib/burrito/ebin" />
+      <root url="file://$PROJECT_DIR$/_build/prod/lib/burrito/ebin" />
+      <root url="file://$PROJECT_DIR$/_build/test/lib/burrito/ebin" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES>
+      <root url="file://$PROJECT_DIR$/deps/burrito/lib" />
+      <root url="file://$PROJECT_DIR$/deps/burrito/src" />
+    </SOURCES>
+  </library>
+</component>

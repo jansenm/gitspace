@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<module type="ELIXIR_MODULE" version="4">
+  <component name="NewModuleRootManager">
+    <output url="file://$MODULE_DIR$/_build/dev/lib/gitspace/ebin" />
+    <output-test url="file://$MODULE_DIR$/_build/test/lib/gitspace/ebin" />
+    <content url="file://$MODULE_DIR$">
+      <sourceFolder url="file://$MODULE_DIR$/lib" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/spec" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/test" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/web" isTestSource="false" />
+      <excludeFolder url="file://$MODULE_DIR$/.elixir_ls" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/dev/lib/burrito" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/dev/lib/cc_precompiler" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/dev/lib/db_connection" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/dev/lib/decimal" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/dev/lib/ecto" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/dev/lib/ecto_sql" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/dev/lib/ecto_sqlite3" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/dev/lib/elixir_make" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/dev/lib/exile" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/dev/lib/exqlite" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/dev/lib/finch" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/dev/lib/hpax" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/dev/lib/jason" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/dev/lib/mime" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/dev/lib/mint" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/dev/lib/nimble_options" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/dev/lib/nimble_pool" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/dev/lib/req" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/dev/lib/telemetry" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/dev/lib/toml_elixir" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/dev/lib/typed_struct" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/prod/lib/burrito" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/prod/lib/cc_precompiler" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/prod/lib/db_connection" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/prod/lib/decimal" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/prod/lib/ecto" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/prod/lib/ecto_sql" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/prod/lib/ecto_sqlite3" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/prod/lib/elixir_make" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/prod/lib/exile" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/prod/lib/exqlite" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/prod/lib/finch" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/prod/lib/hpax" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/prod/lib/jason" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/prod/lib/mime" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/prod/lib/mint" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/prod/lib/nimble_options" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/prod/lib/nimble_pool" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/prod/lib/req" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/prod/lib/telemetry" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/prod/lib/toml_elixir" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/prod/lib/typed_struct" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/test/lib/burrito" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/test/lib/cc_precompiler" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/test/lib/db_connection" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/test/lib/decimal" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/test/lib/ecto" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/test/lib/ecto_sql" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/test/lib/ecto_sqlite3" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/test/lib/elixir_make" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/test/lib/exile" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/test/lib/exqlite" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/test/lib/finch" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/test/lib/hpax" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/test/lib/jason" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/test/lib/mime" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/test/lib/mint" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/test/lib/nimble_options" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/test/lib/nimble_pool" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/test/lib/req" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/test/lib/stream_data" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/test/lib/telemetry" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/test/lib/toml_elixir" />
+      <excludeFolder url="file://$MODULE_DIR$/_build/test/lib/typed_struct" />
+      <excludeFolder url="file://$MODULE_DIR$/assets/node_modules/phoenix" />
+      <excludeFolder url="file://$MODULE_DIR$/assets/node_modules/phoenix_html" />
+      <excludeFolder url="file://$MODULE_DIR$/cover" />
+      <excludeFolder url="file://$MODULE_DIR$/deps" />
+      <excludeFolder url="file://$MODULE_DIR$/doc" />
+      <excludeFolder url="file://$MODULE_DIR$/logs" />
+    </content>
+    <orderEntry type="sourceFolder" forTests="false" />
+    <orderEntry type="library" name="exile [file:///home/mjansen/Projects/elixir/gitspace]" level="project" />
+    <orderEntry type="library" name="jason [file:///home/mjansen/Projects/elixir/gitspace]" level="project" />
+    <orderEntry type="library" name="ecto_sqlite3 [file:///home/mjansen/Projects/elixir/gitspace]" level="project" />
+    <orderEntry type="library" name="toml_elixir [file:///home/mjansen/Projects/elixir/gitspace]" level="project" />
+    <orderEntry type="library" name="burrito [file:///home/mjansen/Projects/elixir/gitspace]" level="project" />
+    <orderEntry type="library" name="stream_data [file:///home/mjansen/Projects/elixir/gitspace]" level="project" />
+    <orderEntry type="library" name="elixir_make [file:///home/mjansen/Projects/elixir/gitspace]" level="project" />
+    <orderEntry type="library" name="credo [file:///home/mjansen/Projects/elixir/gitspace]" level="project" />
+    <orderEntry type="library" name="ex_doc [file:///home/mjansen/Projects/elixir/gitspace]" level="project" />
+    <orderEntry type="library" name="excoveralls [file:///home/mjansen/Projects/elixir/gitspace]" level="project" />
+    <orderEntry type="library" name="dialyxir [file:///home/mjansen/Projects/elixir/gitspace]" level="project" />
+    <orderEntry type="library" name="decimal [file:///home/mjansen/Projects/elixir/gitspace]" level="project" />
+    <orderEntry type="library" name="ecto_sql [file:///home/mjansen/Projects/elixir/gitspace]" level="project" />
+    <orderEntry type="library" name="ecto [file:///home/mjansen/Projects/elixir/gitspace]" level="project" />
+    <orderEntry type="library" name="exqlite [file:///home/mjansen/Projects/elixir/gitspace]" level="project" />
+    <orderEntry type="library" name="temp [file:///home/mjansen/Projects/elixir/gitspace]" level="project" />
+    <orderEntry type="library" name="benchee [file:///home/mjansen/Projects/elixir/gitspace]" level="project" />
+    <orderEntry type="library" name="benchee_markdown [file:///home/mjansen/Projects/elixir/gitspace]" level="project" />
+    <orderEntry type="library" name="postgrex [file:///home/mjansen/Projects/elixir/gitspace]" level="project" />
+    <orderEntry type="library" name="myxql [file:///home/mjansen/Projects/elixir/gitspace]" level="project" />
+    <orderEntry type="library" name="ex_dna [file:///home/mjansen/Projects/elixir/gitspace]" level="project" />
+    <orderEntry type="library" name="ex_slop [file:///home/mjansen/Projects/elixir/gitspace]" level="project" />
+    <orderEntry type="library" name="styler [file:///home/mjansen/Projects/elixir/gitspace]" level="project" />
+    <orderEntry type="library" name="req [file:///home/mjansen/Projects/elixir/gitspace]" level="project" />
+    <orderEntry type="library" name="typed_struct [file:///home/mjansen/Projects/elixir/gitspace]" level="project" />
+  </component>
+</module>

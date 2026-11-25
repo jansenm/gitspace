@@ -1,0 +1,13 @@
+<component name="libraryTable">
+  <library name="toml_elixir [file:///home/mjansen/Projects/elixir/gitspace]" type="mix">
+    <CLASSES>
+      <root url="file://$PROJECT_DIR$/_build/dev/lib/toml_elixir/ebin" />
+      <root url="file://$PROJECT_DIR$/_build/prod/lib/toml_elixir/ebin" />
+      <root url="file://$PROJECT_DIR$/_build/test/lib/toml_elixir/ebin" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES>
+      <root url="file://$PROJECT_DIR$/deps/toml_elixir/lib" />
+    </SOURCES>
+  </library>
+</component>
