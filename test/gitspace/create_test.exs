@@ -1,7 +1,7 @@
 defmodule Gitspace.CreateTest do
   use Gitspace.IndexCase, async: false
 
-  alias Gitspace.{Create, Fixtures, Git, Marker, Repos, Workspaces}
+  alias Gitspace.{Create, Fixtures, Git, Marker, Projects, Repos, Workspaces}
 
   setup %{config: config} do
     source_a = Fixtures.source_repo!(branches: ["hotfix/timeout"], tags: ["v1.0.0"])
@@ -459,6 +459,41 @@ defmodule Gitspace.CreateTest do
     assert length(workspace.members) == 2
     assert Enum.map(workspace.labels, & &1.label) == ["recover"]
     assert workspace.description == "survives"
+  end
+
+  test "co a repo that belongs to a project checks out only that repo", %{
+    config: config,
+    repo_a: repo_a
+  } do
+    assert {:ok, _project} = Projects.create(config, "vemags", repo: ["a", "b"])
+
+    assert {:ok, result} = Create.co(config, "a", "main")
+
+    assert result.project == "a"
+    assert result.workspace == "a/main"
+    assert result.path == Path.join([config.projects_root, "a", "main"])
+    assert [member] = result.members
+    assert member.repo == "a"
+    assert member.path == Path.join([config.projects_root, "a", "main", "a"])
+    assert File.dir?(member.path)
+
+    assert {:ok, project} = Projects.get(config, "a")
+    assert project.source == "implicit"
+    assert project.members == [repo_a.remote_key]
+  end
+
+  test "co reuses an implicit one-repo project created under a previous alias", %{config: config} do
+    assert {:ok, first} = Create.co(config, "b", "main", name: "alias-co")
+    assert first.project == "b"
+    path = hd(first.members).path
+
+    assert {:ok, _} = Repos.set_alias(config, "b", "renamed-b")
+
+    assert {:ok, second} = Create.co(config, "renamed-b", "main", name: "alias-co")
+    assert second.project == "b"
+    assert [member] = second.members
+    assert member.path == path
+    assert member.action == "kept"
   end
 
   defp owned(repo, ref \\ nil) do
