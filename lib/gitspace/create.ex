@@ -94,19 +94,38 @@ defmodule Gitspace.Create do
 
       {:error, %Error{code: :not_found}} ->
         case Repos.get(config, target) do
-          {:ok, repo} ->
-            case Projects.projects_for_repo(config, repo) do
-              [name | _] -> Projects.get(config, name)
-              [] -> Projects.ensure_implicit(config, repo)
-            end
-
-          {:error, error} ->
-            {:error, error}
+          {:ok, repo} -> repo_project(config, repo)
+          {:error, error} -> {:error, error}
         end
 
       {:error, error} ->
         {:error, error}
     end
+  end
+
+  # `co <repo>@<ref>` targets the repository, not every project it happens to
+  # belong to. Reuse the repo's own one-repo project (including an implicit one
+  # created under a previous alias), otherwise create the implicit project.
+  defp repo_project(config, repo) do
+    case Projects.get(config, repo.slug) do
+      {:ok, project} ->
+        {:ok, project}
+
+      {:error, %Error{code: :not_found}} ->
+        case implicit_one_repo_project(config, repo) do
+          nil -> Projects.ensure_implicit(config, repo)
+          project -> {:ok, project}
+        end
+
+      {:error, error} ->
+        {:error, error}
+    end
+  end
+
+  defp implicit_one_repo_project(config, repo) do
+    Enum.find(Projects.list(config), fn project ->
+      project.source == "implicit" and project.members == [repo.remote_key]
+    end)
   end
 
   defp select_members(members, opts) do
@@ -1723,7 +1742,8 @@ defmodule Gitspace.Create do
   end
 
   defp marker_name(marker_member) do
-    (marker_member["rel_path"] && Path.basename(marker_member["rel_path"])) ||
+    marker_member["name"] ||
+      (marker_member["rel_path"] && Path.basename(marker_member["rel_path"])) ||
       marker_member["repo"]
   end
 

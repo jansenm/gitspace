@@ -123,7 +123,8 @@ links in one step.
 ### `co` and branch modes
 
 `co` always targets a project. If no project exists but a registered repository has that name,
-a one-repo project is created implicitly.
+a one-repo project is created implicitly. Naming a repository never expands to a project that
+contains it; name the project to check out its other members.
 
 ```sh
 gitspace co ferroclass@main --topic dev

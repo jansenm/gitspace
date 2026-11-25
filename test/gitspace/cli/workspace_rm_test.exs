@@ -104,7 +104,7 @@ defmodule Gitspace.CLI.WorkspaceRmTest do
         "--json"
       ])
 
-    borrowed_path = Path.join([config.projects_root, "vemags", "holder", "a"])
+    borrowed_path = Path.join([config.projects_root, "a", "holder", "a"])
 
     {output, 0} = cli(["workspace", "rm", "vemags/borrow:a", "--yes", "--json"])
     data = Jason.decode!(output)["data"]
