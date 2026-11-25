@@ -33,14 +33,13 @@ defmodule Gitspace.Inventory do
     orphan_rows = Enum.map(orphans, &checkout_row(config, &1, nil, refreshed))
 
     needs =
-      (Enum.filter(workspace_rows, & &1.at_risk) ++
-         Enum.filter(external_rows, & &1.risk.at_risk) ++
-         Enum.filter(orphan_rows, & &1.risk.at_risk))
+      (workspace_rows ++ external_rows ++ orphan_rows)
+      |> Enum.filter(&at_risk?/1)
       |> sort_needs()
 
     working =
       (workspace_rows ++ orphan_rows)
-      |> Enum.reject(& &1.at_risk)
+      |> Enum.reject(&at_risk?/1)
       |> Enum.sort_by(&activity_sort_key/1, :desc)
       |> Enum.take(6)
 
@@ -307,6 +306,11 @@ defmodule Gitspace.Inventory do
     |> Enum.map(& &1.checkout_id)
     |> MapSet.new()
   end
+
+  # Workspace rows carry the flag directly; checkout rows nest it under `risk`.
+  defp at_risk?(%{at_risk: at_risk}), do: at_risk
+  defp at_risk?(%{risk: %{at_risk: at_risk}}), do: at_risk
+  defp at_risk?(_row), do: false
 
   defp sort_needs(rows) do
     Enum.sort_by(rows, fn row ->
