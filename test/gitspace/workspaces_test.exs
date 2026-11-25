@@ -3,6 +3,7 @@ defmodule Gitspace.WorkspacesTest do
 
   alias Gitspace.{Fixtures, Marker, Projects, Repos, Workspaces}
   alias Gitspace.Git.Worktree
+  alias Gitspace.Index.Repository
 
   test "REC-1 recovers owned and borrowed members, labels and missing paths", %{config: config} do
     source = Fixtures.source_repo!()
@@ -94,5 +95,94 @@ defmodule Gitspace.WorkspacesTest do
     assert {:ok, summary} = Workspaces.reindex(config)
     assert summary.workspaces == 0
     assert Enum.any?(summary.issues, &(&1.kind == :invalid_marker))
+  end
+
+  test "a duplicate member name does not stop later members from being indexed", %{
+    config: config
+  } do
+    register_repos(["a", "b", "c"])
+
+    work_dir = Path.join([config.projects_root, "demo", "duplicate-name"])
+    File.mkdir_p!(work_dir)
+
+    marker =
+      Marker.build("demo/duplicate-name",
+        project: "demo",
+        topic: "duplicate-name",
+        members: [
+          owned_member("a", "same", "a-dir"),
+          owned_member("b", "same", "b-dir"),
+          owned_member("c", "c", "c-dir")
+        ]
+      )
+
+    Marker.write!(work_dir, marker)
+
+    assert {:ok, 2, [issue]} = Workspaces.recover(config, work_dir, marker)
+    assert issue.kind == :member
+
+    assert {:ok, workspace} = Workspaces.get(config, "demo/duplicate-name")
+
+    assert workspace.members |> Enum.map(& &1.checkout.repository.slug) |> Enum.sort() == [
+             "a",
+             "c"
+           ]
+  end
+
+  test "a duplicate repository does not stop later members from being indexed", %{
+    config: config
+  } do
+    register_repos(["a", "b"])
+
+    work_dir = Path.join([config.projects_root, "demo", "duplicate-repo"])
+    File.mkdir_p!(work_dir)
+
+    marker =
+      Marker.build("demo/duplicate-repo",
+        project: "demo",
+        topic: "duplicate-repo",
+        members: [
+          owned_member("a", "a-one"),
+          owned_member("a", "a-two"),
+          owned_member("b", "b")
+        ]
+      )
+
+    Marker.write!(work_dir, marker)
+
+    assert {:ok, 2, [issue]} = Workspaces.recover(config, work_dir, marker)
+    assert issue.kind == :member
+
+    assert {:ok, workspace} = Workspaces.get(config, "demo/duplicate-repo")
+
+    assert workspace.members |> Enum.map(& &1.checkout.repository.slug) |> Enum.sort() == [
+             "a",
+             "b"
+           ]
+  end
+
+  defp register_repos(slugs) do
+    Enum.each(slugs, fn slug ->
+      {:ok, _repo} =
+        %Repository{}
+        |> Repository.changeset(%{
+          slug: slug,
+          remote_url: "file:///#{slug}",
+          remote_key: slug,
+          state: "external"
+        })
+        |> Repo.insert()
+    end)
+  end
+
+  defp owned_member(slug, name, rel_path \\ nil) do
+    %{
+      "repo" => slug,
+      "remote" => slug,
+      "name" => name,
+      "ownership" => "owned",
+      "rel_path" => rel_path || name,
+      "branch" => "main"
+    }
   end
 end

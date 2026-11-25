@@ -23,12 +23,10 @@ defmodule Gitspace.Index.WorkspaceMember do
     |> cast(attrs, @required ++ @optional)
     |> validate_required(@required)
     |> validate_inclusion(:ownership, ~w(owned borrowed))
+    # Exqlite derives constraint names from the indexed columns, not from the
+    # actual SQLite index name, so these must use Ecto's default names.
     |> unique_constraint([:workspace_id, :checkout_id])
-    |> unique_constraint([:workspace_id, :repository_id],
-      name: :workspace_members_workspace_repository_index
-    )
-    |> unique_constraint([:workspace_id, :name],
-      name: :workspace_members_workspace_name_index
-    )
+    |> unique_constraint([:workspace_id, :repository_id])
+    |> unique_constraint([:workspace_id, :name])
   end
 end

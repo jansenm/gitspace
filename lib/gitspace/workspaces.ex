@@ -143,7 +143,7 @@ defmodule Gitspace.Workspaces do
          :ok <- insert_labels(workspace, marker["labels"] || []) do
       {members, issues} =
         Enum.reduce(marker["members"] || [], {0, []}, fn member, {count, issues} ->
-          case recover_member(config, workspace, dir, member) do
+          case recover_member_safely(config, workspace, dir, member) do
             {:ok, _member} -> {count + 1, issues}
             {:error, issue} -> {count, [issue | issues]}
           end
@@ -153,6 +153,22 @@ defmodule Gitspace.Workspaces do
     else
       {:error, error} -> {:error, error}
     end
+  end
+
+  # A single malformed member must never prevent the remaining members from
+  # being indexed. Constraint and path errors are reported as issues, not
+  # raised through the whole recovery.
+  defp recover_member_safely(config, workspace, dir, member) do
+    recover_member(config, workspace, dir, member)
+  rescue
+    error ->
+      {:error,
+       %{
+         kind: :member,
+         workspace: workspace.name,
+         repo: member["repo"],
+         reason: Exception.message(error)
+       }}
   end
 
   defp upsert_workspace(dir, marker) do
