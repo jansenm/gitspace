@@ -24,6 +24,7 @@ defmodule Gitspace.Index.Workspace do
     |> cast(attrs, @required ++ @optional)
     |> validate_required(@required)
     |> validate_inclusion(:state, ~w(active torn_down))
-    |> unique_constraint(:name, name: :workspaces_active_name_index)
+    # Exqlite reports the Ecto-derived name, not the partial index's SQL name.
+    |> unique_constraint(:name)
   end
 end
