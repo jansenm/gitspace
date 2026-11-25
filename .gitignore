@@ -28,3 +28,6 @@ gitspace-*.tar
 
 # Local Makefile overrides
 Makefile.local
+
+# Local GitHub token used by .envrc for the gh CLI
+/.github-token
