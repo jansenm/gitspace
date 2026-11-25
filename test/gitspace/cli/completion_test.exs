@@ -81,6 +81,13 @@ defmodule Gitspace.CLI.CompletionTest do
     {repos, 0} = cli(["__complete", "3", "project", "add", "vemags", ""])
     assert "api" in lines(repos)
     assert "web" in lines(repos)
+
+    {repo_commands, 0} = cli(["__complete", "1", "repo", ""])
+    assert "git" in lines(repo_commands)
+
+    {git_repos, 0} = cli(["__complete", "2", "repo", "git", ""])
+    assert "api" in lines(git_repos)
+    assert "web" in lines(git_repos)
   end
 
   test "completes config keys and shell names" do

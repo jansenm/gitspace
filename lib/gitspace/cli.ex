@@ -210,7 +210,7 @@ defmodule Gitspace.CLI do
       status [target]              inbox, or one workspace/checkout/repository
       show <target>                details and provenance
       path <target>                print a checkout path
-      repo add|ls|fetch|rm|alias   mirrors and aliases
+      repo add|ls|fetch|rm|alias|git  mirrors, aliases and raw git
       scan [path...]               discover existing clones and worktrees (read-only)
       link <path>                  index an external checkout
       unlink <path>                forget an external checkout
@@ -290,6 +290,10 @@ defmodule Gitspace.CLI do
           gitspace repo ls
           gitspace repo fetch [<repo>|--all] [--prune]
           gitspace repo rm <repo> [--force] [--dry-run] [--yes]
+          gitspace repo alias <repo> <name>
+          gitspace repo git <repo> -- <git args...>
+
+        `repo git` runs in the bare mirror. See `gitspace repo --help`.
         """
 
       "scan" ->

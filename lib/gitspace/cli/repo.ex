@@ -20,6 +20,7 @@ defmodule Gitspace.CLI.Repo do
       ["fetch" | rest] -> fetch(global, rest)
       ["rm" | rest] -> remove(global, rest)
       ["alias" | rest] -> alias_repo(global, rest)
+      ["git" | rest] -> git(rest)
       [] -> {:ok, %{help: help()}, &render_help/1}
       [other | _] -> {:error, Error.new(:usage, "unknown repo command: #{other}")}
     end
@@ -143,6 +144,23 @@ defmodule Gitspace.CLI.Repo do
     end
   end
 
+  defp git(args) do
+    with {:ok, selector, git_args} <- split_git_args(args),
+         {:ok, config} <- Helpers.load_config(),
+         :ok <- Helpers.start_index(config),
+         {:ok, repo} <- Repos.get(config, selector),
+         {:ok, result} <- Repos.run_git(config, repo, git_args) do
+      {:ok, result, &render_git/1}
+    end
+  end
+
+  defp split_git_args([selector, "--" | args]) when selector != "" and args != [],
+    do: {:ok, selector, args}
+
+  defp split_git_args(_args) do
+    {:error, Error.new(:usage, "usage: gitspace repo git <repo> -- <git args...>")}
+  end
+
   defp selector_and_name([selector, name]) when selector != "" and name != "" do
     {:ok, selector, name}
   end
@@ -241,6 +259,7 @@ defmodule Gitspace.CLI.Repo do
       gitspace repo fetch [<repo>|--all] [--prune]
       gitspace repo rm <repo> [--force] [--dry-run] [--yes]
       gitspace repo alias <repo> <name>
+      gitspace repo git <repo> -- <git args...>
 
     ADD FROM A CHECKOUT
       Point `repo add` at an existing clone or worktree. With one remote its
@@ -250,7 +269,30 @@ defmodule Gitspace.CLI.Repo do
 
       When fetching, the mirror is seeded from the checkout with
       `git clone --reference ... --dissociate` so local objects are reused.
+
+    RAW GIT
+      `repo git` runs a git command inside the repository's bare mirror. It is
+      an escape hatch for maintenance tasks that gitspace does not model.
+      Changing remote.origin.url to a URL with the same canonical remote key
+      updates the indexed URL. Other ref changes may need `gitspace doctor
+      --reindex`.
+
+        gitspace repo git ferroclass -- remote set-url origin git@github.com:jansenm/ferroclass.git
+        gitspace repo git ferroclass -- remote -v
     """
+  end
+
+  defp render_git(data) do
+    IO.write(data.stdout)
+    IO.write(:stderr, data.stderr)
+
+    if data.metadata[:changed] do
+      IO.puts(:stderr, "updated indexed remote URL for #{data.repo}")
+    end
+
+    if data.metadata[:warning] do
+      IO.puts(:stderr, "warning: #{data.metadata.warning}")
+    end
   end
 
   defp render_help(%{help: help}), do: IO.puts(help)

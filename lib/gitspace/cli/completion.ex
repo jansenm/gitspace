@@ -15,7 +15,7 @@ defmodule Gitspace.CLI.Completion do
   @subcommands %{
     "workspace" => ~w(new ls status rm help),
     "project" => ~w(new ls show add remove rm help),
-    "repo" => ~w(add ls fetch rm alias help),
+    "repo" => ~w(add ls fetch rm alias git help),
     "config" => ~w(list get set help),
     "completion" => ~w(bash zsh fish)
   }
@@ -129,26 +129,34 @@ defmodule Gitspace.CLI.Completion do
   end
 
   defp flags(before) do
-    cleaned = strip_globals(before)
-    command = Enum.at(cleaned, 0)
-    sub = subcommand(command, Enum.at(cleaned, 1))
+    if "--" in before do
+      []
+    else
+      cleaned = strip_globals(before)
+      command = Enum.at(cleaned, 0)
+      sub = subcommand(command, Enum.at(cleaned, 1))
 
-    @global_flags ++
-      Map.get(@command_flags, command, []) ++
-      if(sub, do: Map.get(@command_flags, "#{command}:#{sub}", []), else: [])
+      @global_flags ++
+        Map.get(@command_flags, command, []) ++
+        if(sub, do: Map.get(@command_flags, "#{command}:#{sub}", []), else: [])
+    end
   end
 
   defp positional(before) do
-    cleaned = strip_globals(before)
+    if "--" in before do
+      []
+    else
+      cleaned = strip_globals(before)
 
-    case cleaned do
-      [] ->
-        @commands
+      case cleaned do
+        [] ->
+          @commands
 
-      [command | rest] ->
-        sub = subcommand(command, Enum.at(rest, 0))
-        args = if sub, do: tl(rest), else: rest
-        positional_values(command, sub, positional_args(args))
+        [command | rest] ->
+          sub = subcommand(command, Enum.at(rest, 0))
+          args = if sub, do: tl(rest), else: rest
+          positional_values(command, sub, positional_args(args))
+      end
     end
   end
 
@@ -181,6 +189,7 @@ defmodule Gitspace.CLI.Completion do
       {"fetch", 0} -> repos()
       {"rm", 0} -> repos()
       {"alias", 0} -> repos()
+      {"git", 0} -> repos()
       _ -> []
     end
   end

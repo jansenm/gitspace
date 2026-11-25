@@ -24,13 +24,13 @@ Product scope, CLI contract and acceptance plan live in the planning repository:
 | Creation | `project new|ls|show|add|remove|rm`, `co`, `workspace new|ls|status|rm` |
 | Setup, config and health | `setup`, `config [list|get|set]`, `doctor`, `doctor --fix`, `doctor --reindex` |
 | Completion | `completion bash|zsh|fish` |
-| Mirrors | `repo add`, `repo ls`, `repo fetch`, `repo alias`, `repo rm` |
+| Mirrors | `repo add`, `repo ls`, `repo fetch`, `repo alias`, `repo git`, `repo rm` |
 | Discovery | `scan` (read-only), `link`, `unlink` |
 | Inventory | `gitspace`, `ls`, `status`, `show`, `path` |
 | Recovery | `reindex` — rediscover mirrors from disk, rebuild workspaces from markers |
 | Machine surface | `--json` on every command, exit codes 0–7, `--verbose` prints git argv |
 
-160 checks (156 tests, 3 properties, 1 doctest) in ~30 s.
+167 checks (163 tests, 3 properties, 1 doctest) in ~50 s.
 
 ## Commands
 
@@ -223,6 +223,22 @@ The same remote written in another URL form (`git@…`, `https://…`, with or w
 matched by its canonical remote key and is not duplicated. Default ports are omitted; other
 ports remain part of the key. `gitspace repo ls` shows the remote, alias, and mirror hash behind
 each repository.
+
+## Raw git in mirrors
+
+`repo git` runs a git command inside a repository's bare mirror. It is an escape hatch for
+maintenance tasks that gitspace does not model yet:
+
+```sh
+gitspace repo git ferroclass -- remote set-url origin git@github.com:jansenm/ferroclass.git
+gitspace repo git ferroclass -- remote -v
+gitspace repo git ferroclass -- config --get remote.origin.url
+```
+
+Changing `remote.origin.url` to a URL with the same canonical remote key updates the indexed
+remote URL. Changing it to a different repository is reported but not applied to the index,
+because existing checkouts and workspaces refer to the old key; remove and re-add the repository
+in that case. Other ref changes may need `gitspace doctor --reindex`.
 
 ## Removing workspaces
 

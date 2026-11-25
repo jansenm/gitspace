@@ -376,6 +376,37 @@ defmodule Gitspace.Repos do
     end
   end
 
+  @doc """
+  Runs a git command inside a repository's bare mirror.
+
+  This is an escape hatch for maintenance tasks that gitspace does not model.
+  Changing `remote.origin.url` to a URL with the same canonical remote key
+  updates the indexed remote URL. Changing it to another repository is reported
+  but not applied to the index, because existing checkouts and workspaces refer
+  to the old key.
+  """
+  @spec run_git(Config.t(), Repository.t(), [String.t()]) :: {:ok, map()} | {:error, Error.t()}
+  def run_git(%Config{} = _config, %Repository{} = repo, args) when is_list(args) do
+    with {:ok, bare} <- git_mirror(repo) do
+      case Git.run(args, cd: bare, locks: true) do
+        {:ok, result} ->
+          {:ok,
+           %{
+             repo: repo.slug,
+             mirror: bare,
+             argv: args,
+             exit: result.exit,
+             stdout: result.stdout,
+             stderr: result.stderr,
+             metadata: refresh_remote_metadata(repo, bare)
+           }}
+
+        {:error, result} ->
+          {:error, git_error(repo, bare, args, result)}
+      end
+    end
+  end
+
   @spec remove(Config.t(), String.t(), keyword()) :: {:ok, map()} | {:error, Error.t()}
   def remove(%Config{} = config, selector, opts \\ []) do
     with {:ok, repo} <- get(config, selector) do
@@ -1050,6 +1081,92 @@ defmodule Gitspace.Repos do
     File.dir?(Path.join(path, "objects")) and
       File.regular?(Path.join(path, "HEAD")) and
       File.dir?(Path.join(path, "refs"))
+  end
+
+  defp git_mirror(%Repository{bare_path: nil} = repo) do
+    {:error,
+     Error.new(:refused, "#{repo.slug} has no mirror",
+       hint: "register the remote with `gitspace repo add` first"
+     )}
+  end
+
+  defp git_mirror(%Repository{bare_path: bare} = repo) do
+    if File.dir?(bare) do
+      {:ok, bare}
+    else
+      {:error,
+       Error.new(:not_found, "mirror for #{repo.slug} is missing at #{bare}",
+         hint: "run `gitspace repo add <url> --name #{repo.slug}` again"
+       )}
+    end
+  end
+
+  defp refresh_remote_metadata(repo, bare) do
+    case read_config(bare, ["config", "--get", "remote.origin.url"]) do
+      nil ->
+        %{
+          changed: false,
+          warning: "mirror has no remote.origin.url; gitspace metadata was not changed"
+        }
+
+      url ->
+        key = Layout.normalize_remote(url)
+
+        cond do
+          url == repo.remote_url ->
+            %{changed: false, remote_url: url}
+
+          key == repo.remote_key ->
+            case repo
+                 |> Ecto.Changeset.change(%{remote_url: url, last_fetch_error: nil})
+                 |> Repo.update() do
+              {:ok, _repo} ->
+                %{changed: true, remote_url: url}
+
+              {:error, changeset} ->
+                %{
+                  changed: false,
+                  remote_url: url,
+                  warning:
+                    "remote URL changed, but the index could not be updated: " <>
+                      inspect(Ecto.Changeset.traverse_errors(changeset, fn {msg, _} -> msg end))
+                }
+            end
+
+          true ->
+            %{
+              changed: false,
+              remote_url: url,
+              warning:
+                "mirror origin now resolves to #{key}, but the index still uses " <>
+                  "#{repo.remote_key}; remove and re-add the repo to change its canonical remote"
+            }
+        end
+    end
+  end
+
+  defp git_error(repo, bare, args, result) do
+    stderr = result.stderr |> String.trim() |> String.slice(0, 600)
+
+    suffix =
+      case stderr do
+        "" -> ""
+        message -> ": " <> message
+      end
+
+    Error.new(
+      :error,
+      "git #{Enum.join(args, " ")} failed with exit #{result.exit}#{suffix}",
+      hint: "the command ran in #{bare}",
+      details: %{
+        repo: repo.slug,
+        mirror: bare,
+        argv: args,
+        exit: result.exit,
+        stdout: result.stdout,
+        stderr: result.stderr
+      }
+    )
   end
 
   defp changeset_error(changeset) do

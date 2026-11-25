@@ -196,6 +196,65 @@ defmodule Gitspace.CLITest do
     assert list =~ "renamed"
   end
 
+  test "repo git runs in the mirror and refreshes a same-key remote URL", %{
+    config: config,
+    repo: repo,
+    source: source
+  } do
+    {listed, 0} = cli(["repo", "git", "demo", "--", "remote", "-v"])
+    assert listed =~ repo.remote_url
+
+    {output, 0} =
+      cli(["--json", "repo", "git", "demo", "--", "remote", "set-url", "origin", source])
+
+    metadata = Jason.decode!(output)["data"]["metadata"]
+    assert metadata["changed"] == true
+
+    assert {:ok, updated} = Repos.get(config, "demo")
+    assert updated.remote_url == source
+
+    assert Git.run!(["config", "--get", "remote.origin.url"], cd: updated.bare_path)
+           |> String.trim() == source
+
+    {list, 0} = cli(["repo", "ls"])
+    assert list =~ source
+  end
+
+  test "repo git reports a remote key change without rewriting the index", %{
+    config: config,
+    repo: repo
+  } do
+    {output, 0} =
+      cli([
+        "--json",
+        "repo",
+        "git",
+        "demo",
+        "--",
+        "remote",
+        "set-url",
+        "origin",
+        "git@example.com:other/repo.git"
+      ])
+
+    metadata = Jason.decode!(output)["data"]["metadata"]
+    assert metadata["changed"] == false
+    assert metadata["warning"] =~ "canonical remote"
+
+    assert {:ok, unchanged} = Repos.get(config, "demo")
+    assert unchanged.remote_url == repo.remote_url
+  end
+
+  test "repo git returns git failures as errors", %{config: config, repo: repo} do
+    assert {:error, error} =
+             Repos.run_git(config, repo, ["rev-parse", "--verify", "definitely-missing"])
+
+    assert error.code == :error
+    assert error.message =~ "git rev-parse"
+    assert error.details.repo == "demo"
+    assert error.details.mirror == repo.bare_path
+  end
+
   test "doctor warns on mirror index drift and --fix reconciles it", %{config: config} do
     File.rm!(Gitspace.MirrorIndex.path(config))
 
