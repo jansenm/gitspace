@@ -3,7 +3,7 @@
 A workspace-centric git checkout manager. This repository implements the **creation and
 inventory path**: configure gitspace, register mirrors, define projects, check out topics,
 discover and link existing checkouts, see what needs attention, and rebuild the index from git
-and markers. Teardown and pruning are M3.
+and markers. Pruning and the full safety net are M3.
 
 Product scope, CLI contract and acceptance plan live in the planning repository:
 
@@ -347,7 +347,8 @@ status (20) 61.6 ms.
 
 ## Known limits
 
-- Teardown, `prune` and the full safety net are M3.
+- `prune` and the full safety net are M3; `workspace rm` covers safe workspace and member
+  removal.
 - External checkouts are index-only: `unlink` forgets them and a later reindex cannot
   rediscover them unless you `scan`/`link` again.
 - Submodules are checked out as empty directories; LFS pointer files are checked out verbatim.
@@ -361,10 +362,14 @@ status (20) 61.6 ms.
 - `workspace ls` lists active workspaces; `--all`/torn-down listings belong with M3 teardown.
 - `--dry-run` does not fetch, even with `--fetch`; it reports what the current mirror can do.
 - A partial run with **no** successful member returns the original error and writes no marker.
-- Borrowing a checkout that is owned by another workspace is allowed; M3 teardown must
-  reconcile that reference instead of deleting it.
+- Borrowing a checkout that is owned by another workspace is allowed; `workspace rm` refuses
+  to remove a checkout that is still referenced by another active workspace.
 
 ## Not here yet
 
-M3 teardown/prune/safety, M4 handoff and `run --all`, M5 full machine contract and performance,
-M6 dogfood and release.
+M3 prune/safety and torn-down listings, M4 handoff and `run --all`, M5 full machine contract
+and performance, M6 dogfood and release.
+
+## License
+
+Mozilla Public License 2.0. See [LICENSE](LICENSE) and [REUSE.toml](REUSE.toml).

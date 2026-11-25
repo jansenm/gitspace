@@ -9,6 +9,7 @@ defmodule Gitspace.MixProject do
       start_permanent: Mix.env() == :prod,
       elixirc_paths: elixirc_paths(Mix.env()),
       releases: releases(),
+      package: package(),
       deps: deps()
     ]
   end
@@ -48,6 +49,13 @@ defmodule Gitspace.MixProject do
           ]
         ]
       ]
+    ]
+  end
+
+  defp package do
+    [
+      licenses: ["MPL-2.0"],
+      links: %{"GitHub" => "https://github.com/jansenm/gitspace"}
     ]
   end
 

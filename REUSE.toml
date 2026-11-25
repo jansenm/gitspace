@@ -1,0 +1,10 @@
+version = 1
+SPDX-PackageName = "gitspace"
+SPDX-PackageSupplier = "Michael Jansen <ferroclass@michael-jansen.biz>"
+SPDX-PackageDownloadLocation = "https://github.com/jansenm/gitspace"
+
+[[annotations]]
+path = "**"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Michael Jansen <ferroclass@michael-jansen.biz>"
+SPDX-License-Identifier = "MPL-2.0"
