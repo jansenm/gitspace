@@ -24,13 +24,13 @@ Product scope, CLI contract and acceptance plan live in the planning repository:
 | Creation | `project new|ls|show|add|remove|rm`, `co`, `workspace new|ls|status|rm` |
 | Setup, config and health | `setup`, `config [list|get|set]`, `doctor`, `doctor --fix`, `doctor --reindex` |
 | Completion | `completion bash|zsh|fish` |
-| Mirrors | `repo add`, `repo ls`, `repo fetch`, `repo alias`, `repo git`, `repo rm` |
+| Mirrors | `repo add`, `repo ls`, `repo fetch`, `repo alias`, `repo set-url`, `repo rm` |
 | Discovery | `scan` (read-only), `link`, `unlink` |
 | Inventory | `gitspace`, `ls`, `status`, `show`, `path` |
 | Recovery | `reindex` — rediscover mirrors from disk, rebuild workspaces from markers |
 | Machine surface | `--json` on every command, exit codes 0–7, `--verbose` prints git argv |
 
-167 checks (163 tests, 3 properties, 1 doctest) in ~50 s.
+169 checks (165 tests, 3 properties, 1 doctest) in ~45 s.
 
 ## Commands
 
@@ -224,21 +224,20 @@ matched by its canonical remote key and is not duplicated. Default ports are omi
 ports remain part of the key. `gitspace repo ls` shows the remote, alias, and mirror hash behind
 each repository.
 
-## Raw git in mirrors
+## Changing remote URLs
 
-`repo git` runs a git command inside a repository's bare mirror. It is an escape hatch for
-maintenance tasks that gitspace does not model yet:
+`repo set-url` changes the mirror's fetch URL. `--push` changes the push URL instead:
 
 ```sh
-gitspace repo git ferroclass -- remote set-url origin git@github.com:jansenm/ferroclass.git
-gitspace repo git ferroclass -- remote -v
-gitspace repo git ferroclass -- config --get remote.origin.url
+gitspace repo set-url ferroclass git@github.com:jansenm/ferroclass.git
+gitspace repo set-url ferroclass git@github.com:jansenm/ferroclass.git --push
 ```
 
-Changing `remote.origin.url` to a URL with the same canonical remote key updates the indexed
-remote URL. Changing it to a different repository is reported but not applied to the index,
-because existing checkouts and workspaces refer to the old key; remove and re-add the repository
-in that case. Other ref changes may need `gitspace doctor --reindex`.
+The new URL must resolve to the same canonical remote key. Switching between `https` and `ssh`
+is allowed; a different host, port or path is refused because the mirror hash, index rows,
+project members and markers all refer to the canonical key. Remove and re-add the repository
+for that case. A remote with several fetch or push URLs is also refused instead of guessing
+which one to replace.
 
 ## Removing workspaces
 

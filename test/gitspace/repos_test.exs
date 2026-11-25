@@ -287,6 +287,56 @@ defmodule Gitspace.ReposTest do
     assert with_remote.message =~ "no remotes"
   end
 
+  test "set_remote_url switches https to ssh without changing the canonical key", %{
+    config: config
+  } do
+    https = "https://example.com/acme/config.git"
+    ssh = "git@example.com:acme/config.git"
+
+    assert {:ok, repo} = Repos.add(config, https, name: "remote-url", no_fetch: true)
+    assert repo.remote_key == "example.com/acme/config"
+
+    assert {:ok, result} = Repos.set_remote_url(config, repo, ssh)
+    assert result.target == "fetch"
+    assert result.previous == [https]
+    assert result.url == ssh
+
+    assert {:ok, updated} = Repos.get(config, "remote-url")
+    assert updated.remote_url == ssh
+    assert updated.remote_key == repo.remote_key
+    assert updated.bare_path == repo.bare_path
+
+    assert Git.run!(["config", "--get", "remote.origin.url"], cd: repo.bare_path)
+           |> String.trim() == ssh
+
+    assert {:ok, pushed} = Repos.set_remote_url(config, repo, ssh, push: true)
+    assert pushed.target == "push"
+    assert pushed.previous == []
+
+    assert Git.run!(["config", "--get", "remote.origin.pushurl"], cd: repo.bare_path)
+           |> String.trim() == ssh
+
+    assert {:ok, after_push} = Repos.get(config, "remote-url")
+    assert after_push.remote_url == ssh
+  end
+
+  test "set_remote_url refuses multiple fetch URLs and leaves them untouched", %{config: config} do
+    https = "https://example.com/acme/config.git"
+    ssh = "git@example.com:acme/config.git"
+
+    assert {:ok, repo} = Repos.add(config, https, name: "multi-url", no_fetch: true)
+    Git.run!(["config", "--add", "remote.origin.url", ssh], cd: repo.bare_path)
+
+    assert {:error, error} =
+             Repos.set_remote_url(config, repo, "ssh://git@example.com/acme/config.git")
+
+    assert error.code == :conflict
+    assert error.details.urls == [https, ssh]
+
+    assert Git.run!(["config", "--get-all", "remote.origin.url"], cd: repo.bare_path)
+           |> String.split("\n", trim: true) == [https, ssh]
+  end
+
   defp clone_checkout!(source, label) do
     clone = Path.join(Fixtures.tmp_dir!(label), "checkout")
     Git.run!(["clone", source, clone])

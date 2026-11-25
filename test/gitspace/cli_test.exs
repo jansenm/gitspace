@@ -196,19 +196,17 @@ defmodule Gitspace.CLITest do
     assert list =~ "renamed"
   end
 
-  test "repo git runs in the mirror and refreshes a same-key remote URL", %{
+  test "repo set-url updates the fetch URL and the index", %{
     config: config,
     repo: repo,
     source: source
   } do
-    {listed, 0} = cli(["repo", "git", "demo", "--", "remote", "-v"])
-    assert listed =~ repo.remote_url
+    {output, 0} = cli(["--json", "repo", "set-url", "demo", source])
+    data = Jason.decode!(output)["data"]
 
-    {output, 0} =
-      cli(["--json", "repo", "git", "demo", "--", "remote", "set-url", "origin", source])
-
-    metadata = Jason.decode!(output)["data"]["metadata"]
-    assert metadata["changed"] == true
+    assert data["target"] == "fetch"
+    assert data["url"] == source
+    assert data["previous"] == [repo.remote_url]
 
     assert {:ok, updated} = Repos.get(config, "demo")
     assert updated.remote_url == source
@@ -220,39 +218,40 @@ defmodule Gitspace.CLITest do
     assert list =~ source
   end
 
-  test "repo git reports a remote key change without rewriting the index", %{
+  test "repo set-url --push leaves the fetch URL alone", %{
     config: config,
-    repo: repo
+    repo: repo,
+    source: source
   } do
-    {output, 0} =
-      cli([
-        "--json",
-        "repo",
-        "git",
-        "demo",
-        "--",
-        "remote",
-        "set-url",
-        "origin",
-        "git@example.com:other/repo.git"
-      ])
+    {output, 0} = cli(["--json", "repo", "set-url", "demo", source, "--push"])
+    data = Jason.decode!(output)["data"]
 
-    metadata = Jason.decode!(output)["data"]["metadata"]
-    assert metadata["changed"] == false
-    assert metadata["warning"] =~ "canonical remote"
+    assert data["target"] == "push"
+    assert data["previous"] == []
+
+    assert Git.run!(["config", "--get", "remote.origin.pushurl"], cd: repo.bare_path)
+           |> String.trim() == source
 
     assert {:ok, unchanged} = Repos.get(config, "demo")
     assert unchanged.remote_url == repo.remote_url
   end
 
-  test "repo git returns git failures as errors", %{config: config, repo: repo} do
-    assert {:error, error} =
-             Repos.run_git(config, repo, ["rev-parse", "--verify", "definitely-missing"])
+  test "repo set-url refuses a host or path change before writing", %{
+    config: config,
+    repo: repo
+  } do
+    {output, 5} =
+      cli(["--json", "repo", "set-url", "demo", "git@example.com:other/repo.git"])
 
-    assert error.code == :error
-    assert error.message =~ "git rev-parse"
-    assert error.details.repo == "demo"
-    assert error.details.mirror == repo.bare_path
+    error = Jason.decode!(output)["error"]
+    assert error["code"] == "refused"
+    assert error["message"] =~ "different repository"
+
+    assert {:ok, unchanged} = Repos.get(config, "demo")
+    assert unchanged.remote_url == repo.remote_url
+
+    assert Git.run!(["config", "--get", "remote.origin.url"], cd: repo.bare_path)
+           |> String.trim() == repo.remote_url
   end
 
   test "doctor warns on mirror index drift and --fix reconciles it", %{config: config} do

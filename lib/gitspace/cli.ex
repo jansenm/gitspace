@@ -210,7 +210,7 @@ defmodule Gitspace.CLI do
       status [target]              inbox, or one workspace/checkout/repository
       show <target>                details and provenance
       path <target>                print a checkout path
-      repo add|ls|fetch|rm|alias|git  mirrors, aliases and raw git
+      repo add|ls|fetch|rm|alias|set-url  mirrors, aliases and remote URLs
       scan [path...]               discover existing clones and worktrees (read-only)
       link <path>                  index an external checkout
       unlink <path>                forget an external checkout
@@ -291,9 +291,10 @@ defmodule Gitspace.CLI do
           gitspace repo fetch [<repo>|--all] [--prune]
           gitspace repo rm <repo> [--force] [--dry-run] [--yes]
           gitspace repo alias <repo> <name>
-          gitspace repo git <repo> -- <git args...>
+          gitspace repo set-url <repo> <url> [--push]
 
-        `repo git` runs in the bare mirror. See `gitspace repo --help`.
+        `set-url` changes the fetch URL, or the push URL with `--push`.
+        The new URL must resolve to the same canonical remote key.
         """
 
       "scan" ->

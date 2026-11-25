@@ -83,11 +83,14 @@ defmodule Gitspace.CLI.CompletionTest do
     assert "web" in lines(repos)
 
     {repo_commands, 0} = cli(["__complete", "1", "repo", ""])
-    assert "git" in lines(repo_commands)
+    assert "set-url" in lines(repo_commands)
 
-    {git_repos, 0} = cli(["__complete", "2", "repo", "git", ""])
-    assert "api" in lines(git_repos)
-    assert "web" in lines(git_repos)
+    {set_url_repos, 0} = cli(["__complete", "2", "repo", "set-url", ""])
+    assert "api" in lines(set_url_repos)
+    assert "web" in lines(set_url_repos)
+
+    {set_url_flags, 0} = cli(["__complete", "3", "repo", "set-url", "api", "--p"])
+    assert lines(set_url_flags) == ["--push"]
   end
 
   test "completes config keys and shell names" do

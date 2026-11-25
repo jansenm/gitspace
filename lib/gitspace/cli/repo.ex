@@ -20,7 +20,7 @@ defmodule Gitspace.CLI.Repo do
       ["fetch" | rest] -> fetch(global, rest)
       ["rm" | rest] -> remove(global, rest)
       ["alias" | rest] -> alias_repo(global, rest)
-      ["git" | rest] -> git(rest)
+      ["set-url" | rest] -> set_url(global, rest)
       [] -> {:ok, %{help: help()}, &render_help/1}
       [other | _] -> {:error, Error.new(:usage, "unknown repo command: #{other}")}
     end
@@ -144,22 +144,24 @@ defmodule Gitspace.CLI.Repo do
     end
   end
 
-  defp git(args) do
-    with {:ok, selector, git_args} <- split_git_args(args),
+  defp set_url(_global, args) do
+    with {:ok, opts, rest} <- Helpers.parse(args, set_url_strict()),
+         {:ok, selector, url} <-
+           two_args(rest, "gitspace repo set-url <repo> <url> [--push]"),
          {:ok, config} <- Helpers.load_config(),
          :ok <- Helpers.start_index(config),
          {:ok, repo} <- Repos.get(config, selector),
-         {:ok, result} <- Repos.run_git(config, repo, git_args) do
-      {:ok, result, &render_git/1}
+         {:ok, result} <- Repos.set_remote_url(config, repo, url, push: opts[:push]) do
+      {:ok, result, &render_set_url/1}
     end
   end
 
-  defp split_git_args([selector, "--" | args]) when selector != "" and args != [],
-    do: {:ok, selector, args}
+  defp set_url_strict, do: [push: :boolean] ++ Helpers.global_strict()
 
-  defp split_git_args(_args) do
-    {:error, Error.new(:usage, "usage: gitspace repo git <repo> -- <git args...>")}
-  end
+  defp two_args([selector, url], _usage) when selector != "" and url != "",
+    do: {:ok, selector, url}
+
+  defp two_args(_rest, usage), do: {:error, Error.new(:usage, "usage: #{usage}")}
 
   defp selector_and_name([selector, name]) when selector != "" and name != "" do
     {:ok, selector, name}
@@ -259,7 +261,7 @@ defmodule Gitspace.CLI.Repo do
       gitspace repo fetch [<repo>|--all] [--prune]
       gitspace repo rm <repo> [--force] [--dry-run] [--yes]
       gitspace repo alias <repo> <name>
-      gitspace repo git <repo> -- <git args...>
+      gitspace repo set-url <repo> <url> [--push]
 
     ADD FROM A CHECKOUT
       Point `repo add` at an existing clone or worktree. With one remote its
@@ -270,29 +272,22 @@ defmodule Gitspace.CLI.Repo do
       When fetching, the mirror is seeded from the checkout with
       `git clone --reference ... --dissociate` so local objects are reused.
 
-    RAW GIT
-      `repo git` runs a git command inside the repository's bare mirror. It is
-      an escape hatch for maintenance tasks that gitspace does not model.
-      Changing remote.origin.url to a URL with the same canonical remote key
-      updates the indexed URL. Other ref changes may need `gitspace doctor
-      --reindex`.
+    REMOTE URLS
+      `repo set-url` changes the fetch URL by default and the push URL with
+      `--push`. The new URL must resolve to the same canonical remote key, so
+      switching between https and ssh is allowed while host or path changes
+      need `repo rm` and `repo add`. Multiple URL entries are refused.
 
-        gitspace repo git ferroclass -- remote set-url origin git@github.com:jansenm/ferroclass.git
-        gitspace repo git ferroclass -- remote -v
+        gitspace repo set-url ferroclass git@github.com:jansenm/ferroclass.git
+        gitspace repo set-url ferroclass git@github.com:jansenm/ferroclass.git --push
     """
   end
 
-  defp render_git(data) do
-    IO.write(data.stdout)
-    IO.write(:stderr, data.stderr)
-
-    if data.metadata[:changed] do
-      IO.puts(:stderr, "updated indexed remote URL for #{data.repo}")
-    end
-
-    if data.metadata[:warning] do
-      IO.puts(:stderr, "warning: #{data.metadata.warning}")
-    end
+  defp render_set_url(data) do
+    IO.puts("set #{data.target} URL for #{data.repo}")
+    IO.puts("  from:   #{List.first(data.previous) || "(none)"}")
+    IO.puts("  to:     #{data.url}")
+    IO.puts("  mirror: #{data.mirror}")
   end
 
   defp render_help(%{help: help}), do: IO.puts(help)

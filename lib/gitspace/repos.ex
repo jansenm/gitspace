@@ -377,33 +377,35 @@ defmodule Gitspace.Repos do
   end
 
   @doc """
-  Runs a git command inside a repository's bare mirror.
+  Changes the fetch or push URL of a mirror's `origin` remote.
 
-  This is an escape hatch for maintenance tasks that gitspace does not model.
-  Changing `remote.origin.url` to a URL with the same canonical remote key
-  updates the indexed remote URL. Changing it to another repository is reported
-  but not applied to the index, because existing checkouts and workspaces refer
-  to the old key.
+  The new URL must resolve to the same canonical remote key, so changing the
+  scheme or user is allowed while a host or path change is refused. Only a
+  single fetch URL and a single push URL are managed; multiple entries are
+  reported instead of being replaced by guesswork.
   """
-  @spec run_git(Config.t(), Repository.t(), [String.t()]) :: {:ok, map()} | {:error, Error.t()}
-  def run_git(%Config{} = _config, %Repository{} = repo, args) when is_list(args) do
-    with {:ok, bare} <- git_mirror(repo) do
-      case Git.run(args, cd: bare, locks: true) do
-        {:ok, result} ->
-          {:ok,
-           %{
-             repo: repo.slug,
-             mirror: bare,
-             argv: args,
-             exit: result.exit,
-             stdout: result.stdout,
-             stderr: result.stderr,
-             metadata: refresh_remote_metadata(repo, bare)
-           }}
+  @spec set_remote_url(Config.t(), Repository.t(), String.t(), keyword()) ::
+          {:ok, map()} | {:error, Error.t()}
+  def set_remote_url(%Config{} = _config, %Repository{} = repo, url, opts \\ []) do
+    push? = !!opts[:push]
+    url = String.trim(url)
 
-        {:error, result} ->
-          {:error, git_error(repo, bare, args, result)}
-      end
+    with :ok <- validate_url(url),
+         key = Layout.normalize_remote(url),
+         :ok <- validate_remote_key(key),
+         :ok <- same_remote_key(repo, key, push?),
+         {:ok, bare} <- git_mirror(repo),
+         {:ok, previous} <- remote_urls(bare, push?),
+         :ok <- single_remote_url(repo, push?, previous),
+         :ok <- write_and_index(bare, repo, push?, previous, url) do
+      {:ok,
+       %{
+         repo: repo.slug,
+         mirror: bare,
+         target: if(push?, do: "push", else: "fetch"),
+         url: url,
+         previous: previous
+       }}
     end
   end
 
@@ -1101,72 +1103,121 @@ defmodule Gitspace.Repos do
     end
   end
 
-  defp refresh_remote_metadata(repo, bare) do
-    case read_config(bare, ["config", "--get", "remote.origin.url"]) do
-      nil ->
-        %{
-          changed: false,
-          warning: "mirror has no remote.origin.url; gitspace metadata was not changed"
-        }
+  defp same_remote_key(repo, key, push?) do
+    if key == repo.remote_key do
+      :ok
+    else
+      target = if(push?, do: "push", else: "fetch")
 
-      url ->
-        key = Layout.normalize_remote(url)
-
-        cond do
-          url == repo.remote_url ->
-            %{changed: false, remote_url: url}
-
-          key == repo.remote_key ->
-            case repo
-                 |> Ecto.Changeset.change(%{remote_url: url, last_fetch_error: nil})
-                 |> Repo.update() do
-              {:ok, _repo} ->
-                %{changed: true, remote_url: url}
-
-              {:error, changeset} ->
-                %{
-                  changed: false,
-                  remote_url: url,
-                  warning:
-                    "remote URL changed, but the index could not be updated: " <>
-                      inspect(Ecto.Changeset.traverse_errors(changeset, fn {msg, _} -> msg end))
-                }
-            end
-
-          true ->
-            %{
-              changed: false,
-              remote_url: url,
-              warning:
-                "mirror origin now resolves to #{key}, but the index still uses " <>
-                  "#{repo.remote_key}; remove and re-add the repo to change its canonical remote"
-            }
-        end
+      {:error,
+       Error.new(:refused, "#{target} URL resolves to a different repository: #{key}",
+         hint:
+           "gitspace keys mirrors by canonical remote; host or path changes need `repo rm` and `repo add`",
+         details: %{repo: repo.slug, expected: repo.remote_key, got: key}
+       )}
     end
   end
 
-  defp git_error(repo, bare, args, result) do
-    stderr = result.stderr |> String.trim() |> String.slice(0, 600)
+  defp remote_urls(bare, push?) do
+    key = if(push?, do: "remote.origin.pushurl", else: "remote.origin.url")
 
-    suffix =
-      case stderr do
-        "" -> ""
-        message -> ": " <> message
+    case Git.run(["config", "--get-all", key], cd: bare) do
+      {:ok, %{stdout: stdout}} ->
+        {:ok, String.split(stdout, "\n", trim: true)}
+
+      {:error, %{exit: 1}} ->
+        {:ok, []}
+
+      {:error, result} ->
+        {:error,
+         Error.new(:error, "cannot read #{key}: #{String.trim(result.stderr)}",
+           details: %{mirror: bare, key: key}
+         )}
+    end
+  end
+
+  defp single_remote_url(_repo, _push?, []), do: :ok
+  defp single_remote_url(_repo, _push?, [_url]), do: :ok
+
+  defp single_remote_url(repo, push?, urls) do
+    target = if(push?, do: "push", else: "fetch")
+
+    {:error,
+     Error.new(:conflict, "#{repo.slug} has #{length(urls)} #{target} URLs",
+       hint:
+         "gitspace manages one origin URL; inspect the mirror and remove the extra entries first",
+       details: %{repo: repo.slug, target: target, urls: urls}
+     )}
+  end
+
+  defp write_and_index(bare, repo, push?, previous, url) do
+    with :ok <- write_remote_url(bare, push?, previous, url) do
+      case update_indexed_remote(repo, push?, url) do
+        :ok ->
+          :ok
+
+        {:error, error} ->
+          _ = rollback_remote_url(bare, push?, previous)
+          {:error, error}
+      end
+    end
+  end
+
+  defp rollback_remote_url(bare, push?, previous) do
+    if push? do
+      :ok
+    else
+      rollback_fetch_url(bare, previous)
+    end
+  end
+
+  defp rollback_fetch_url(bare, []) do
+    _ = Git.run(["remote", "remove", "origin"], cd: bare, locks: true)
+    :ok
+  end
+
+  defp rollback_fetch_url(bare, [url | _urls]) do
+    _ = Git.run(["remote", "set-url", "origin", url], cd: bare, locks: true)
+    :ok
+  end
+
+  defp write_remote_url(bare, push?, previous, url) do
+    args =
+      cond do
+        previous == [] and push? -> ["config", "--add", "remote.origin.pushurl", url]
+        previous == [] -> ["remote", "add", "origin", url]
+        push? -> ["remote", "set-url", "--push", "origin", url]
+        true -> ["remote", "set-url", "origin", url]
       end
 
-    Error.new(
-      :error,
-      "git #{Enum.join(args, " ")} failed with exit #{result.exit}#{suffix}",
-      hint: "the command ran in #{bare}",
-      details: %{
-        repo: repo.slug,
-        mirror: bare,
-        argv: args,
-        exit: result.exit,
-        stdout: result.stdout,
-        stderr: result.stderr
-      }
-    )
+    case Git.run(args, cd: bare, locks: true) do
+      {:ok, _result} ->
+        :ok
+
+      {:error, result} ->
+        hint =
+          case String.trim(result.stderr) do
+            "" -> nil
+            message -> message
+          end
+
+        {:error,
+         Error.new(:error, "cannot set #{if(push?, do: "push", else: "fetch")} URL",
+           hint: hint,
+           details: %{mirror: bare, argv: args}
+         )}
+    end
+  end
+
+  defp update_indexed_remote(_repo, true, _url), do: :ok
+
+  defp update_indexed_remote(repo, false, url) do
+    case repo
+         |> Ecto.Changeset.change(%{remote_url: url, last_fetch_error: nil})
+         |> Repo.update() do
+      {:ok, _repo} -> :ok
+      {:error, changeset} -> {:error, changeset_error(changeset)}
+    end
   end
 
   defp changeset_error(changeset) do
