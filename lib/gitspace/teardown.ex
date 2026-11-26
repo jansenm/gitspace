@@ -377,7 +377,7 @@ defmodule Gitspace.Teardown do
     Enum.reduce(plan.targets, {[], []}, fn target, {removed, failures} ->
       case remove_target(
              config,
-             plan.workspace,
+             plan,
              target,
              force,
              Map.get(archives, target.member.id)
@@ -389,13 +389,14 @@ defmodule Gitspace.Teardown do
     |> then(fn {removed, failures} -> {Enum.reverse(removed), Enum.reverse(failures)} end)
   end
 
-  defp remove_target(_config, _workspace, %{ownership: "borrowed"} = target, _force, _archive) do
-    with :ok <- delete_membership(target.member) do
+  defp remove_target(_config, plan, %{ownership: "borrowed"} = target, _force, _archive) do
+    with :ok <- remove_borrowed_link(plan.workspace_dir, target),
+         :ok <- delete_membership(target.member) do
       {:ok, target_result(target, "unlinked", nil)}
     end
   end
 
-  defp remove_target(_config, _workspace, target, force, archive) do
+  defp remove_target(_config, _plan, target, force, archive) do
     result =
       if target.present? and File.dir?(target.path) do
         case Worktree.remove(target.repo.bare_path, target.path, force: force or risky?(target)) do
@@ -410,6 +411,51 @@ defmodule Gitspace.Teardown do
          :ok <- delete_membership(target.member),
          :ok <- delete_checkout(target) do
       {:ok, target_result(target, "removed", archive)}
+    end
+  end
+
+  defp remove_borrowed_link(dir, target) do
+    link = Path.join(dir, target.name)
+    expected = Path.expand(target.checkout.path)
+
+    case File.lstat(link) do
+      {:error, :enoent} ->
+        :ok
+
+      {:ok, %File.Stat{type: :symlink}} ->
+        case File.read_link(link) do
+          {:ok, current} ->
+            if Path.expand(current, dir) == expected do
+              case File.rm(link) do
+                :ok ->
+                  :ok
+
+                {:error, reason} ->
+                  {:error,
+                   Error.new(:error, "cannot remove borrowed link #{link}",
+                     hint: :file.format_error(reason) |> to_string()
+                   )}
+              end
+            else
+              {:error,
+               Error.new(:conflict, "borrowed link points elsewhere: #{link}",
+                 hint: "move it aside before removing the member",
+                 details: %{link: link, expected: expected, current: current}
+               )}
+            end
+
+          {:error, reason} ->
+            {:error,
+             Error.new(:error, "cannot read borrowed link #{link}",
+               hint: :file.format_error(reason) |> to_string()
+             )}
+        end
+
+      {:ok, _stat} ->
+        {:error,
+         Error.new(:conflict, "borrowed member path is not a symlink: #{link}",
+           hint: "move it aside before removing the member"
+         )}
     end
   end
 

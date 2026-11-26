@@ -128,6 +128,9 @@ defmodule Gitspace.CLI.WorkspaceRmTest do
       ])
 
     borrowed_path = Path.join([config.projects_root, "a", "holder", "a"])
+    link = Path.join([config.projects_root, "vemags", "borrow", "a"])
+
+    assert {:ok, ^borrowed_path} = File.read_link(link)
 
     {output, 0} = cli(["workspace", "rm", "vemags@borrow:a", "--yes", "--json"])
     data = Jason.decode!(output)["data"]
@@ -135,9 +138,53 @@ defmodule Gitspace.CLI.WorkspaceRmTest do
     assert [member] = data["removed"]
     assert member["action"] == "unlinked"
     assert data["branches"] == []
+    assert {:error, :enoent} = File.lstat(link)
     assert File.dir?(borrowed_path)
     assert {:ok, workspace} = Workspaces.get(config, "vemags@borrow")
     assert Enum.map(workspace.members, & &1.name) == ["b"]
+  end
+
+  test "borrow links the checkout and recreates a missing link", %{config: config} do
+    {_, 0} = cli(["co", "a@main", "--json"])
+
+    {_, 0} =
+      cli(["workspace", "new", "vemags@links", "--borrow", "a@main", "--json"])
+
+    target = Path.join([config.projects_root, "a", "main", "a"])
+    link = Path.join([config.projects_root, "vemags", "links", "a"])
+
+    assert {:ok, ^target} = File.read_link(link)
+
+    File.rm!(link)
+
+    {_, 0} = cli(["workspace", "new", "vemags@links", "--borrow", "a@main", "--json"])
+    assert {:ok, ^target} = File.read_link(link)
+
+    File.rm!(link)
+    File.mkdir_p!(link)
+
+    {output, _code} =
+      cli(["workspace", "new", "vemags@links", "--borrow", "a@main", "--json"])
+
+    assert Jason.decode!(output)["error"]["code"] == "conflict"
+  end
+
+  test "removing a workspace removes borrowed links but keeps the checkouts", %{
+    config: config
+  } do
+    {_, 0} = cli(["co", "a@main", "--json"])
+    {_, 0} = cli(["workspace", "new", "vemags@both", "--borrow", "a@main", "--json"])
+
+    target = Path.join([config.projects_root, "a", "main", "a"])
+    link = Path.join([config.projects_root, "vemags", "both", "a"])
+
+    assert {:ok, ^target} = File.read_link(link)
+
+    {_, 0} = cli(["workspace", "rm", "vemags@both", "--yes"])
+
+    assert {:error, :enoent} = File.lstat(link)
+    assert File.dir?(target)
+    refute File.exists?(Path.join([config.projects_root, "vemags", "both"]))
   end
 
   test "refuses risky members, then archives and removes with --force", %{config: config} do

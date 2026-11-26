@@ -492,8 +492,9 @@ defmodule Gitspace.CLI.Workspace do
       --branch overrides the name; --as-is checks the ref out unchanged.
 
     BORROWED MEMBERS
-      An existing checkout, referenced but never moved, branched or deleted.
-      With several checkouts for one repository, select one with repo@ref.
+      An existing checkout, symlinked into the workspace at its member name and
+      never moved, branched or deleted. Removing the membership removes only the
+      symlink. With several checkouts for one repository, select one with repo@ref.
 
     MEMBER DIRECTORIES
       Top-level by default. Use --as repo=name to choose a member directory.

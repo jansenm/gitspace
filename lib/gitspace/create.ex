@@ -690,7 +690,11 @@ defmodule Gitspace.Create do
 
       member ->
         if member_checkout_present?(member, work_dir) do
-          skip_existing_member(member, spec)
+          if spec.ownership == "borrowed" do
+            plan_borrowed(config, spec, member, work_dir)
+          else
+            skip_existing_member(member, spec)
+          end
         else
           plan_new_member(config, name, work_dir, spec, opts)
         end
@@ -719,8 +723,8 @@ defmodule Gitspace.Create do
     plan_owned(config, name, work_dir, spec, nil, opts)
   end
 
-  defp plan_new_member(config, _name, _work_dir, %{ownership: "borrowed"} = spec, _opts) do
-    plan_borrowed(config, spec, nil)
+  defp plan_new_member(config, _name, work_dir, %{ownership: "borrowed"} = spec, _opts) do
+    plan_borrowed(config, spec, nil, work_dir)
   end
 
   defp validate_plan_names(existing, plans) do
@@ -1053,22 +1057,24 @@ defmodule Gitspace.Create do
 
   defp borrowed_from_worktree(config, plan, entry, opts) do
     path = Path.expand(entry.path)
+    link_path = plan.path
 
     case import_checkout(config, plan.repo, path, source_for(path), opts[:created_by]) do
       {:ok, checkout} ->
         {:ok,
-         %{
-           plan
-           | ownership: "borrowed",
-             path: checkout.path,
-             desired_branch: checkout.branch,
-             detached: checkout.detached,
-             head: checkout.head_sha,
-             start_ref: nil,
-             start_sha: nil,
-             branch_exists?: false,
-             action: if(File.dir?(path), do: :borrowed, else: :created)
-         }}
+         plan
+         |> Map.put(:link_path, link_path)
+         |> Map.merge(%{
+           ownership: "borrowed",
+           path: checkout.path,
+           desired_branch: checkout.branch,
+           detached: checkout.detached,
+           head: checkout.head_sha,
+           start_ref: nil,
+           start_sha: nil,
+           branch_exists?: false,
+           action: if(File.dir?(path), do: :borrowed, else: :created)
+         })}
 
       {:error, error} ->
         {:error, error}
@@ -1214,7 +1220,7 @@ defmodule Gitspace.Create do
     )
   end
 
-  defp plan_borrowed(config, spec, existing_member) do
+  defp plan_borrowed(config, spec, existing_member, work_dir) do
     with :ok <- ownership_matches(existing_member, "borrowed"),
          :ok <- existing_member_name_matches(existing_member, spec[:member_name]),
          {:ok, checkout} <- select_borrowed(config, spec, existing_member) do
@@ -1236,6 +1242,7 @@ defmodule Gitspace.Create do
          start_sha: nil,
          head: checkout.head_sha,
          path: checkout.path,
+         link_path: Path.join(work_dir, name),
          action: if(existing_member, do: :reused, else: :borrowed),
          branch_exists?: false,
          existing_member: existing_member,
@@ -1525,7 +1532,9 @@ defmodule Gitspace.Create do
   end
 
   defp execute_member(config, %{ownership: "borrowed"} = plan, opts) do
-    import_borrowed(config, plan, opts)
+    with :ok <- ensure_borrowed_link(plan) do
+      import_borrowed(config, plan, opts)
+    end
   end
 
   defp execute_member(config, %{action: :reused} = plan, opts) do
@@ -1563,6 +1572,55 @@ defmodule Gitspace.Create do
       {:error, error} ->
         {:error, error}
     end
+  end
+
+  defp ensure_borrowed_link(plan) do
+    link = plan.link_path
+    target = Path.expand(plan.path)
+
+    File.mkdir_p!(Path.dirname(link))
+
+    case File.lstat(link) do
+      {:error, :enoent} ->
+        case File.ln_s(target, link) do
+          :ok ->
+            :ok
+
+          {:error, reason} ->
+            {:error,
+             Error.new(:error, "cannot link borrowed checkout at #{link}",
+               hint: :file.format_error(reason) |> to_string(),
+               details: %{link: link, target: target}
+             )}
+        end
+
+      {:ok, %File.Stat{type: :symlink}} ->
+        case File.read_link(link) do
+          {:ok, current} ->
+            if Path.expand(current, Path.dirname(link)) == target do
+              :ok
+            else
+              borrowed_link_conflict(link, target, current)
+            end
+
+          {:error, reason} ->
+            {:error,
+             Error.new(:error, "cannot read borrowed link at #{link}",
+               hint: :file.format_error(reason) |> to_string()
+             )}
+        end
+
+      {:ok, _stat} ->
+        borrowed_link_conflict(link, target, nil)
+    end
+  end
+
+  defp borrowed_link_conflict(link, target, current) do
+    {:error,
+     Error.new(:conflict, "path is already occupied by something else: #{link}",
+       hint: "move it aside or choose a different --as name",
+       details: %{link: link, target: target, current: current}
+     )}
   end
 
   defp import_borrowed(config, plan, _opts) do

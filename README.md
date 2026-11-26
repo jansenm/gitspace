@@ -262,7 +262,7 @@ gitspace workspace rm vemags@MT4711 --dry-run
 ```
 
 - Owned members are removed as git worktrees; borrowed members are unlinked and their
-  checkouts stay in place.
+  checkouts stay in place (only the symlink in the workspace is removed).
 - Removing the last member tombstones the workspace. The project definition remains; its
   directory is removed too when nothing but the gitspace project marker is left in it.
 - Risky owned members (dirty, untracked, or unpushed work) are refused. `--force` anchors
