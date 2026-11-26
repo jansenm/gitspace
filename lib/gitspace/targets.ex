@@ -2,8 +2,14 @@ defmodule Gitspace.Targets do
   @moduledoc """
   Resolves user-facing targets to index rows.
 
-  Order: `workspace:member`, exact workspace, exact repository, path, unique
-  substring. Ambiguity is an error, never a guess.
+  Order: `workspace:member`, exact workspace, exact project,
+  `project/topic[/member]` against the index, existing path (relative to the
+  working directory or to a project root), repository alias, unique substring.
+  Ambiguity is an error, never a guess.
+
+  Paths and `project/topic[/member]` are checked before repository aliases so
+  that a layout-shaped target addresses one checkout instead of being read as
+  a repository selector.
   """
 
   alias Gitspace.{Checkouts, Config, Error, Marker, Projects, Repos, Workspaces}
@@ -129,36 +135,169 @@ defmodule Gitspace.Targets do
   end
 
   defp resolve_named(config, target) do
+    with :error <- exact_workspace(config, target),
+         :error <- exact_project(config, target),
+         :none <- resolve_slash_target(config, target),
+         :none <- resolve_existing_path(config, target) do
+      resolve_repo_or_suffix(config, target)
+    end
+  end
+
+  defp exact_workspace(config, target) do
     case Workspaces.get(config, target) do
+      {:ok, workspace} -> {:ok, {:workspace, workspace}}
+      {:error, _} -> :error
+    end
+  end
+
+  defp exact_project(config, target) do
+    case Projects.get(config, target) do
+      {:ok, project} -> {:ok, {:project, project}}
+      {:error, _} -> :error
+    end
+  end
+
+  # `project/topic[/member]` addresses the index, not just the filesystem:
+  # topic directories are slugged (`feature/x` lives in `feature-x`) and a
+  # project root may be outside `projects_root`, so a literal path is not
+  # always enough. Without this, such a target fell through to the repository
+  # alias fallback and listed every checkout of the repository.
+  defp resolve_slash_target(config, target) do
+    case project_for_target(config, target) do
+      {:ok, project, rest} -> resolve_slash_candidates(config, project, rest)
+      :error -> :none
+    end
+  end
+
+  defp project_for_target(config, target) do
+    case String.split(target, "/") do
+      [project_name | rest] when rest != [] ->
+        case Projects.get(config, project_name) do
+          {:ok, project} -> {:ok, project, rest}
+          {:error, _} -> :error
+        end
+
+      _ ->
+        :error
+    end
+  end
+
+  defp resolve_slash_candidates(config, project, segments) do
+    case slash_workspace(config, project, Enum.join(segments, "/")) do
       {:ok, workspace} ->
         {:ok, {:workspace, workspace}}
 
-      {:error, _} ->
-        case Projects.get(config, target) do
-          {:ok, project} ->
-            {:ok, {:project, project}}
+      :none when length(segments) > 1 ->
+        {topic_segments, [member_name]} = Enum.split(segments, -1)
 
-          {:error, _} ->
-            case Repos.get(config, target) do
-              {:ok, repo} -> {:ok, {:repo, repo}}
-              {:error, _} -> resolve_path_or_suffix(config, target)
-            end
+        case slash_workspace(config, project, Enum.join(topic_segments, "/")) do
+          {:ok, workspace} -> find_slash_member(workspace, member_name)
+          :none -> :none
+        end
+
+      :none ->
+        :none
+    end
+  end
+
+  defp slash_workspace(config, project, topic) do
+    ["#{project.name}@#{topic}", "#{project.name}/#{topic}"]
+    |> Enum.find_value(:none, fn name ->
+      case Workspaces.get(config, name) do
+        {:ok, workspace} -> {:ok, workspace}
+        {:error, _} -> nil
+      end
+    end)
+  end
+
+  defp find_slash_member(workspace, member_name) do
+    case find_member(workspace, member_name) do
+      nil ->
+        handles = Enum.map(workspace.members, &handle(workspace, &1))
+
+        {:error,
+         Error.new(:not_found, "member not found: #{workspace.name}/#{member_name}",
+           hint: "available: #{Enum.join(handles, ", ")}"
+         )}
+
+      member ->
+        {:ok, {:member, workspace, member}}
+    end
+  end
+
+  defp resolve_repo_or_suffix(config, target) do
+    case project_for_target(config, target) do
+      {:ok, %{name: project_name}, _rest} ->
+        # `project/...` is layout-shaped. Never let its last segment fall back
+        # to a repository selector: that is what turned a mistyped member path
+        # into a listing of the whole repository.
+        {:error,
+         Error.new(:not_found, "no workspace or member at #{target}",
+           hint: "run `gitspace ls --project #{project_name}` or use repo:<repository>"
+         )}
+
+      :error ->
+        case Repos.get(config, target) do
+          {:ok, repo} -> {:ok, {:repo, repo}}
+          {:error, _} -> resolve_suffix(config, target)
         end
     end
   end
 
-  defp resolve_path_or_suffix(config, target) do
-    path = Path.expand(target)
+  # An existing directory named by the target wins over an alias match: a
+  # `project/topic/member` argument addresses that one checkout. Relative
+  # targets are tried against the working directory and against the project
+  # roots, so the layout works from any directory.
+  defp resolve_existing_path(config, target) do
+    config
+    |> candidate_paths(target)
+    |> Enum.find_value(:none, fn path ->
+      case resolve_path(config, path) do
+        {:ok, _} = resolved -> resolved
+        :none -> nil
+      end
+    end)
+  end
 
-    cond do
-      File.exists?(path) ->
-        case checkouts_at_path(config, path) do
-          {:ok, checkout} -> {:ok, {:checkout, checkout}}
-          :none -> resolve_workspace_dir(config, path) || resolve_suffix(config, target)
-        end
+  defp candidate_paths(config, target) do
+    expanded = Path.expand(target)
 
-      true ->
-        resolve_suffix(config, target)
+    project_paths =
+      case String.split(target, "/", parts: 2) do
+        [project_name, rest] when rest != "" ->
+          case Projects.get(config, project_name) do
+            {:ok, project} -> [Path.expand(Path.join(project.path, rest))]
+            {:error, _} -> []
+          end
+
+        _ ->
+          []
+      end
+
+    roots =
+      if Path.type(target) == :absolute do
+        []
+      else
+        [Path.expand(Path.join(config.projects_root, target))]
+      end
+
+    Enum.uniq([expanded | roots ++ project_paths])
+  end
+
+  defp resolve_path(config, path) do
+    if File.exists?(path) do
+      case checkouts_at_path(config, path) do
+        {:ok, checkout} ->
+          {:ok, {:checkout, checkout}}
+
+        :none ->
+          case resolve_workspace_dir(config, path) do
+            {:ok, _} = resolved -> resolved
+            nil -> :none
+          end
+      end
+    else
+      :none
     end
   end
 

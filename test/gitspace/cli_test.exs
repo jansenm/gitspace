@@ -76,6 +76,71 @@ defmodule Gitspace.CLITest do
     assert Jason.decode!(path_output)["data"]["path"] == path
   end
 
+  test "status resolves project/topic/member paths before repository aliases", %{
+    config: config,
+    path: path
+  } do
+    relative = Path.relative_to(path, config.projects_root)
+    assert relative == "demo/JENKINS-123/demo"
+
+    {output, 0} = cli(["status", relative, "--json"])
+    data = Jason.decode!(output)["data"]
+
+    assert data["checkout"]["path"] == path
+    assert data["checkout"]["workspace"] == "demo@JENKINS-123"
+    refute Map.has_key?(data, "repo")
+  end
+
+  test "status resolves project/topic/member from the index when the topic directory is slugged",
+       %{
+         config: config
+       } do
+    # topic `feature/x` is stored in the slugged directory `feature-x`, so the
+    # literal path `demo/feature/x/demo` does not exist.
+    {_output, 0} = cli(["co", "demo@main", "--topic", "feature/x"])
+
+    path = Path.join([config.projects_root, "demo", "feature-x", "demo"])
+    assert File.dir?(path)
+    refute File.exists?(Path.join(config.projects_root, "demo/feature/x/demo"))
+
+    {output, 0} = cli(["status", "demo/feature/x/demo", "--json"])
+    data = Jason.decode!(output)["data"]
+
+    assert data["checkout"]["path"] == path
+    assert data["checkout"]["workspace"] == "demo@feature/x"
+    refute Map.has_key?(data, "repo")
+  end
+
+  test "status project/topic/typo reports the missing member instead of a repo listing" do
+    {output, 3} = cli(["status", "demo/JENKINS-123/nope", "--json"])
+    error = Jason.decode!(output)["error"]
+
+    assert error["code"] == "not_found"
+    assert error["message"] =~ "member not found"
+  end
+
+  test "a layout-shaped target never falls back to a repository listing", %{} do
+    # The last segment is the repository slug, but `demo/nope/demo` is not a
+    # workspace path; it must not silently become `status repo:demo`.
+    {output, 3} = cli(["status", "demo/nope/demo", "--json"])
+    error = Jason.decode!(output)["error"]
+
+    assert error["code"] == "not_found"
+    assert error["message"] =~ "no workspace or member"
+    assert error["hint"] =~ "repo:"
+  end
+
+  test "status still reports every checkout for an explicit repository target", %{
+    path: path
+  } do
+    {output, 0} = cli(["status", "repo:demo", "--json"])
+    data = Jason.decode!(output)["data"]
+
+    assert data["repo"] == "demo"
+    assert [checkout] = data["checkouts"]
+    assert checkout["path"] == path
+  end
+
   test "ls is compact by default and --verbose adds hash and mirror", %{repo: repo} do
     {plain, 0} = cli(["ls"])
     assert plain =~ "PROJECT"
