@@ -25,7 +25,7 @@ defmodule Gitspace.CLI.Completion do
   @command_flags %{
     "ls" =>
       ~w(--repo --project --topic --workspace --label --state --kind --source --verbose --wide),
-    "co" => ~w(--topic --only --exclude --as --new-branch --branch --detach --label --fetch),
+    "co" => ~w(--topic --only --exclude --as --as-is --branch --detach --label --fetch),
     "project:new" => ~w(--repo --at --description --branch-template --default-ref),
     "project:rm" => ~w(--force),
     "repo:add" => ~w(--name --remote --project --no-fetch),
@@ -33,7 +33,7 @@ defmodule Gitspace.CLI.Completion do
     "repo:rm" => ~w(--force --dry-run),
     "repo:set-url" => ~w(--push),
     "workspace:new" =>
-      ~w(--project --own --borrow --as --branch --label --description --fetch --dry-run),
+      ~w(--own --borrow --as --branch --as-is --label --description --fetch --dry-run),
     "workspace:ls" => ~w(--project --label --all),
     "workspace:status" => ~w(--refresh),
     "workspace:rm" => ~w(--force --dry-run),

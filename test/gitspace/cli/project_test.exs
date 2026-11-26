@@ -72,20 +72,20 @@ defmodule Gitspace.CLI.ProjectTest do
       cli(["project", "new", "vemags", "--repo", "a", "--repo", "b", "--json"])
 
     {created, 0} =
-      cli(["co", "vemags", "--topic", "MT4711", "--new-branch", "--json"])
+      cli(["co", "vemags", "--topic", "MT4711", "--json"])
 
     data = Jason.decode!(created)["data"]
-    assert data["workspace"] == "vemags/MT4711"
+    assert data["workspace"] == "vemags@MT4711"
     assert data["path"] == Path.join([config.projects_root, "vemags", "MT4711"])
     assert Enum.map(data["members"], & &1["repo"]) |> Enum.sort() == ["a", "b"]
     assert Enum.all?(data["members"], &(&1["branch"] == "feature/MT4711"))
     assert Enum.all?(data["members"], &File.dir?(&1["path"]))
 
-    {path_output, 0} = cli(["path", "vemags/MT4711", "--json"])
+    {path_output, 0} = cli(["path", "vemags@MT4711", "--json"])
     assert Jason.decode!(path_output)["data"]["path"] == data["path"]
 
     {again, 0} =
-      cli(["co", "vemags", "--topic", "MT4711", "--new-branch", "--only", "a", "--json"])
+      cli(["co", "vemags", "--topic", "MT4711", "--only", "a", "--json"])
 
     again_data = Jason.decode!(again)["data"]
     actions = Map.new(again_data["members"], &{&1["repo"], &1["action"]})
@@ -98,12 +98,12 @@ defmodule Gitspace.CLI.ProjectTest do
       cli(["project", "new", "vemags", "--repo", "a", "--json"])
 
     {_first, 0} =
-      cli(["co", "vemags", "--topic", "MT4711", "--new-branch", "--json"])
+      cli(["co", "vemags", "--topic", "MT4711", "--json"])
 
     {_added, 0} = cli(["project", "add", "vemags", "b", "--json"])
 
     {output, 0} =
-      cli(["co", "vemags", "--topic", "MT4711", "--new-branch", "--json"])
+      cli(["co", "vemags", "--topic", "MT4711", "--json"])
 
     actions = Map.new(Jason.decode!(output)["data"]["members"], &{&1["repo"], &1["action"]})
     assert actions["a"] == "kept"
@@ -120,7 +120,7 @@ defmodule Gitspace.CLI.ProjectTest do
     assert actions["c"] == "created"
 
     c = Enum.find(members, &(&1["repo"] == "c"))
-    assert c["branch"] == "main"
+    assert c["branch"] == "feature/MT4711"
   end
 
   test "co supports --exclude and rejects --only with --exclude" do
@@ -160,7 +160,7 @@ defmodule Gitspace.CLI.ProjectTest do
 
     {co, 0} = cli(["co", "vemags@main", "--topic", "dev", "--json"])
     data = Jason.decode!(co)["data"]
-    assert data["workspace"] == "vemags/dev"
+    assert data["workspace"] == "vemags@dev"
     assert [member] = data["members"]
     assert member["repo"] == "vemags"
   end
@@ -220,7 +220,7 @@ defmodule Gitspace.CLI.ProjectTest do
     {output, 5} = cli(["project", "rm", "vemags", "--json"])
     error = Jason.decode!(output)["error"]
     assert error["code"] == "refused"
-    assert error["hint"] =~ "vemags/dev"
+    assert error["hint"] =~ "vemags@dev"
 
     {forced, 0} = cli(["project", "rm", "vemags", "--force", "--json"])
     assert Jason.decode!(forced)["data"]["workspaces_kept"] == 1

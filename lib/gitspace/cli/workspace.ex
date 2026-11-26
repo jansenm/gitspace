@@ -18,17 +18,18 @@ defmodule Gitspace.CLI.Workspace do
 
   defp new(global, args) do
     with {:ok, opts, rest} <- Helpers.parse(args, new_strict()),
-         {:ok, name} <- one_arg(rest, "gitspace workspace new <name> [--own repo]..."),
-         {:ok, owned} <- specs(Keyword.get_values(opts, :own), "owned"),
-         {:ok, borrowed} <- specs(Keyword.get_values(opts, :borrow), "borrowed"),
+         {:ok, name} <-
+           one_arg(rest, "gitspace workspace new [<project>@]<topic> [--own repo]..."),
+         {:ok, owned} <- specs(Keyword.get_values(opts, :own), "owned", opts),
+         {:ok, borrowed} <- specs(Keyword.get_values(opts, :borrow), "borrowed", opts),
          {:ok, owned, borrowed} <-
            apply_member_aliases(owned, borrowed, Keyword.get_values(opts, :as)),
          {:ok, config} <- Helpers.load_config(),
          :ok <- Helpers.start_index(config) do
       create_opts =
         [
-          project: opts[:project],
           branch: opts[:branch],
+          as_is: opts[:as_is],
           labels: Keyword.get_values(opts, :label),
           fetch: opts[:fetch],
           dry_run: opts[:dry_run],
@@ -51,11 +52,11 @@ defmodule Gitspace.CLI.Workspace do
 
   defp new_strict do
     [
-      project: :string,
       own: :keep,
       borrow: :keep,
       as: :keep,
       branch: :string,
+      as_is: :boolean,
       label: :keep,
       description: :string,
       fetch: :boolean,
@@ -71,11 +72,11 @@ defmodule Gitspace.CLI.Workspace do
     end
   end
 
-  defp specs(values, ownership) do
+  defp specs(values, ownership, opts) do
     Enum.reduce_while(values, {:ok, []}, fn value, {:ok, acc} ->
       case split_spec(value) do
         {:ok, repo, ref} ->
-          branch_mode = if is_nil(ref), do: :derive, else: :ref
+          branch_mode = spec_branch_mode(ref, ownership, opts)
           spec = %{repo: repo, ref: ref, ownership: ownership, branch_mode: branch_mode}
           {:cont, {:ok, acc ++ [spec]}}
 
@@ -83,6 +84,16 @@ defmodule Gitspace.CLI.Workspace do
           {:halt, {:error, error}}
       end
     end)
+  end
+
+  defp spec_branch_mode(ref, "borrowed", _opts), do: if(is_nil(ref), do: :derive, else: :ref)
+
+  defp spec_branch_mode(ref, "owned", opts) do
+    if opts[:as_is] do
+      if is_nil(ref), do: :default, else: :ref
+    else
+      :derive
+    end
   end
 
   defp apply_member_aliases(owned, borrowed, values) do
@@ -211,7 +222,7 @@ defmodule Gitspace.CLI.Workspace do
 
   defp filter_project(workspaces, project) do
     Enum.filter(workspaces, fn workspace ->
-      workspace.name == project or String.starts_with?(workspace.name, project <> "/")
+      workspace.name == project or String.starts_with?(workspace.name, project <> "@")
     end)
   end
 
@@ -456,17 +467,23 @@ defmodule Gitspace.CLI.Workspace do
       --dry-run and after removal.
 
     USAGE
-      gitspace workspace new <name> [--project P] [--own <repo>[@<ref>]]...
-                                    [--borrow <repo>[@<ref>]]... [--branch B]
+      gitspace workspace new [<project>@]<topic> [--own <repo>[@<ref>]]...
+                                    [--borrow <repo>[@<ref>]]... [--branch B] [--as-is]
                                     [--label L]... [--description D]
                                     [--as <repo>=<dir>]... [--fetch] [--dry-run] [--json]
       gitspace workspace ls [--project P] [--label L] [--all] [--json]
-      gitspace workspace status <name> [--refresh] [--json]
+      gitspace workspace status <workspace> [--refresh] [--json]
       gitspace workspace rm <workspace>[:<member>] [--force] [--dry-run] [--yes] [--json]
 
+    TARGET
+      `vemags@4711` names project and topic; `4711` is a topic whose project is
+      inferred from the owned repositories. Topics may contain `/`; `@` is
+      reserved and separates project from topic.
+
     OWNED MEMBERS
-      The branch defaults to feature_<name> (configurable). --branch overrides it.
-      An explicit @ref opts out of branch derivation and checks out that ref as-is.
+      The branch is derived from the topic using the project template (default
+      feature/{topic}) and starts at the project default ref or the repo default.
+      --branch overrides the name; --as-is checks the ref out unchanged.
 
     BORROWED MEMBERS
       An existing checkout, referenced but never moved, branched or deleted.

@@ -47,7 +47,7 @@ defmodule Gitspace.Create do
          {:ok, selected} <- select_members(members, opts),
          {:ok, topic} <- co_topic(ref, opts),
          :ok <- validate_co_options(opts, topic),
-         {:ok, branch_mode} <- co_branch_mode(opts) do
+         {:ok, branch_mode} <- co_branch_mode(opts, ref) do
       branch_mode = if is_nil(ref) and branch_mode == :ref, do: :default, else: branch_mode
 
       specs =
@@ -205,12 +205,6 @@ defmodule Gitspace.Create do
       is_binary(opts[:name]) and not is_binary(opts[:topic]) ->
         normalize_topic(opts[:name])
 
-      opts[:new_branch] == true and not is_binary(opts[:topic]) ->
-        {:error,
-         Error.new(:usage, "--new-branch requires --topic",
-           hint: "for example: gitspace co vemags@development --topic MT4711 --new-branch"
-         )}
-
       is_binary(opts[:topic]) ->
         normalize_topic(opts[:topic])
 
@@ -232,43 +226,46 @@ defmodule Gitspace.Create do
       true ->
         {:error,
          Error.new(:usage, "--topic is required when no ref names the work",
-           hint: "for example: gitspace co vemags --topic MT4711 --new-branch"
+           hint: "for example: gitspace co vemags --topic MT4711"
          )}
     end
   end
 
   defp normalize_topic(topic) do
-    case Layout.work_slug(topic) do
-      {:ok, _} ->
-        {:ok, String.trim(topic)}
-
-      {:error, reason} ->
-        {:error, Error.new(:usage, "invalid topic #{inspect(topic)}: #{reason}")}
+    if Layout.valid_topic?(topic) do
+      {:ok, String.trim(topic)}
+    else
+      {:error,
+       Error.new(:usage, "invalid topic #{inspect(topic)}",
+         hint: "use letters, digits, '.', '_', '-' and '/' between segments; '@' is reserved"
+       )}
     end
   end
 
-  defp co_branch_mode(opts) do
+  defp co_branch_mode(opts, ref) do
     cond do
       opts[:detach] -> {:ok, :detach}
       is_binary(opts[:branch]) -> {:ok, {:create, opts[:branch]}}
-      opts[:new_branch] -> {:ok, :derive}
+      opts[:as_is] -> {:ok, if(is_nil(ref), do: :default, else: :ref)}
+      explicit_topic?(opts) -> {:ok, :derive}
       true -> {:ok, :ref}
     end
   end
 
-  defp validate_co_options(opts, topic) do
+  defp explicit_topic?(opts) do
+    is_binary(opts[:topic]) or is_binary(opts[:name])
+  end
+
+  defp validate_co_options(opts, _topic) do
     cond do
       opts[:detach] == true and is_binary(opts[:branch]) ->
         {:error, Error.new(:usage, "--branch and --detach are mutually exclusive")}
 
-      opts[:detach] == true and opts[:new_branch] == true ->
-        {:error, Error.new(:usage, "--new-branch and --detach are mutually exclusive")}
+      opts[:as_is] == true and is_binary(opts[:branch]) ->
+        {:error, Error.new(:usage, "--branch and --as-is are mutually exclusive")}
 
-      is_binary(opts[:branch]) and opts[:new_branch] == true ->
-        {:error, Error.new(:usage, "--branch and --new-branch are mutually exclusive")}
-
-      opts[:new_branch] == true and topic == nil ->
-        {:error, Error.new(:usage, "--new-branch requires --topic")}
+      opts[:as_is] == true and opts[:detach] == true ->
+        {:error, Error.new(:usage, "--as-is and --detach are mutually exclusive")}
 
       true ->
         :ok
@@ -278,13 +275,21 @@ defmodule Gitspace.Create do
   @spec workspace_new(Config.t(), String.t(), [map()], [map()], keyword()) ::
           {:ok, result()} | {:partial, result(), [map()]} | {:error, Error.t()}
   def workspace_new(%Config{} = config, name, owned_specs, borrowed_specs, opts \\ []) do
-    with {:ok, topic} <- normalize_name(name),
+    with {:ok, project_name, raw_topic} <- split_target(name, opts),
+         {:ok, topic} <- normalize_topic(raw_topic),
          {:ok, specs} <- resolve_specs(config, owned_specs, borrowed_specs),
          :ok <- validate_specs(specs, opts),
-         {:ok, project} <- resolve_project(config, specs, opts),
+         {:ok, project} <- resolve_project(config, specs, project_name),
          {:ok, full_name, work_dir} <- workspace_location(config, project, topic),
          {:ok, existing} <- load_existing(config, work_dir, full_name),
-         opts = Keyword.merge(opts, project: project.name, topic: topic, workspace: full_name),
+         opts =
+           Keyword.merge(opts,
+             project: project.name,
+             topic: topic,
+             workspace: full_name,
+             branch_template: project.branch_template,
+             default_ref: project.default_ref
+           ),
          {:ok, plans, failures} <- plan_all(config, full_name, work_dir, specs, existing, opts),
          :ok <- validate_plan_names(existing, plans) do
       if opts[:dry_run] do
@@ -295,24 +300,87 @@ defmodule Gitspace.Create do
     end
   end
 
-  defp resolve_project(config, specs, opts) do
+  # `workspace new [project@]topic`; `co` passes the project separately and a
+  # topic without a separator.
+  defp split_target(name, opts) when is_binary(name) do
+    name = String.trim(name)
+    project = opts[:project]
+
     cond do
-      is_binary(opts[:project]) ->
-        Projects.get(config, opts[:project])
+      is_binary(project) and String.contains?(name, "@") ->
+        {:error,
+         Error.new(:usage, "project given twice",
+           hint: "use either project@topic or --project, not both"
+         )}
+
+      is_binary(project) ->
+        {:ok, project, name}
+
+      String.contains?(name, "@") ->
+        case String.split(name, "@", parts: 2) do
+          [project, topic] when project != "" and topic != "" ->
+            if String.contains?(topic, "@") do
+              {:error,
+               Error.new(:usage, "target contains more than one '@': #{inspect(name)}",
+                 hint: "@ separates project and topic and may appear once"
+               )}
+            else
+              {:ok, project, topic}
+            end
+
+          _ ->
+            {:error,
+             Error.new(:usage, "invalid target: #{inspect(name)}", hint: "use project@topic")}
+        end
+
+      true ->
+        {:ok, nil, name}
+    end
+  end
+
+  defp split_target(_name, _opts) do
+    {:error, Error.new(:usage, "workspace target is required")}
+  end
+
+  defp resolve_project(config, specs, project_name) do
+    cond do
+      is_binary(project_name) ->
+        named_project(config, project_name)
 
       specs == [] ->
         {:error, Error.new(:usage, "at least one member is required")}
 
       true ->
-        repo = hd(specs).repo
+        inferred_project(config, hd(specs).repo)
+    end
+  end
 
-        case Projects.projects_for_repo(config, repo) do
-          [name | _] ->
-            Projects.get(config, name)
+  defp named_project(config, name) do
+    case Projects.get(config, name) do
+      {:ok, project} ->
+        {:ok, project}
 
-          [] ->
-            Projects.ensure_implicit(config, repo)
+      {:error, %Error{code: :not_found}} ->
+        case Repos.get(config, name) do
+          {:ok, repo} ->
+            repo_project(config, repo)
+
+          {:error, _} ->
+            {:error,
+             Error.new(:not_found, "project not found: #{name}",
+               hint: "create it with `gitspace project new #{name}` or use project@topic"
+             )}
         end
+
+      {:error, error} ->
+        {:error, error}
+    end
+  end
+
+  defp inferred_project(config, repo) do
+    case Projects.projects_for_repo(config, repo) do
+      [name | _] -> Projects.get(config, name)
+      [] -> Projects.ensure_implicit(config, repo)
     end
   end
 
@@ -320,7 +388,7 @@ defmodule Gitspace.Create do
     with {:ok, slug} <- Layout.work_slug(topic) do
       root = Path.expand(project.path)
       dir = Path.expand(Path.join(root, slug))
-      full_name = "#{project.name}/#{topic}"
+      full_name = "#{project.name}@#{topic}"
 
       cond do
         dir == root ->
@@ -332,24 +400,6 @@ defmodule Gitspace.Create do
         true ->
           {:ok, full_name, dir}
       end
-    end
-  end
-
-  defp normalize_name(name) when is_binary(name) do
-    if String.contains?(name, ":") do
-      {:error, Error.new(:usage, "workspace name cannot contain ':': #{inspect(name)}")}
-    else
-      normalize_name_slug(name)
-    end
-  end
-
-  defp normalize_name_slug(name) do
-    case Layout.work_slug(name) do
-      {:ok, _slug} ->
-        {:ok, String.trim(name)}
-
-      {:error, reason} ->
-        {:error, Error.new(:usage, "invalid workspace name #{inspect(name)}: #{reason}")}
     end
   end
 
@@ -405,6 +455,9 @@ defmodule Gitspace.Create do
     cond do
       borrowed? and is_binary(branch) ->
         {:error, Error.new(:usage, "--branch cannot be combined with --borrow")}
+
+      opts[:as_is] == true and is_binary(branch) ->
+        {:error, Error.new(:usage, "--branch and --as-is are mutually exclusive")}
 
       is_binary(branch) and not Layout.valid_branch?(branch) ->
         {:error, Error.new(:usage, "invalid branch: #{branch}")}
@@ -882,8 +935,9 @@ defmodule Gitspace.Create do
     case opts[:branch] do
       nil ->
         topic = opts[:topic] || opts[:workspace]
+        template = opts[:branch_template] || config.branch_template
 
-        case Layout.branch_for(topic, config.branch_template) do
+        case Layout.branch_for(topic, template) do
           {:ok, branch} -> {:ok, branch}
           {:error, reason} -> {:error, Error.new(:usage, "cannot derive a branch: #{reason}")}
         end
@@ -1310,6 +1364,13 @@ defmodule Gitspace.Create do
   end
 
   defp default_info(config, repo, opts) do
+    case opts[:default_ref] do
+      ref when is_binary(ref) -> ref_info(config, repo, ref, opts)
+      _ -> default_branch_info(config, repo, opts)
+    end
+  end
+
+  defp default_branch_info(config, repo, opts) do
     default = repo.default_branch || Mirror.default_branch(repo.bare_path)
 
     cond do

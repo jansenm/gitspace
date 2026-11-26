@@ -60,10 +60,10 @@ gitspace repo add git@github.com:org/repo.git
 gitspace repo ls
 gitspace project new api --repo api
 gitspace co api@main --topic dev
-gitspace co api@main --topic JENKINS-123 --new-branch
+gitspace co api@main --topic JENKINS-123
 gitspace project new webapp --repo api --repo web
-gitspace co webapp@main --topic JENKINS-123 --new-branch --only api,web
-gitspace workspace status webapp/JENKINS-123
+gitspace co webapp@main --topic JENKINS-123 --only api,web
+gitspace workspace status webapp@JENKINS-123
 gitspace scan ~/src
 gitspace link ~/src/old-api
 gitspace
@@ -129,25 +129,26 @@ contains it; name the project to check out its other members.
 ```sh
 gitspace co ferroclass@main --topic dev
 gitspace co ferroclass@release/2.4
-gitspace co vemags@development --topic MT4711 --new-branch
+gitspace co vemags@development --topic MT4711
 gitspace co vemags@feature/MT4711 --topic MT4711
-gitspace co vemags@development --topic MT4711 --new-branch --only api,web
+gitspace co vemags@development --topic MT4711 --only api,web
 gitspace co vemags@feature/MT4711 --topic MT4711 --exclude legacy
 ```
 
-`@<ref>` is the starting point. The branch mode decides the resulting HEAD:
+`@<ref>` is the starting point. Naming a topic means creating work:
 
 | Flags | Result |
 |---|---|
-| none | check out the ref directly (branch, or detached for tag/SHA) |
-| `--new-branch` | create an owned branch from `feature/{topic}` |
+| no `--topic`/`--name` | check out the ref as-is (branch, or detached for tag/SHA) |
+| `--topic T` / `--name T` | derive an owned branch from `feature/{topic}`, starting at the ref |
 | `--branch B` | create the explicit owned branch `B` from the ref |
+| `--as-is` | check out the ref unchanged even with a topic |
 | `--detach` | detached checkout at the ref |
 
-`--new-branch` requires `--topic`. Re-running the same command resumes an existing owned branch
-when it is free. An occupied branch asks for borrow / new branch / detach / cancel on a
-terminal; with `--json` or no terminal it is a `branch_occupied` error (exit 4).
-`--branch` and `--detach` are mutually exclusive, as are `--new-branch` and `--detach`.
+Re-running the same command resumes an existing owned branch when it is free. An occupied
+branch asks for borrow / new branch / detach / cancel on a terminal; with `--json` or no
+terminal it is a `branch_occupied` error (exit 4). `--branch`, `--as-is` and `--detach` are
+mutually exclusive.
 
 `--only M,...` and `--exclude M,...` select the project members for this invocation, and are
 mutually exclusive. The default is every member. **A repository that already has a checkout in
@@ -155,9 +156,19 @@ the topic workspace is ignored**, even when the requested ref or branch mode dif
 after adding a project member therefore adds only the missing member; no `--only` is needed.
 Exclusions never delete existing members.
 
-`workspace new` remains the explicit form and accepts `--project`, `--own`, `--borrow`,
-`--as repo=name`, labels, descriptions and `--dry-run`. It uses the same project/topic/member
-path.
+`workspace new` remains the explicit form:
+
+```sh
+gitspace workspace new vemags@4711 --own api@main --own web@main
+gitspace workspace new 4711/sub --own api@main      # topic 4711/sub, project inferred
+```
+
+The target is `[<project>@]<topic>`. `@` separates project and topic; topics may contain `/`,
+but `@` is reserved in project names, topics and repository aliases. Without a project the
+first owned repository's project is used. Owned branches are derived from the topic using the
+project template (default `feature/{topic}`); `--branch` overrides the name and `--as-is`
+checks the ref out unchanged. Labels, descriptions, `--as repo=name`, `--fetch` and `--dry-run`
+work as before.
 
 Creation is ensure-only: matching members are reused, conflicting paths or branches are
 errors, and nothing is overwritten. Worktrees are created first; the marker is written after
@@ -213,7 +224,7 @@ directories are chosen per checkout and recorded in the workspace marker:
 
 ```sh
 gitspace co api@main --as api-main
-gitspace workspace new JENKINS-123 --own api --as api=v2-api --own web
+gitspace workspace new vemags@JENKINS-123 --own api --as api=v2-api --own web
 ```
 
 All owned checkouts remain direct children of the topic workspace:
@@ -243,9 +254,9 @@ fetch or push URLs is also refused instead of guessing which one to replace.
 ## Removing workspaces
 
 ```sh
-gitspace workspace rm vemags/MT4711          # every member, then the workspace
-gitspace workspace rm vemags/MT4711:api      # one member
-gitspace workspace rm vemags/MT4711 --dry-run
+gitspace workspace rm vemags@MT4711          # every member, then the workspace
+gitspace workspace rm vemags@MT4711:api      # one member
+gitspace workspace rm vemags@MT4711 --dry-run
 ```
 
 - Owned members are removed as git worktrees; borrowed members are unlinked and their
@@ -307,7 +318,8 @@ need.
 - **Index:** `ecto_sqlite3` + `exqlite`, pool size 1, WAL, migrations on demand.
 - **Recovery:** the SQLite index is disposable; mirrors are rediscovered from
   `<data>/repos/*.git`, `remotes.txt` is rebuilt from the mirrors, projects from
-  `<data>/projects.toml`, and workspaces from `<project>/<topic>/.gitspace.json` markers.
+  `<data>/projects.toml`, and workspaces from `<project>/<topic>/.gitspace.json` markers
+  (workspace names are `project@topic`).
 - **Checkout paths:** the workspace marker is authoritative. Project paths and topic names are
   chosen at creation and never re-derived; alias changes never move an existing checkout.
 - **Status cache:** 1 h TTL. `ls` and the inbox read the cache; `status --refresh` computes.

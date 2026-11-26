@@ -23,6 +23,7 @@ defmodule Gitspace.Repos do
 
     with :ok <- validate_url(source),
          {:ok, url, reference} <- resolve_source(source, opts[:remote]),
+         :ok <- validate_derived_alias(url, opts[:name]),
          key = Layout.normalize_remote(url),
          :ok <- validate_remote_key(key),
          {:ok, requested_alias} <- requested_alias(opts[:name]),
@@ -1026,6 +1027,24 @@ defmodule Gitspace.Repos do
   end
 
   defp temp_slug(id), do: "tmp-" <> String.replace(id, "-", "")
+
+  defp validate_derived_alias(_url, name) when is_binary(name), do: :ok
+
+  defp validate_derived_alias(url, nil) do
+    case Layout.repo_slug_from_url(url) do
+      {:ok, _slug} ->
+        :ok
+
+      {:error, :invalid_repo} ->
+        {:error,
+         Error.new(:usage, "cannot derive a repository name from #{url}",
+           hint: "the name contains a reserved character, pass --name NAME"
+         )}
+
+      {:error, _} ->
+        :ok
+    end
+  end
 
   defp validate_remote_key(""),
     do: {:error, Error.new(:usage, "cannot derive a canonical remote from this URL")}

@@ -5,6 +5,20 @@ defmodule Gitspace.WorkspacesTest do
   alias Gitspace.Git.Worktree
   alias Gitspace.Index.Repository
 
+  test "reindex flags legacy project/topic markers instead of importing them", %{config: config} do
+    project_path = Path.join(config.projects_root, "legacy")
+    assert {:ok, _project} = Projects.create(config, "legacy", path: project_path)
+
+    dir = Path.join(project_path, "main")
+    File.mkdir_p!(dir)
+    Marker.write!(dir, Marker.build("legacy/main", project: "legacy", topic: "main", members: []))
+
+    assert {:ok, summary} = Workspaces.reindex(config)
+
+    assert Enum.any?(summary.issues, &(&1.kind == :legacy_workspace_name))
+    assert Workspaces.list(config) == []
+  end
+
   test "REC-1 recovers owned and borrowed members, labels and missing paths", %{config: config} do
     source = Fixtures.source_repo!()
     {:ok, demo} = Repos.add(config, Fixtures.repo_url(source), name: "demo")
@@ -30,7 +44,7 @@ defmodule Gitspace.WorkspacesTest do
     work_dir = Path.dirname(owned_path)
 
     marker =
-      Marker.build("demo/JENKINS-123",
+      Marker.build("demo@JENKINS-123",
         project: "demo",
         topic: "JENKINS-123",
         description: "move the deploy job",
@@ -64,7 +78,7 @@ defmodule Gitspace.WorkspacesTest do
     assert summary.members == 3
     assert summary.issues == []
 
-    assert {:ok, workspace} = Workspaces.get(config, "demo/JENKINS-123")
+    assert {:ok, workspace} = Workspaces.get(config, "demo@JENKINS-123")
     assert workspace.description == "move the deploy job"
     assert Enum.map(workspace.labels, & &1.label) == ["jira-123"]
     assert length(workspace.members) == 3
@@ -106,7 +120,7 @@ defmodule Gitspace.WorkspacesTest do
     File.mkdir_p!(work_dir)
 
     marker =
-      Marker.build("demo/duplicate-name",
+      Marker.build("demo@duplicate-name",
         project: "demo",
         topic: "duplicate-name",
         members: [
@@ -121,7 +135,7 @@ defmodule Gitspace.WorkspacesTest do
     assert {:ok, 2, [issue]} = Workspaces.recover(config, work_dir, marker)
     assert issue.kind == :member
 
-    assert {:ok, workspace} = Workspaces.get(config, "demo/duplicate-name")
+    assert {:ok, workspace} = Workspaces.get(config, "demo@duplicate-name")
 
     assert workspace.members |> Enum.map(& &1.checkout.repository.slug) |> Enum.sort() == [
              "a",
@@ -138,7 +152,7 @@ defmodule Gitspace.WorkspacesTest do
     File.mkdir_p!(work_dir)
 
     marker =
-      Marker.build("demo/duplicate-repo",
+      Marker.build("demo@duplicate-repo",
         project: "demo",
         topic: "duplicate-repo",
         members: [
@@ -153,7 +167,7 @@ defmodule Gitspace.WorkspacesTest do
     assert {:ok, 2, [issue]} = Workspaces.recover(config, work_dir, marker)
     assert issue.kind == :member
 
-    assert {:ok, workspace} = Workspaces.get(config, "demo/duplicate-repo")
+    assert {:ok, workspace} = Workspaces.get(config, "demo@duplicate-repo")
 
     assert workspace.members |> Enum.map(& &1.checkout.repository.slug) |> Enum.sort() == [
              "a",

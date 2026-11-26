@@ -328,8 +328,9 @@ defmodule Gitspace.Projects do
   @spec validate_name(String.t()) :: {:ok, String.t()} | {:error, Error.t()}
   def validate_name(name) when is_binary(name) do
     cond do
-      String.contains?(name, ["/", ":"]) ->
-        {:error, Error.new(:usage, "project name cannot contain '/' or ':': #{inspect(name)}")}
+      String.contains?(name, ["/", ":", "@"]) ->
+        {:error,
+         Error.new(:usage, "project name cannot contain '/', ':' or '@': #{inspect(name)}")}
 
       true ->
         validate_slug_name(name)

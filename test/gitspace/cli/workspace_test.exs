@@ -37,7 +37,7 @@ defmodule Gitspace.CLI.WorkspaceTest do
 
     assert data["ok"]
     assert data["schema_version"] == 1
-    assert data["data"]["work"] == "a/main"
+    assert data["data"]["work"] == "a@main"
 
     assert data["data"]["members"] |> hd() |> Map.get("path") ==
              Path.join([data_root(), "work", "a", "main", "a"])
@@ -74,7 +74,7 @@ defmodule Gitspace.CLI.WorkspaceTest do
 
     assert data["dry_run"] == true
     assert data["created"] == true
-    assert data["workspace"] == "a/MT-4711"
+    assert data["workspace"] == "a@MT-4711"
     assert data["labels"] == ["jira"]
     assert Enum.map(data["members"], & &1["action"]) == ["create", "create"]
     refute File.exists?(data["marker_path"])
@@ -90,14 +90,14 @@ defmodule Gitspace.CLI.WorkspaceTest do
 
     {status, 0} = cli(["workspace", "status", "MT-4711", "--json"])
     workspace = Jason.decode!(status)["data"]["workspace"]
-    assert workspace["name"] == "a/MT-4711"
+    assert workspace["name"] == "a@MT-4711"
     assert length(workspace["members"]) == 2
   end
 
   test "CREATE-8 --json does not prompt for an occupied branch and exits 4" do
     {_output, 0} = cli(["co", "a@main"])
 
-    {output, 4} = cli(["workspace", "new", "occupied", "--own", "a@main", "--json"])
+    {output, 4} = cli(["workspace", "new", "occupied", "--own", "a@main", "--as-is", "--json"])
     error = Jason.decode!(output)["error"]
 
     assert error["code"] == "branch_occupied"
@@ -121,7 +121,7 @@ defmodule Gitspace.CLI.WorkspaceTest do
 
     error = Jason.decode!(output)["error"]
     assert error["code"] == "partial"
-    assert error["details"]["workspace"] == "a/partial"
+    assert error["details"]["workspace"] == "a@partial"
     assert [member] = error["details"]["members"]
     assert member["repo"] == "a"
     assert [failure] = error["details"]["failures"]
@@ -184,7 +184,7 @@ defmodule Gitspace.CLI.WorkspaceTest do
 
     {created, 0} = cli(["co", "a@later", "--fetch", "--json"])
     data = Jason.decode!(created)["data"]
-    assert data["work"] == "a/later"
+    assert data["work"] == "a@later"
     assert data["branch"] == "later"
   end
 
@@ -225,7 +225,7 @@ defmodule Gitspace.CLI.WorkspaceTest do
     assert member["name"] == "acme"
     assert member["path"] == Path.join([data_root(), "work", "b", "aliased", "acme"])
 
-    {path_output, 0} = cli(["path", "b/aliased:acme", "--json"])
+    {path_output, 0} = cli(["path", "b@aliased:acme", "--json"])
     assert Jason.decode!(path_output)["data"]["path"] == member["path"]
 
     {output, 2} =
@@ -234,18 +234,18 @@ defmodule Gitspace.CLI.WorkspaceTest do
     assert Jason.decode!(output)["error"]["code"] == "usage"
   end
 
-  test "co --topic names the workspace and --new-branch creates an owned branch" do
+  test "co --topic names the workspace and derives the owned branch" do
     {output, 0} =
-      cli(["co", "a@main", "--topic", "JENKINS-42", "--new-branch", "--json"])
+      cli(["co", "a@main", "--topic", "JENKINS-42", "--json"])
 
     data = Jason.decode!(output)["data"]
-    assert data["work"] == "a/JENKINS-42"
+    assert data["work"] == "a@JENKINS-42"
     assert data["ref"] == "main"
     assert data["branch"] == "feature/JENKINS-42"
     assert hd(data["members"])["path"] == Path.join([data_root(), "work", "a", "JENKINS-42", "a"])
 
     {again, 0} =
-      cli(["co", "a@main", "--topic", "JENKINS-42", "--new-branch", "--json"])
+      cli(["co", "a@main", "--topic", "JENKINS-42", "--json"])
 
     assert Jason.decode!(again)["data"]["reused"] == true
 
@@ -253,6 +253,89 @@ defmodule Gitspace.CLI.WorkspaceTest do
       cli(["co", "a@main", "--topic", "JENKINS-42", "--only", "a", "--exclude", "a", "--json"])
 
     assert Jason.decode!(conflict)["error"]["code"] == "usage"
+  end
+
+  test "workspace new project@topic needs no --project or --branch" do
+    {output, 0} =
+      cli(["workspace", "new", "a@4711", "--own", "a@main", "--json"])
+
+    data = Jason.decode!(output)["data"]
+    assert data["workspace"] == "a@4711"
+    assert data["project"] == "a"
+    assert data["topic"] == "4711"
+
+    assert [member] = data["members"]
+    assert member["branch"] == "feature/4711"
+    assert member["ref"] == "main"
+    assert member["path"] == Path.join([data_root(), "work", "a", "4711", "a"])
+  end
+
+  test "a slashed topic needs no project flag when the project is inferred" do
+    {output, 0} =
+      cli(["workspace", "new", "4711/sub", "--own", "a@main", "--json"])
+
+    data = Jason.decode!(output)["data"]
+    assert data["workspace"] == "a@4711/sub"
+    assert data["topic"] == "4711/sub"
+
+    assert [member] = data["members"]
+    assert member["branch"] == "feature/4711-sub"
+    assert member["path"] == Path.join([data_root(), "work", "a", "4711-sub", "a"])
+  end
+
+  test "workspace new --as-is checks the ref out unchanged" do
+    {output, 0} =
+      cli(["workspace", "new", "a@plain", "--own", "a@main", "--as-is", "--json"])
+
+    assert [member] = Jason.decode!(output)["data"]["members"]
+    assert member["branch"] == "main"
+
+    {output, 2} =
+      cli([
+        "workspace",
+        "new",
+        "a@plain2",
+        "--own",
+        "a@main",
+        "--as-is",
+        "--branch",
+        "x",
+        "--json"
+      ])
+
+    assert Jason.decode!(output)["error"]["code"] == "usage"
+  end
+
+  test "workspace new rejects --project and reserved '@'" do
+    {output, 2} =
+      cli(["workspace", "new", "a@4711", "--project", "a", "--own", "a", "--json"])
+
+    assert Jason.decode!(output)["error"]["code"] == "usage"
+
+    {output, 2} =
+      cli(["workspace", "new", "a@b@c", "--own", "a", "--json"])
+
+    assert Jason.decode!(output)["error"]["code"] == "usage"
+
+    {output, 2} = cli(["project", "new", "a@b", "--json"])
+    assert Jason.decode!(output)["error"]["code"] == "usage"
+  end
+
+  test "bare topic lookup is a suffix match, not a LIKE pattern" do
+    {_output, 0} = cli(["co", "a@main", "--topic", "feature_x", "--json"])
+
+    {output, 0} = cli(["workspace", "status", "feature_x", "--json"])
+    assert Jason.decode!(output)["data"]["workspace"]["name"] == "a@feature_x"
+
+    {output, 3} = cli(["workspace", "status", "featureX", "--json"])
+    assert Jason.decode!(output)["error"]["code"] == "not_found"
+  end
+
+  test "co --new-branch is gone" do
+    {output, 2} =
+      cli(["co", "a@main", "--topic", "x", "--new-branch", "--json"])
+
+    assert Jason.decode!(output)["error"]["code"] == "usage"
   end
 
   test "WS-1/2 workspace status reports three members and member addressing resolves", %{
@@ -304,7 +387,7 @@ defmodule Gitspace.CLI.WorkspaceTest do
     {output, 0} = cli(["workspace", "ls", "--json"])
 
     assert [workspace] = Jason.decode!(output)["data"]["workspaces"]
-    assert workspace["name"] == "a/listed"
+    assert workspace["name"] == "a@listed"
     assert workspace["labels"] == ["x"]
     assert workspace["members"] == 1
 
@@ -319,11 +402,11 @@ defmodule Gitspace.CLI.WorkspaceTest do
 
     {co, 0} = cli(["co", "--help"])
     assert co =~ "gitspace co <project>[@<ref>]"
-    assert co =~ "--new-branch"
+    assert co =~ "--as-is"
     assert co =~ "MT4711"
 
     {workspace, 0} = cli(["workspace", "--help"])
-    assert workspace =~ "gitspace workspace new <name>"
+    assert workspace =~ "gitspace workspace new [<project>@]<topic>"
     assert workspace =~ "BORROWED MEMBERS"
   end
 

@@ -193,6 +193,11 @@ defmodule Gitspace.CLI.Doctor do
     end
   end
 
+  defp legacy_marker?({_dir, marker}) do
+    name = marker["workspace"]
+    not (is_binary(name) and String.contains?(name, "@"))
+  end
+
   defp check_checkouts do
     checkouts = Repo.all(Checkout)
     missing = Enum.count(checkouts, &(not File.dir?(&1.path)))
@@ -233,6 +238,8 @@ defmodule Gitspace.CLI.Doctor do
         end
       end)
 
+    legacy = Enum.count(markers, &legacy_marker?/1)
+
     marker_paths =
       MapSet.new(markers, fn {dir, _} -> Path.join(dir, Marker.marker_filename()) end)
 
@@ -247,6 +254,13 @@ defmodule Gitspace.CLI.Doctor do
           "workspaces",
           "warn",
           "#{active} active, #{length(markers)} markers, #{length(bad)} invalid marker(s)"
+        )
+
+      legacy > 0 ->
+        check(
+          "workspaces",
+          "warn",
+          "#{active} active, #{legacy} legacy project/topic marker(s); recreate as project@topic"
         )
 
       orphans != [] ->

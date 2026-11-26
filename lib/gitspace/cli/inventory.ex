@@ -344,7 +344,7 @@ defmodule Gitspace.CLI.Inventory do
   defp project_workspaces(config, project) do
     Workspaces.list(config)
     |> Enum.filter(fn workspace ->
-      workspace.name == project.name or String.starts_with?(workspace.name, project.name <> "/")
+      workspace.name == project.name or String.starts_with?(workspace.name, project.name <> "@")
     end)
   end
 

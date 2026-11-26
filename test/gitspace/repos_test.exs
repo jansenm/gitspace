@@ -431,6 +431,25 @@ defmodule Gitspace.ReposTest do
            |> String.split("\n", trim: true) == [https, ssh]
   end
 
+  test "a remote basename with '@' needs an explicit name", %{config: config} do
+    url = "https://example.com/acme/api@v2.git"
+
+    assert {:error, error} = Repos.add(config, url, no_fetch: true)
+    assert error.code == :usage
+
+    assert {:ok, repo} = Repos.add(config, url, name: "api-v2", no_fetch: true)
+    assert repo.slug == "api-v2"
+  end
+
+  test "an explicit alias may not contain '@'", %{config: config} do
+    source = Fixtures.source_repo!()
+
+    assert {:error, error} =
+             Repos.add(config, Fixtures.repo_url(source), name: "a@b", no_fetch: true)
+
+    assert error.code == :usage
+  end
+
   defp clone_checkout!(source, label) do
     clone = Path.join(Fixtures.tmp_dir!(label), "checkout")
     Git.run!(["clone", source, clone])

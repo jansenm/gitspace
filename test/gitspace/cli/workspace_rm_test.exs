@@ -27,13 +27,13 @@ defmodule Gitspace.CLI.WorkspaceRmTest do
     end
 
     {_, 0} = cli(["project", "new", "vemags", "--repo", "a", "--repo", "b"])
-    {_, 0} = cli(["co", "vemags@main", "--topic", "dev", "--new-branch", "--json"])
+    {_, 0} = cli(["co", "vemags@main", "--topic", "dev", "--json"])
 
     {:ok, config: config}
   end
 
   test "reports the branches that remain after removal", %{config: config} do
-    {dry, 0} = cli(["workspace", "rm", "vemags/dev", "--dry-run", "--json"])
+    {dry, 0} = cli(["workspace", "rm", "vemags@dev", "--dry-run", "--json"])
     planned = Jason.decode!(dry)["data"]
 
     assert Enum.sort_by(planned["branches"], & &1["repo"]) == [
@@ -41,7 +41,7 @@ defmodule Gitspace.CLI.WorkspaceRmTest do
              %{"repo" => "b", "name" => "feature/dev"}
            ]
 
-    {output, 0} = cli(["workspace", "rm", "vemags/dev", "--yes"])
+    {output, 0} = cli(["workspace", "rm", "vemags@dev", "--yes"])
     assert output =~ "branches kept"
     assert output =~ "a:feature/dev"
     assert output =~ "b:feature/dev"
@@ -55,18 +55,18 @@ defmodule Gitspace.CLI.WorkspaceRmTest do
   end
 
   test "dry-run reports the plan without changing anything", %{config: config} do
-    {output, 0} = cli(["workspace", "rm", "vemags/dev", "--dry-run", "--json"])
+    {output, 0} = cli(["workspace", "rm", "vemags@dev", "--dry-run", "--json"])
     data = Jason.decode!(output)["data"]
 
     assert data["dry_run"]
     assert Enum.map(data["removed"], & &1["action"]) == ["would remove", "would remove"]
     assert Enum.sort(Enum.map(data["removed"], & &1["name"])) == ["a", "b"]
     assert File.dir?(Path.join([config.projects_root, "vemags", "dev", "a"]))
-    assert {:ok, _} = Workspaces.get(config, "vemags/dev")
+    assert {:ok, _} = Workspaces.get(config, "vemags@dev")
   end
 
   test "removes one member and keeps the workspace", %{config: config} do
-    {output, 0} = cli(["workspace", "rm", "vemags/dev:a", "--yes", "--json"])
+    {output, 0} = cli(["workspace", "rm", "vemags@dev:a", "--yes", "--json"])
     data = Jason.decode!(output)["data"]
 
     assert [member] = data["removed"]
@@ -74,7 +74,7 @@ defmodule Gitspace.CLI.WorkspaceRmTest do
     refute File.exists?(Path.join([config.projects_root, "vemags", "dev", "a"]))
     assert File.dir?(Path.join([config.projects_root, "vemags", "dev", "b"]))
 
-    assert {:ok, workspace} = Workspaces.get(config, "vemags/dev")
+    assert {:ok, workspace} = Workspaces.get(config, "vemags@dev")
     assert Enum.map(workspace.members, & &1.name) == ["b"]
 
     marker = Gitspace.Marker.read!(Path.join([config.projects_root, "vemags", "dev"]))
@@ -82,14 +82,14 @@ defmodule Gitspace.CLI.WorkspaceRmTest do
   end
 
   test "removing the last member tombstones the workspace", %{config: config} do
-    {_, 0} = cli(["workspace", "rm", "vemags/dev:a", "--yes"])
-    {output, 0} = cli(["workspace", "rm", "vemags/dev:b", "--yes", "--json"])
+    {_, 0} = cli(["workspace", "rm", "vemags@dev:a", "--yes"])
+    {output, 0} = cli(["workspace", "rm", "vemags@dev:b", "--yes", "--json"])
     data = Jason.decode!(output)["data"]
 
     assert data["tombstoned"]
     assert data["directory_removed"]
     refute File.exists?(Path.join([config.projects_root, "vemags", "dev"]))
-    assert {:error, _} = Workspaces.get(config, "vemags/dev")
+    assert {:error, _} = Workspaces.get(config, "vemags@dev")
     assert Workspaces.list(config) == []
 
     assert Enum.any?(Projects.list(config), &(&1.name == "vemags"))
@@ -100,7 +100,7 @@ defmodule Gitspace.CLI.WorkspaceRmTest do
 
   test "removes a whole workspace but keeps the project", %{config: config} do
     dir = Path.join([config.projects_root, "vemags", "dev"])
-    {output, 0} = cli(["workspace", "rm", "vemags/dev", "--yes", "--json"])
+    {output, 0} = cli(["workspace", "rm", "vemags@dev", "--yes", "--json"])
     data = Jason.decode!(output)["data"]
 
     assert data["tombstoned"]
@@ -110,15 +110,13 @@ defmodule Gitspace.CLI.WorkspaceRmTest do
   end
 
   test "borrowed members are unlinked, not deleted", %{config: config} do
-    {_, 0} = cli(["co", "a@main", "--topic", "holder", "--json"])
+    {_, 0} = cli(["co", "a@main", "--topic", "holder", "--as-is", "--json"])
 
     {_, 0} =
       cli([
         "workspace",
         "new",
-        "borrow",
-        "--project",
-        "vemags",
+        "vemags@borrow",
         "--own",
         "b",
         "--borrow",
@@ -128,14 +126,14 @@ defmodule Gitspace.CLI.WorkspaceRmTest do
 
     borrowed_path = Path.join([config.projects_root, "a", "holder", "a"])
 
-    {output, 0} = cli(["workspace", "rm", "vemags/borrow:a", "--yes", "--json"])
+    {output, 0} = cli(["workspace", "rm", "vemags@borrow:a", "--yes", "--json"])
     data = Jason.decode!(output)["data"]
 
     assert [member] = data["removed"]
     assert member["action"] == "unlinked"
     assert data["branches"] == []
     assert File.dir?(borrowed_path)
-    assert {:ok, workspace} = Workspaces.get(config, "vemags/borrow")
+    assert {:ok, workspace} = Workspaces.get(config, "vemags@borrow")
     assert Enum.map(workspace.members, & &1.name) == ["b"]
   end
 
@@ -143,13 +141,13 @@ defmodule Gitspace.CLI.WorkspaceRmTest do
     dirty = Path.join([config.projects_root, "vemags", "dev", "a", "notes.txt"])
     File.write!(dirty, "important\n")
 
-    {output, 5} = cli(["workspace", "rm", "vemags/dev", "--yes", "--json"])
+    {output, 5} = cli(["workspace", "rm", "vemags@dev", "--yes", "--json"])
     error = Jason.decode!(output)["error"]
     assert error["code"] == "refused"
     assert error["hint"] =~ "--force"
     assert File.exists?(dirty)
 
-    {output, 0} = cli(["workspace", "rm", "vemags/dev", "--force", "--yes", "--json"])
+    {output, 0} = cli(["workspace", "rm", "vemags@dev", "--force", "--yes", "--json"])
     data = Jason.decode!(output)["data"]
 
     assert data["tombstoned"]
@@ -165,12 +163,12 @@ defmodule Gitspace.CLI.WorkspaceRmTest do
   end
 
   test "requires confirmation in non-interactive mode" do
-    {output, 6} = cli(["workspace", "rm", "vemags/dev", "--json"])
+    {output, 6} = cli(["workspace", "rm", "vemags@dev", "--json"])
     assert Jason.decode!(output)["error"]["code"] == "confirmation_required"
   end
 
   test "unknown members are exit 3" do
-    {output, 3} = cli(["workspace", "rm", "vemags/dev:nope", "--yes", "--json"])
+    {output, 3} = cli(["workspace", "rm", "vemags@dev:nope", "--yes", "--json"])
     assert Jason.decode!(output)["error"]["code"] == "not_found"
   end
 

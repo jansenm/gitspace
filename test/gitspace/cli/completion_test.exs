@@ -57,8 +57,8 @@ defmodule Gitspace.CLI.CompletionTest do
     assert "show" in lines(subcommands)
     assert "add" in lines(subcommands)
 
-    {flags, 0} = cli(["__complete", "1", "co", "--new"])
-    assert lines(flags) == ["--new-branch"]
+    {flags, 0} = cli(["__complete", "1", "co", "--as-i"])
+    assert lines(flags) == ["--as-is"]
   end
 
   test "completes dynamic projects, workspaces and members" do
@@ -66,7 +66,7 @@ defmodule Gitspace.CLI.CompletionTest do
     assert "vemags" in lines(projects)
 
     {workspaces, 0} = cli(["__complete", "1", "status", ""])
-    assert "vemags/dev" in lines(workspaces)
+    assert "vemags@dev" in lines(workspaces)
 
     {members, 0} = cli(["__complete", "3", "co", "vemags", "--only", ""])
     assert lines(members) == ["api", "web"]
@@ -75,8 +75,8 @@ defmodule Gitspace.CLI.CompletionTest do
     assert "rm" in lines(subcommands)
 
     {targets, 0} = cli(["__complete", "2", "workspace", "rm", ""])
-    assert "vemags/dev" in lines(targets)
-    assert "vemags/dev:api" in lines(targets)
+    assert "vemags@dev" in lines(targets)
+    assert "vemags@dev:api" in lines(targets)
 
     {repos, 0} = cli(["__complete", "3", "project", "add", "vemags", ""])
     assert "api" in lines(repos)
