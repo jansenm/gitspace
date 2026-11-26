@@ -37,14 +37,17 @@ defmodule Gitspace.CLI.CompletionTest do
     assert bash =~ "complete -o nospace"
     assert bash =~ "gitspace __complete"
     assert bash =~ "gsp"
+    assert bash =~ "cksum"
 
     {zsh, 0} = cli(["completion", "zsh"])
     assert zsh =~ "#compdef gitspace gsp"
     assert zsh =~ "compadd"
+    assert zsh =~ "cksum"
 
     {fish, 0} = cli(["completion", "fish"])
     assert fish =~ "complete -c gitspace"
     assert fish =~ "__complete"
+    assert fish =~ "cksum"
   end
 
   test "completes commands, subcommands and flags" do
@@ -70,6 +73,10 @@ defmodule Gitspace.CLI.CompletionTest do
 
     {members, 0} = cli(["__complete", "3", "co", "vemags", "--only", ""])
     assert lines(members) == ["api", "web"]
+
+    {any_members, 0} = cli(["__complete", "2", "co", "--only", ""])
+    assert "api" in lines(any_members)
+    assert "web" in lines(any_members)
 
     {subcommands, 0} = cli(["__complete", "1", "workspace", ""])
     assert "rm" in lines(subcommands)
@@ -99,6 +106,52 @@ defmodule Gitspace.CLI.CompletionTest do
 
     {shells, 0} = cli(["__complete", "1", "completion", ""])
     assert lines(shells) == ["bash", "fish", "zsh"]
+  end
+
+  test "snapshots data-backed candidates in a cache", %{config: config} do
+    {_, 0} = cli(["__complete", "1", "co", ""])
+
+    payload =
+      config.path
+      |> Kernel.<>(".complete.json")
+      |> File.read!()
+      |> Jason.decode!()
+
+    assert payload["version"] == 1
+    assert payload["lists"]["projects"] == ["vemags"]
+    assert "vemags@dev" in payload["lists"]["targets"]
+    assert payload["lists"]["members"]["vemags"] == ["api", "web"]
+
+    # A cache hit must not start the index or parse the config again.
+    Gitspace.Index.stop()
+
+    {output, 0} = cli(["__complete", "1", "co", ""])
+    assert "vemags" in lines(output)
+    refute Gitspace.Index.started?()
+  end
+
+  test "a corrupt cache falls back to the index", %{config: config} do
+    {_, 0} = cli(["__complete", "1", "co", ""])
+    File.write!(config.path <> ".complete.json", "not json")
+
+    {output, 0} = cli(["__complete", "1", "co", ""])
+    assert "vemags" in lines(output)
+    assert Jason.decode!(File.read!(config.path <> ".complete.json"))["version"] == 1
+  end
+
+  test "mutations invalidate the cache, reads do not", %{config: config} do
+    stamp = config.path <> ".stamp"
+    {_, 0} = cli(["__complete", "1", "co", ""])
+    first = File.read!(stamp)
+
+    {_, 0} = cli(["ls", "--json"])
+    assert File.read!(stamp) == first
+
+    {_, 0} = cli(["project", "new", "other", "--repo", "api", "--json"])
+    refute File.read!(stamp) == first
+
+    {output, 0} = cli(["__complete", "1", "co", ""])
+    assert "other" in lines(output)
   end
 
   defp lines(output) do

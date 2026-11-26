@@ -311,6 +311,12 @@ Completions cover commands, subcommands, flags, project names, repository aliase
 workspace handles, bare topics, project members and config keys. They call the hidden
 `gitspace __complete` command, so they follow the live index rather than a static snapshot.
 
+Starting the BEAM costs more than the lookup, so the generated scripts memoize each
+context and `__complete` keeps a snapshot next to the config file
+(`config.toml.complete.json`). Mutating commands bump `config.toml.stamp`, which invalidates
+both caches. A cache hit answers in a few milliseconds; only the first Tab after a change
+pays for a new process.
+
 ## Listing
 
 `gitspace ls` is compact by default: project, topic, member, branch, dirty/ahead/behind/

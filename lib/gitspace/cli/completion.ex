@@ -5,10 +5,17 @@ defmodule Gitspace.CLI.Completion do
   `gitspace completion <shell>` prints a script. The script calls the hidden
   `__complete` command with the current command line; that command returns
   dynamic project, repository and workspace names as plain lines.
+
+  Starting the BEAM is the expensive part of a completion, so two caches keep
+  it out of the loop: the generated scripts memoize unfiltered candidates per
+  context (keyed by a mutation stamp), and `__complete` snapshots the same
+  lists in `<config>.complete.json`. Mutating commands bump `<config>.stamp`.
   """
 
-  alias Gitspace.{Projects, Repos, Workspaces}
+  alias Gitspace.{Config, Projects, Repos, Workspaces}
   alias Gitspace.CLI.Helpers
+
+  @cache_version 1
 
   @commands ~w(ls co workspace project status show path repo scan link unlink doctor setup reindex config completion help)
 
@@ -94,10 +101,9 @@ defmodule Gitspace.CLI.Completion do
       if String.starts_with?(current, "-") do
         flags(before)
       else
-        case value_context(before, current) do
-          [] -> positional(before)
-          values -> values
-        end
+        before
+        |> value_requests()
+        |> resolve_requests()
       end
 
     values
@@ -110,26 +116,29 @@ defmodule Gitspace.CLI.Completion do
 
   def values(_), do: []
 
-  defp value_context(before, _current) do
+  # Candidates are either static or derived from the index. Data-backed
+  # contexts are expressed as keys so the cache can answer them without
+  # loading the config or starting Ecto.
+  defp value_requests(before) do
     prev = List.last(before)
     cleaned = strip_globals(before)
 
-    case prev do
-      "--project" -> projects()
-      "--topic" -> topics()
-      "--repo" -> repos()
-      "--only" -> members(command_project(cleaned) || "")
-      "--exclude" -> members(command_project(cleaned) || "")
-      "--own" -> repos()
-      "--borrow" -> repos()
-      "--state" -> ~w(ok missing broken unavailable detached)
-      "--kind" -> ~w(worktree clone)
-      "--source" -> ~w(managed external)
-      "--shell" -> ~w(bash zsh fish)
-      "--ide" -> ~w(code zed cursor)
-      _ -> []
+    cond do
+      prev in ~w(--state) -> {:static, ~w(ok missing broken unavailable detached)}
+      prev in ~w(--kind) -> {:static, ~w(worktree clone)}
+      prev in ~w(--source) -> {:static, ~w(managed external)}
+      prev in ~w(--shell) -> {:static, ~w(bash zsh fish)}
+      prev in ~w(--ide) -> {:static, ~w(code zed cursor)}
+      prev in ~w(--project) -> {:data, [:projects]}
+      prev in ~w(--topic) -> {:data, [:topics]}
+      prev in ~w(--repo --own --borrow) -> {:data, [:repos]}
+      prev in ~w(--only --exclude) -> {:data, [{:members, command_project(cleaned) || ""}]}
+      true -> positional_requests(before)
     end
   end
+
+  defp resolve_requests({:static, values}), do: values
+  defp resolve_requests({:data, keys}), do: resolve(keys)
 
   defp flags(before) do
     if "--" in before do
@@ -145,15 +154,15 @@ defmodule Gitspace.CLI.Completion do
     end
   end
 
-  defp positional(before) do
+  defp positional_requests(before) do
     if "--" in before do
-      []
+      {:static, []}
     else
       cleaned = strip_globals(before)
 
       case cleaned do
         [] ->
-          @commands
+          {:static, @commands}
 
         [command | rest] ->
           sub = subcommand(command, Enum.at(rest, 0))
@@ -163,52 +172,50 @@ defmodule Gitspace.CLI.Completion do
     end
   end
 
-  defp positional_values("co", nil, []), do: projects()
-  defp positional_values("status", nil, []), do: all_targets()
-  defp positional_values("show", nil, []), do: all_targets()
-  defp positional_values("path", nil, []), do: all_targets()
-  defp positional_values("help", nil, []), do: @commands
+  defp positional_values("co", nil, []), do: {:data, [:projects]}
+
+  defp positional_values(command, nil, []) when command in ~w(status show path),
+    do: {:data, [:targets]}
+
+  defp positional_values("help", nil, []), do: {:static, @commands}
 
   defp positional_values(command, nil, []) do
-    Map.get(@subcommands, command, [])
+    {:static, Map.get(@subcommands, command, [])}
   end
 
-  defp positional_values(_command, nil, _args), do: []
+  defp positional_values(_command, nil, _args), do: {:static, []}
 
   defp positional_values("project", sub, args) do
     case {sub, length(args)} do
-      {"show", 0} -> projects()
-      {"add", 0} -> projects()
-      {"remove", 0} -> projects()
-      {"rm", 0} -> projects()
-      {"add", count} when count >= 1 -> repos()
-      {"remove", count} when count >= 1 -> repos()
-      _ -> []
+      {"show", 0} -> {:data, [:projects]}
+      {"add", 0} -> {:data, [:projects]}
+      {"remove", 0} -> {:data, [:projects]}
+      {"rm", 0} -> {:data, [:projects]}
+      {"add", count} when count >= 1 -> {:data, [:repos]}
+      {"remove", count} when count >= 1 -> {:data, [:repos]}
+      _ -> {:static, []}
     end
   end
 
   defp positional_values("repo", sub, args) do
     case {sub, length(args)} do
-      {"fetch", 0} -> repos()
-      {"rm", 0} -> repos()
-      {"alias", 0} -> repos()
-      {"set-url", 0} -> repos()
-      _ -> []
+      {"fetch", 0} -> {:data, [:repos]}
+      {"rm", 0} -> {:data, [:repos]}
+      {"alias", 0} -> {:data, [:repos]}
+      {"set-url", 0} -> {:data, [:repos]}
+      _ -> {:static, []}
     end
   end
 
   defp positional_values("workspace", sub, []) when sub in ["status", "rm"] do
-    workspace_targets()
+    {:data, [:workspaces]}
   end
 
   defp positional_values("config", sub, []) when sub in ["get", "set"] do
-    @config_keys
+    {:static, @config_keys}
   end
 
-  defp positional_values("status", _sub, []), do: all_targets()
-  defp positional_values("show", _sub, []), do: all_targets()
-  defp positional_values("path", _sub, []), do: all_targets()
-  defp positional_values(_command, _sub, _args), do: []
+  defp positional_values(_command, _sub, _args), do: {:static, []}
 
   defp subcommand(command, candidate) do
     if candidate in Map.get(@subcommands, command, []), do: candidate
@@ -249,54 +256,56 @@ defmodule Gitspace.CLI.Completion do
     |> Enum.drop_while(&(&1 in @global_flags))
   end
 
-  defp projects do
-    dynamic(fn config -> Enum.map(Projects.list(config), & &1.name) end)
+  defp resolve(keys) do
+    keys = Enum.uniq(keys)
+
+    case read_cache() do
+      {:ok, lists} ->
+        if Enum.all?(keys, &cached?(lists, &1)) do
+          collect(lists, keys)
+        else
+          slow(keys)
+        end
+
+      :miss ->
+        slow(keys)
+    end
   end
 
-  defp repos do
-    dynamic(fn config ->
-      _ = Helpers.start_index(config)
-      Enum.map(Repos.list(config), & &1.repo.slug)
-    end)
+  # Cache miss: load the config once and start the index once, then snapshot
+  # every list a completion can ask for.
+  defp slow(keys) do
+    case Helpers.load_config() do
+      {:ok, config} ->
+        stamp = current_stamp()
+        sources = sources(config)
+        _ = Helpers.start_index(config)
+        lists = build_lists(config)
+        write_cache(lists, stamp, sources)
+        collect(lists, keys)
+
+      _ ->
+        []
+    end
+  rescue
+    _ -> []
+  catch
+    _, _ -> []
   end
 
-  defp topics do
-    dynamic(fn config ->
-      _ = Helpers.start_index(config)
+  defp build_lists(config) do
+    projects = Projects.list(config)
+    project_names = Enum.map(projects, & &1.name)
+    repos = Enum.map(Repos.list(config), & &1.repo.slug)
+    workspaces = Workspaces.list(config)
 
-      config
-      |> Workspaces.list()
+    topics =
+      workspaces
       |> Enum.map(fn workspace -> elem(Workspaces.parts(workspace), 1) end)
       |> Enum.uniq()
-    end)
-  end
 
-  defp members(""), do: repos()
-
-  defp members(project) do
-    dynamic(fn config ->
-      _ = Helpers.start_index(config)
-
-      with {:ok, project} <- Projects.get(config, project),
-           {:ok, repos} <- Projects.resolve_members(config, project) do
-        Enum.map(repos, & &1.slug)
-      else
-        _ -> []
-      end
-    end)
-  end
-
-  defp all_targets do
-    projects() ++ workspace_targets() ++ repos()
-  end
-
-  defp workspace_targets do
-    dynamic(fn config ->
-      _ = Helpers.start_index(config)
-
-      config
-      |> Workspaces.list()
-      |> Enum.flat_map(fn workspace ->
+    workspace_targets =
+      Enum.flat_map(workspaces, fn workspace ->
         members =
           Enum.map(workspace.members, fn member ->
             "#{workspace.name}:#{member.name || member.checkout.repository.slug}"
@@ -304,23 +313,175 @@ defmodule Gitspace.CLI.Completion do
 
         [workspace.name | members]
       end)
-    end)
+
+    members =
+      Map.new(projects, fn project ->
+        slugs =
+          case Projects.resolve_members(config, project) do
+            {:ok, repos} -> Enum.map(repos, & &1.slug)
+            {:error, _} -> []
+          end
+
+        {project.name, slugs}
+      end)
+
+    %{
+      "projects" => project_names,
+      "repos" => repos,
+      "topics" => topics,
+      "workspaces" => workspace_targets,
+      "targets" => Enum.uniq(project_names ++ workspace_targets ++ repos),
+      "members" => members
+    }
   end
 
-  defp dynamic(fun) do
-    case Helpers.load_config() do
-      {:ok, config} ->
-        try do
-          fun.(config)
-        rescue
-          _ -> []
-        catch
-          _, _ -> []
+  defp collect(lists, keys) do
+    keys
+    |> Enum.flat_map(fn
+      :projects -> lists["projects"]
+      :repos -> lists["repos"]
+      :topics -> lists["topics"]
+      :workspaces -> lists["workspaces"]
+      :targets -> lists["targets"]
+      {:members, ""} -> lists["repos"]
+      {:members, project} -> Map.get(lists["members"] || %{}, project, [])
+    end)
+    |> Enum.uniq()
+  end
+
+  defp cached?(lists, :projects), do: is_list(lists["projects"])
+  defp cached?(lists, :repos), do: is_list(lists["repos"])
+  defp cached?(lists, :topics), do: is_list(lists["topics"])
+  defp cached?(lists, :workspaces), do: is_list(lists["workspaces"])
+  defp cached?(lists, :targets), do: is_list(lists["targets"])
+  defp cached?(lists, {:members, ""}), do: is_list(lists["repos"])
+  defp cached?(lists, {:members, project}), do: is_map_key(lists["members"] || %{}, project)
+  defp cached?(_lists, _key), do: false
+
+  # The cache lives next to the config file, so test configs and multiple
+  # `GITSPACE_CONFIG`s stay isolated. A mutation stamp plus the config,
+  # projects and index timestamps validate it without touching TOML or Ecto.
+  defp read_cache do
+    with {:ok, body} <- File.read(cache_path()),
+         {:ok,
+          %{
+            "version" => @cache_version,
+            "stamp" => stamp,
+            "sources" => sources,
+            "env" => env,
+            "lists" => lists
+          }}
+         when is_map(lists) <- Jason.decode(body),
+         true <- stamp == current_stamp(),
+         true <- env == current_env(),
+         true <- sources_current?(sources) do
+      {:ok, lists}
+    else
+      _ -> :miss
+    end
+  end
+
+  defp write_cache(lists, stamp, sources) do
+    payload = %{
+      "version" => @cache_version,
+      "stamp" => stamp,
+      "sources" => sources,
+      "env" => current_env(),
+      "lists" => lists
+    }
+
+    path = cache_path()
+    tmp = path <> ".tmp"
+    File.mkdir_p!(Path.dirname(path))
+
+    with :ok <- File.write(tmp, Jason.encode!(payload)),
+         :ok <- File.rename(tmp, path) do
+      :ok
+    else
+      _ ->
+        _ = File.rm(tmp)
+        :ok
+    end
+  rescue
+    _ -> :ok
+  end
+
+  # Index mutations are covered by the stamp that `CLI.run/2` writes after a
+  # mutating command. Only user-editable inputs need a timestamp check; the
+  # index files are deliberately excluded because SQLite rewrites or removes
+  # its WAL on every connect and would invalidate the cache on each call.
+  defp sources(config) do
+    [config.path, Projects.path(config)]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+    |> Enum.map(&source_entry/1)
+  end
+
+  defp source_entry(path) do
+    case File.stat(path) do
+      {:ok, %File.Stat{mtime: mtime, size: size}} ->
+        %{"path" => path, "mtime" => mtime_seconds(mtime), "size" => size}
+
+      {:error, _} ->
+        %{"path" => path, "mtime" => nil, "size" => nil}
+    end
+  end
+
+  defp sources_current?(sources) when is_list(sources) do
+    Enum.all?(sources, fn
+      %{"path" => path, "mtime" => mtime, "size" => size} ->
+        case File.stat(path) do
+          {:ok, %File.Stat{mtime: now_mtime, size: now_size}} ->
+            mtime_seconds(now_mtime) == mtime and now_size == size
+
+          {:error, _} ->
+            is_nil(mtime) and is_nil(size)
         end
 
       _ ->
-        []
+        false
+    end)
+  end
+
+  defp sources_current?(_), do: false
+
+  defp mtime_seconds({{_, _, _}, {_, _, _}} = mtime),
+    do: :calendar.datetime_to_gregorian_seconds(mtime)
+
+  defp mtime_seconds(_), do: nil
+
+  defp current_env do
+    %{
+      "GITSPACE_DATA" => System.get_env("GITSPACE_DATA"),
+      "GITSPACE_PROJECTS_ROOT" => System.get_env("GITSPACE_PROJECTS_ROOT")
+    }
+  end
+
+  defp cache_path, do: Config.config_path() <> ".complete.json"
+  defp stamp_path, do: Config.config_path() <> ".stamp"
+
+  defp current_stamp do
+    case File.read(stamp_path()) do
+      {:ok, body} -> String.trim(body)
+      {:error, _} -> "0"
     end
+  end
+
+  @doc "Invalidates completion caches after a mutating command."
+  @spec touch() :: :ok
+  def touch do
+    path = stamp_path()
+    dir = Path.dirname(path)
+
+    if File.dir?(dir) do
+      tmp = path <> ".tmp"
+      File.write!(tmp, Integer.to_string(System.system_time(:microsecond)))
+      File.rename!(tmp, path)
+    end
+
+    :ok
+  rescue
+    _ -> :ok
   end
 
   defp render_values(%{values: values}) do
@@ -345,9 +506,25 @@ defmodule Gitspace.CLI.Completion do
     """
     _gitspace_complete() {
       local cur="${COMP_WORDS[COMP_CWORD]}"
-      local -a args=("${COMP_WORDS[@]:1}")
-      mapfile -t COMPREPLY < <(gitspace __complete "$((COMP_CWORD-1))" "${args[@]}")
-      if [[ ${#COMPREPLY[@]} -eq 0 && "$cur" != -* ]]; then
+      local -a before=("${COMP_WORDS[@]:1:COMP_CWORD-1}")
+      local index=$((COMP_CWORD - 1))
+      local config="${GITSPACE_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/gitspace/config.toml}"
+      local stamp
+      [[ -r "${config}.stamp" ]] && stamp=$(<"${config}.stamp")
+      local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/gitspace"
+      local sum
+      sum=$(printf '%s\\n' "$config" "$stamp" "$index" "${before[@]}" | cksum)
+      local cache="$cache_dir/${sum%% *}"
+      local -a candidates=()
+      if [[ ! -f $cache ]]; then
+        mkdir -p "$cache_dir"
+        find "$cache_dir" -type f -mtime +1 -delete 2>/dev/null
+        gitspace __complete "$index" "${before[@]}" "" >"$cache"
+      fi
+      if [[ -s $cache ]]; then
+        mapfile -t candidates <"$cache"
+        mapfile -t COMPREPLY < <(compgen -W "${candidates[*]}" -- "$cur")
+      elif [[ $cur != -* ]]; then
         mapfile -t COMPREPLY < <(compgen -f -- "$cur")
       fi
     }
@@ -359,10 +536,25 @@ defmodule Gitspace.CLI.Completion do
     """
     #compdef gitspace gsp
     _gitspace_complete() {
+      local -a before=("${words[2,CURRENT-1]}")
+      local index=$((CURRENT - 2))
+      local config="${GITSPACE_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/gitspace/config.toml}"
+      local stamp
+      [[ -r "${config}.stamp" ]] && stamp=$(<"${config}.stamp")
+      local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/gitspace"
+      local sum
+      sum=$(printf '%s\\n' "$config" "$stamp" "$index" "${before[@]}" | cksum)
+      local cache="$cache_dir/${sum%% *}"
       local -a reply
-      local -a args=("${words[2,CURRENT]}")
-      reply=("${(@f)$(gitspace __complete "$((CURRENT-2))" "${args[@]}")}")
-      reply=("${(@)reply:#}")
+      if [[ ! -f $cache ]]; then
+        mkdir -p "$cache_dir"
+        find "$cache_dir" -type f -mtime +1 -delete 2>/dev/null
+        gitspace __complete "$index" "${before[@]}" "" >"$cache"
+      fi
+      if [[ -s $cache ]]; then
+        reply=("${(@f)$(cat "$cache")}")
+        reply=("${(@M)reply:#${PREFIX}*}")
+      fi
       if (( ${#reply} )); then
         compadd -- "${reply[@]}"
       else
@@ -379,7 +571,32 @@ defmodule Gitspace.CLI.Completion do
         set -l tokens (commandline -opc)
         set -l current (commandline -ct)
         set -e tokens[1]
-        gitspace __complete (count $tokens) $tokens $current
+        set -l config $GITSPACE_CONFIG
+        if not set -q GITSPACE_CONFIG
+            if set -q XDG_CONFIG_HOME
+                set config $XDG_CONFIG_HOME/gitspace/config.toml
+            else
+                set config $HOME/.config/gitspace/config.toml
+            end
+        end
+        set -l stamp
+        if test -r "$config.stamp"
+            set stamp (cat "$config.stamp")
+        end
+        set -l cache_dir $HOME/.cache/gitspace
+        if set -q XDG_CACHE_HOME
+            set cache_dir $XDG_CACHE_HOME/gitspace
+        end
+        set -l sum (printf '%s\\n' "$config" "$stamp" (count $tokens) $tokens | cksum)
+        set -l cache $cache_dir/(string split ' ' -- $sum)[1]
+        if not test -f $cache
+            mkdir -p $cache_dir
+            find $cache_dir -type f -mtime +1 -delete 2>/dev/null
+            gitspace __complete (count $tokens) $tokens "" >$cache
+        end
+        if test -s $cache
+            string match -a "$current*" (cat $cache)
+        end
     end
     complete -c gitspace -f -a '(__gitspace_complete)'
     complete -c gsp -f -a '(__gitspace_complete)'

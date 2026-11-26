@@ -56,7 +56,47 @@ defmodule Gitspace.CLI do
           end
 
         Output.emit({:error, Error.new(:error, message)}, global)
+    after
+      # Completion snapshots are invalidated by mutations only. Reads such as
+      # `ls` or `status` must not wake the shell cache.
+      unless read_only?(args), do: Completion.touch()
     end
+  end
+
+  defp read_only?(args) do
+    case command_name(args) do
+      nil ->
+        true
+
+      command when command in ~w(ls status show path help completion __complete version) ->
+        true
+
+      "config" ->
+        subcommand(args) != "set"
+
+      "doctor" ->
+        not Enum.any?(args, &(&1 in ["--fix", "--reindex"]))
+
+      "repo" ->
+        subcommand(args) in ["ls", "fetch"]
+
+      "workspace" ->
+        subcommand(args) in ["ls", "status"]
+
+      "project" ->
+        subcommand(args) in ["ls", "show"]
+
+      _ ->
+        false
+    end
+  end
+
+  defp subcommand(args) do
+    args
+    |> Enum.drop_while(&String.starts_with?(&1, "-"))
+    |> Enum.drop(1)
+    |> Enum.reject(&String.starts_with?(&1, "-"))
+    |> List.first()
   end
 
   defp dispatch(args, global) do
