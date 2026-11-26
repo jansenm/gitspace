@@ -255,8 +255,9 @@ All owned checkouts remain direct children of the topic workspace:
 
 The same remote written in another URL form (`git@…`, `https://…`, with or without `.git`) is
 matched by its canonical address and is not duplicated, even after its fetch URL was changed.
-Default ports are omitted; other ports remain part of the address. `gitspace repo ls` shows the
-remote, alias, and mirror hash behind each repository.
+Default ports are omitted; other ports remain part of the address. `gitspace repo ls` is compact
+by default and shows the remote behind each repository; `--verbose` adds the mirror hash and
+path.
 
 ## Changing remote URLs
 

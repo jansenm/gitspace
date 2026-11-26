@@ -121,8 +121,8 @@ defmodule Gitspace.CLI.Repo do
     end
   end
 
-  defp list(_global, args) do
-    with {:ok, _opts, rest} <- Helpers.parse(args, list_strict()),
+  defp list(global, args) do
+    with {:ok, opts, rest} <- Helpers.parse(args, list_strict()),
          :ok <- Helpers.no_extra_args(rest),
          {:ok, config} <- Helpers.load_config(),
          :ok <- Helpers.start_index(config) do
@@ -135,7 +135,9 @@ defmodule Gitspace.CLI.Repo do
           Map.put(repo_map(repo, count), :projects, names)
         end)
 
-      {:ok, %{repositories: repositories}, &render_list/1}
+      verbose = !!global.verbose or !!opts[:verbose]
+
+      {:ok, %{repositories: repositories, verbose: verbose}, &render_list/1}
     end
   end
 
@@ -310,23 +312,39 @@ defmodule Gitspace.CLI.Repo do
     IO.puts("  checkout:  #{data.checkout}")
   end
 
-  defp render_list(%{repositories: repositories}) do
-    Output.table(
-      ["SLUG", "PROJECT", "REMOTE", "STATE", "DEFAULT", "CHECKOUTS", "HASH", "MIRROR"],
+  defp render_list(%{repositories: repositories} = data) do
+    verbose = Map.get(data, :verbose, false)
+
+    headers =
+      ["SLUG", "PROJECT", "REMOTE", "STATE", "DEFAULT", "CHECKOUTS"] ++
+        if(verbose, do: ["HASH", "MIRROR"], else: [])
+
+    rows =
       Enum.map(repositories, fn repo ->
-        [
+        base = [
           repo.slug,
-          Enum.join(repo[:projects] || [], ","),
+          project_label(repo[:projects]),
           remote_label(repo),
           repo.state,
           repo.default_branch,
-          repo.checkouts,
-          String.slice(repo.hash || "", 0, 12),
-          repo.bare_path
+          repo.checkouts
         ]
+
+        if verbose do
+          base ++ [short_hash(repo.hash), repo.bare_path]
+        else
+          base
+        end
       end)
-    )
+
+    Output.table(headers, rows)
   end
+
+  defp project_label([]), do: "-"
+  defp project_label(names) when is_list(names), do: Enum.join(names, ",")
+
+  defp short_hash(nil), do: "-"
+  defp short_hash(hash), do: String.slice(hash, 0, 12)
 
   defp render_alias(%{repo: repo}) do
     IO.puts("alias: #{repo.slug}")
@@ -368,11 +386,15 @@ defmodule Gitspace.CLI.Repo do
       gitspace repo init <name> [--branch B] [--topic T] [--path P]
       gitspace repo import <path> [--name N] [--no-link]
       gitspace repo add <url-or-path> [--name N] [--remote NAME] [--project P] [--no-fetch]
-      gitspace repo ls
+      gitspace repo ls [--verbose]
       gitspace repo fetch [<repo>|--all] [--prune]
       gitspace repo rm <repo> [--force] [--dry-run] [--yes]
       gitspace repo alias <repo> <name>
       gitspace repo set-url <repo> <url> [--push]
+
+    LISTING
+      `repo ls` is compact by default: slug, projects, remote, state, default
+      branch and checkout count. `--verbose` adds the mirror hash and path.
 
     LOCAL REPOSITORIES
       `repo init` creates an empty managed repository with no upstream and its

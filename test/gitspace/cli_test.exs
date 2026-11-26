@@ -210,15 +210,24 @@ defmodule Gitspace.CLITest do
     assert Enum.any?(data["checks"], &(&1["name"] == "index" and &1["status"] == "ok"))
   end
 
-  test "repo shows help and repo ls includes the remote URI", %{source: source} do
+  test "repo shows help and repo ls includes the remote URI", %{source: source, repo: repo} do
     {help, 0} = cli(["repo"])
     assert help =~ "gitspace repo add"
     assert help =~ "gitspace repo rm"
+    assert help =~ "gitspace repo ls [--verbose]"
 
     {output, 0} = cli(["repo", "ls"])
     assert output =~ "REMOTE"
     assert output =~ "demo"
     assert output =~ source
+    refute output =~ "HASH"
+    refute output =~ "MIRROR"
+    refute output =~ repo.bare_path
+
+    {verbose, 0} = cli(["repo", "ls", "--verbose"])
+    assert verbose =~ "HASH"
+    assert verbose =~ "MIRROR"
+    assert verbose =~ repo.bare_path
   end
 
   test "repo add reads remote URLs from an existing checkout", %{source: source} do
