@@ -14,14 +14,15 @@ defmodule Gitspace.Aliases do
           required(:remote_key) => String.t(),
           required(:slug) => String.t(),
           optional(:id) => term(),
-          optional(:alias_source) => String.t() | nil
+          optional(:alias_source) => String.t() | nil,
+          optional(:basename) => String.t() | nil
         }
 
   @doc "Human-readable pieces of a canonical remote key."
   @spec describe(String.t()) :: %{
           host: String.t(),
           group: String.t(),
-          basename: String.t(),
+          basename: String.t() | nil,
           local?: boolean()
         }
   def describe(remote_key) when is_binary(remote_key) do
@@ -32,7 +33,9 @@ defmodule Gitspace.Aliases do
         %{host: "local", group: "local", basename: "repo", local?: true}
 
       String.starts_with?(key, "local:") ->
-        %{host: "local", group: "local", basename: "local", local?: true}
+        # `local:<uuid>` carries no name. The caller can pass a `:basename`
+        # hint from the linked checkout; otherwise the existing alias is kept.
+        %{host: "local", group: "local", basename: nil, local?: true}
 
       String.starts_with?(key, "/") ->
         local_descriptor(key)
@@ -69,7 +72,7 @@ defmodule Gitspace.Aliases do
       bases =
         Map.new(auto, fn repo ->
           descriptor = describe(repo.remote_key)
-          {key(repo), base_alias(descriptor, Map.get(basenames, descriptor.basename, 1))}
+          {key(repo), base_alias(descriptor, repo, Map.get(basenames, descriptor.basename, 1))}
         end)
 
       tiers = [
@@ -200,11 +203,27 @@ defmodule Gitspace.Aliases do
     end
   end
 
-  defp base_alias(descriptor, count) do
+  defp base_alias(%{basename: nil}, repo, _count) do
+    Map.get(repo, :basename) || existing_alias(repo)
+  end
+
+  defp base_alias(descriptor, _repo, count) do
     if count > 1 do
       descriptor.group <> "-" <> descriptor.basename
     else
       descriptor.basename
+    end
+  end
+
+  # A local identity has no name of its own. Keep the alias that was chosen
+  # when it was created; placeholder aliases from discovery are replaced.
+  defp existing_alias(repo) do
+    slug = Map.get(repo, :slug)
+
+    if is_binary(slug) and slug != "pending" and not String.starts_with?(slug, "tmp-") do
+      sanitize(slug, "local")
+    else
+      "local"
     end
   end
 

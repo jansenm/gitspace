@@ -232,8 +232,10 @@ gitspace repo import ~/src/scratch --no-link        # do not index the source cl
 that checkout and the branch exists immediately, with no push or fetch. `repo import` copies
 committed history into a local mirror offline, leaves the source clone untouched, and links it
 as an external checkout unless `--no-link`. Both use an identity of `local:<uuid>`; `repo ls`
-shows them as `LOCAL`. `repo fetch` is a no-op, and `repo rm` writes `git bundle --all` under
-`<data>/trash/repos/` before deleting the mirror, because that mirror is the only copy.
+shows them as `LOCAL`. A local repository keeps the name chosen at import (`--name`, otherwise
+the source directory's basename) across reindexing. `repo fetch` is a no-op, and `repo rm`
+writes `git bundle --all` under `<data>/trash/repos/` before deleting the mirror, because that
+mirror is the only copy.
 `repo set-url <repo> <url>` adopts an upstream later without changing the identity.
 
 When fetching is enabled, the mirror is seeded from the checkout with

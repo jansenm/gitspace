@@ -257,6 +257,52 @@ defmodule Gitspace.CLI.RepoInitTest do
     assert list =~ url
   end
 
+  test "repo import without --name keeps the directory basename across a reindex", %{
+    config: config
+  } do
+    source = Fixtures.source_repo!()
+    name = Path.basename(source)
+
+    {output, 0} = cli(["repo", "import", source, "--json"])
+    assert Jason.decode!(output)["data"]["repo"]["slug"] == name
+
+    assert {:ok, repo} = Repos.get(config, name)
+    assert {:ok, _} = Git.run(["config", "--unset", "gitspace.alias"], cd: repo.bare_path)
+
+    assert {:ok, _} =
+             Git.run(["config", "--unset", "gitspace.alias-source"], cd: repo.bare_path)
+
+    {_, 0} = cli(["reindex", "--json"])
+
+    assert {:ok, repo} = Repos.get(config, name)
+    assert repo.slug == name
+    refute repo.slug == "local"
+  end
+
+  test "reindex recovers a local repository that was renamed to local", %{config: config} do
+    source = Fixtures.source_repo!()
+    name = Path.basename(source)
+
+    {_, 0} = cli(["repo", "import", source, "--json"])
+    assert {:ok, repo} = Repos.get(config, name)
+
+    assert {:ok, _} = Git.run(["config", "--unset", "gitspace.alias"], cd: repo.bare_path)
+
+    assert {:ok, _} =
+             Git.run(["config", "--unset", "gitspace.alias-source"], cd: repo.bare_path)
+
+    assert {:ok, renamed} =
+             repo
+             |> Ecto.Changeset.change(slug: "local", alias_source: "auto")
+             |> Repo.update()
+
+    {_, 0} = cli(["reindex", "--json"])
+
+    assert {:ok, recovered} = Repos.get(config, name)
+    assert recovered.id == renamed.id
+    assert recovered.slug == name
+  end
+
   defp cli(args) do
     {code, output} = ExUnit.CaptureIO.with_io(fn -> Gitspace.CLI.run(args) end)
     {output, code}

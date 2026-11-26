@@ -513,15 +513,24 @@ defmodule Gitspace.Repos do
   @spec rebalance_aliases(Config.t(), map()) :: {:ok, map()} | {:error, Error.t()}
   def rebalance_aliases(%Config{} = config, overrides \\ %{}) do
     repos = Repo.all(Repository)
+    hints = local_basename_hints(repos)
 
     effective =
       Enum.map(repos, fn repo ->
+        base = %{
+          id: repo.id,
+          remote_key: repo.remote_key,
+          slug: repo.slug,
+          alias_source: repo.alias_source,
+          basename: Map.get(hints, repo.id)
+        }
+
         case Map.get(overrides, repo.id) do
           nil ->
-            repo
+            base
 
           %{alias: alias_name, source: source} ->
-            %{repo | slug: alias_name, alias_source: source}
+            %{base | slug: alias_name, alias_source: source}
         end
       end)
 
@@ -532,6 +541,41 @@ defmodule Gitspace.Repos do
 
       {:error, error} ->
         {:error, error}
+    end
+  end
+
+  # Local identities (`local:<uuid>`) carry no remote name. Recover one from
+  # the linked checkout path so reindexing does not rename the repository to
+  # the generic `local`.
+  defp local_basename_hints(repos) do
+    local_ids =
+      repos
+      |> Enum.filter(&String.starts_with?(&1.remote_key || "", "local:"))
+      |> Enum.map(& &1.id)
+
+    if local_ids == [] do
+      %{}
+    else
+      from(c in Checkout,
+        where: c.repository_id in ^local_ids,
+        order_by: [asc: c.path],
+        select: {c.repository_id, c.source, c.path}
+      )
+      |> Repo.all()
+      |> Enum.reduce(%{}, fn {id, source, path}, acc ->
+        case Layout.repo_slug(Path.basename(path)) do
+          {:ok, slug} ->
+            case Map.get(acc, id) do
+              nil -> Map.put(acc, id, {source != "external", slug})
+              {true, _} when source == "external" -> Map.put(acc, id, {false, slug})
+              _ -> acc
+            end
+
+          {:error, _} ->
+            acc
+        end
+      end)
+      |> Map.new(fn {id, {_fallback, slug}} -> {id, slug} end)
     end
   end
 

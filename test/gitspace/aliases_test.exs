@@ -76,6 +76,30 @@ defmodule Gitspace.AliasesTest do
     assert aliases["/home/me/two/config"] == "two-config"
   end
 
+  test "local identities keep a basename hint or their existing alias" do
+    repos = [
+      %{
+        id: 1,
+        remote_key: "local:one",
+        slug: "pending",
+        alias_source: "auto",
+        basename: "scratch"
+      },
+      %{id: 2, remote_key: "local:two", slug: "notes", alias_source: "auto", basename: nil}
+    ]
+
+    assert {:ok, aliases} = Aliases.resolve(repos)
+    assert aliases[1] == "scratch"
+    assert aliases[2] == "notes"
+  end
+
+  test "a discovered local identity without a hint does not keep a temp alias" do
+    repos = [%{id: 1, remote_key: "local:one", slug: "tmp-abc123", alias_source: "auto"}]
+
+    assert {:ok, aliases} = Aliases.resolve(repos)
+    assert aliases[1] == "local"
+  end
+
   test "resolution is deterministic regardless of input order" do
     repos = [
       repo("github.com/beta/config"),
