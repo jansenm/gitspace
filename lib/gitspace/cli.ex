@@ -251,10 +251,11 @@ defmodule Gitspace.CLI do
                                       [--as DIR] [--label L]... [--fetch] [--json]
 
         @<ref> is the starting point. Without an explicit --topic/--name the
-        ref is checked out as-is. Naming a topic derives an owned branch from
-        the template (default feature/{topic}); --branch creates that explicit
-        branch instead. --as-is checks the ref out unchanged; --detach checks
-        it out without a branch.
+        ref is checked out as-is. A topic together with a ref derives an owned
+        branch from the template (default feature/{topic}); a topic without a
+        ref checks out each repository's default branch as-is. --branch creates
+        that explicit branch instead. --as-is checks the ref or default out
+        unchanged; --detach checks it out without a branch.
 
         --only and --exclude are mutually exclusive. By default every member
         of the project is checked out.

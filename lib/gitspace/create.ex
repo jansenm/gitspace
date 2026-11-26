@@ -247,7 +247,7 @@ defmodule Gitspace.Create do
       opts[:detach] -> {:ok, :detach}
       is_binary(opts[:branch]) -> {:ok, {:create, opts[:branch]}}
       opts[:as_is] -> {:ok, if(is_nil(ref), do: :default, else: :ref)}
-      explicit_topic?(opts) -> {:ok, :derive}
+      explicit_topic?(opts) and is_binary(ref) -> {:ok, :derive}
       true -> {:ok, :ref}
     end
   end

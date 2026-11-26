@@ -135,14 +135,15 @@ gitspace co vemags@development --topic MT4711 --only api,web
 gitspace co vemags@feature/MT4711 --topic MT4711 --exclude legacy
 ```
 
-`@<ref>` is the starting point. Naming a topic means creating work:
+`@<ref>` is the starting point:
 
 | Flags | Result |
 |---|---|
 | no `--topic`/`--name` | check out the ref as-is (branch, or detached for tag/SHA) |
-| `--topic T` / `--name T` | derive an owned branch from `feature/{topic}`, starting at the ref |
-| `--branch B` | create the explicit owned branch `B` from the ref |
-| `--as-is` | check out the ref unchanged even with a topic |
+| `--topic T` with a ref | derive an owned branch from `feature/{topic}`, starting at the ref |
+| `--topic T` without a ref | check out **each repository's default branch** as-is (`main`, `master`, `devel`, …) |
+| `--branch B` | create the explicit owned branch `B` from the ref or default |
+| `--as-is` | check out the ref (or default) unchanged even with a topic |
 | `--detach` | detached checkout at the ref |
 
 Re-running the same command resumes an existing owned branch when it is free. An occupied
@@ -161,13 +162,14 @@ Exclusions never delete existing members.
 ```sh
 gitspace workspace new vemags@4711 --own api@main --own web@main
 gitspace workspace new 4711/sub --own api@main      # topic 4711/sub, project inferred
+gitspace workspace new vemags@dev --own api --own web --as-is  # each default branch
 ```
 
 The target is `[<project>@]<topic>`. `@` separates project and topic; topics may contain `/`,
 but `@` is reserved in project names, topics and repository aliases. Without a project the
 first owned repository's project is used. Owned branches are derived from the topic using the
 project template (default `feature/{topic}`); `--branch` overrides the name and `--as-is`
-checks the ref out unchanged. Labels, descriptions, `--as repo=name`, `--fetch` and `--dry-run`
+checks the ref (or each repository's default branch) out unchanged. Labels, descriptions, `--as repo=name`, `--fetch` and `--dry-run`
 work as before.
 
 Creation is ensure-only: matching members are reused, conflicting paths or branches are

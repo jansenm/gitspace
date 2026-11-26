@@ -68,7 +68,8 @@ defmodule Gitspace.CLI.Co do
       _ ->
         {:error,
          Error.new(:usage, "usage: gitspace co <project>[@<ref>]",
-           hint: "for example: gitspace co vemags@development --topic MT4711"
+           hint:
+             "for example: gitspace co vemags --topic MT4711 (defaults) or gitspace co vemags@main --topic MT4711"
          )}
     end
   end

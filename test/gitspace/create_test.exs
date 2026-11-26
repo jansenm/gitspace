@@ -329,6 +329,27 @@ defmodule Gitspace.CreateTest do
     assert error.code == :usage
   end
 
+  test "co without a ref checks out each repo's default branch", %{config: config} do
+    main_source = Fixtures.source_repo!()
+    devel_source = Fixtures.source_repo!()
+
+    Git.run!(["checkout", "-b", "devel"], cd: devel_source)
+    Fixtures.write(devel_source, "devel.txt", "devel\n")
+    Fixtures.commit!(devel_source, "devel")
+
+    assert {:ok, _} = Repos.add(config, Fixtures.repo_url(main_source), name: "main-repo")
+    assert {:ok, _} = Repos.add(config, Fixtures.repo_url(devel_source), name: "devel-repo")
+    assert {:ok, _} = Projects.create(config, "mixed", repo: ["main-repo", "devel-repo"])
+
+    assert {:ok, result} = Create.co(config, "mixed", nil, topic: "dev")
+
+    branches = Map.new(result.members, &{&1.repo, &1.branch})
+    assert branches == %{"main-repo" => "main", "devel-repo" => "devel"}
+
+    assert {:ok, derived} = Create.co(config, "mixed", "main", topic: "dev2")
+    assert Enum.all?(derived.members, &(&1.branch == "feature/dev2"))
+  end
+
   test "CREATE-14 a warm mirror works without the source; missing refs hint at fetch", %{
     config: config,
     source_a: source_a

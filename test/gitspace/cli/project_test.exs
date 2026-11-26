@@ -78,7 +78,7 @@ defmodule Gitspace.CLI.ProjectTest do
     assert data["workspace"] == "vemags@MT4711"
     assert data["path"] == Path.join([config.projects_root, "vemags", "MT4711"])
     assert Enum.map(data["members"], & &1["repo"]) |> Enum.sort() == ["a", "b"]
-    assert Enum.all?(data["members"], &(&1["branch"] == "feature/MT4711"))
+    assert Enum.all?(data["members"], &(&1["branch"] == "main"))
     assert Enum.all?(data["members"], &File.dir?(&1["path"]))
 
     {path_output, 0} = cli(["path", "vemags@MT4711", "--json"])
@@ -120,7 +120,7 @@ defmodule Gitspace.CLI.ProjectTest do
     assert actions["c"] == "created"
 
     c = Enum.find(members, &(&1["repo"] == "c"))
-    assert c["branch"] == "feature/MT4711"
+    assert c["branch"] == "main"
   end
 
   test "co supports --exclude and rejects --only with --exclude" do
