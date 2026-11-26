@@ -15,7 +15,7 @@ defmodule Gitspace.CLI.Completion do
   alias Gitspace.{Config, Projects, Repos, Workspaces}
   alias Gitspace.CLI.Helpers
 
-  @cache_version 2
+  @cache_version 3
 
   @commands ~w(ls co workspace project status show path repo scan link unlink doctor setup reindex config completion help)
 
@@ -103,12 +103,17 @@ defmodule Gitspace.CLI.Completion do
       else
         case value_requests(before) do
           {:data, keys} = request ->
-            if compound?(keys, current) do
-              [:compound]
-              |> resolve()
-              |> expand_compound(current)
-            else
-              resolve_requests(request)
+            cond do
+              prefixed?(keys, current) ->
+                expand_prefixed(current, keys)
+
+              compound?(keys, current) ->
+                [:compound]
+                |> resolve()
+                |> expand_compound(current)
+
+              true ->
+                resolve_requests(request)
             end
 
           request ->
@@ -140,6 +145,8 @@ defmodule Gitspace.CLI.Completion do
       prev in ~w(--shell) -> {:static, ~w(bash zsh fish)}
       prev in ~w(--ide) -> {:static, ~w(code zed cursor)}
       prev in ~w(--project) -> {:data, [:projects]}
+      prev in ~w(--workspace) -> {:data, [:workspace_names]}
+      prev in ~w(--label) -> {:data, [:labels]}
       prev in ~w(--topic) -> {:data, [:topics]}
       prev in ~w(--repo --own --borrow) -> {:data, [:repos]}
       prev in ~w(--only --exclude) -> {:data, [{:members, command_project(cleaned) || ""}]}
@@ -149,6 +156,26 @@ defmodule Gitspace.CLI.Completion do
 
   defp resolve_requests({:static, values}), do: values
   defp resolve_requests({:data, keys}), do: resolve(keys)
+
+  # `repo:` and `project:` selectors are only meaningful for target
+  # positions; complete the name behind the prefix.
+  defp prefixed?(keys, current) do
+    keys == [:targets] and
+      (String.starts_with?(current, "repo:") or String.starts_with?(current, "project:"))
+  end
+
+  defp expand_prefixed(current, _keys) do
+    {prefix, key} =
+      if String.starts_with?(current, "repo:") do
+        {"repo:", :repos}
+      else
+        {"project:", :projects}
+      end
+
+    [key]
+    |> resolve()
+    |> Enum.map(&(prefix <> &1))
+  end
 
   # Positional targets accept `project/topic/member`, `workspace:member` and
   # `project@topic` spellings. Once the current word contains a separator,
@@ -252,6 +279,8 @@ defmodule Gitspace.CLI.Completion do
     end
   end
 
+  defp positional_values("workspace", "new", []), do: {:data, [:projects]}
+
   defp positional_values("workspace", sub, []) when sub in ["status", "rm"] do
     {:data, [:workspaces]}
   end
@@ -349,6 +378,14 @@ defmodule Gitspace.CLI.Completion do
       |> Enum.map(fn workspace -> elem(Workspaces.parts(workspace), 1) end)
       |> Enum.uniq()
 
+    workspace_names = Enum.map(workspaces, & &1.name)
+
+    labels =
+      workspaces
+      |> Enum.flat_map(& &1.labels)
+      |> Enum.map(& &1.label)
+      |> Enum.uniq()
+
     workspace_targets =
       Enum.flat_map(workspaces, fn workspace ->
         members =
@@ -397,6 +434,8 @@ defmodule Gitspace.CLI.Completion do
       "repos" => repos,
       "topics" => topics,
       "workspaces" => workspace_targets,
+      "workspace_names" => workspace_names,
+      "labels" => labels,
       "targets" => Enum.uniq(project_names ++ workspace_targets ++ repos),
       "members" => members,
       "compound" => Enum.uniq(compounds)
@@ -410,6 +449,8 @@ defmodule Gitspace.CLI.Completion do
       :repos -> lists["repos"]
       :topics -> lists["topics"]
       :workspaces -> lists["workspaces"]
+      :workspace_names -> lists["workspace_names"]
+      :labels -> lists["labels"]
       :targets -> lists["targets"]
       :compound -> lists["compound"]
       {:members, ""} -> lists["repos"]
@@ -422,6 +463,8 @@ defmodule Gitspace.CLI.Completion do
   defp cached?(lists, :repos), do: is_list(lists["repos"])
   defp cached?(lists, :topics), do: is_list(lists["topics"])
   defp cached?(lists, :workspaces), do: is_list(lists["workspaces"])
+  defp cached?(lists, :workspace_names), do: is_list(lists["workspace_names"])
+  defp cached?(lists, :labels), do: is_list(lists["labels"])
   defp cached?(lists, :targets), do: is_list(lists["targets"])
   defp cached?(lists, :compound), do: is_list(lists["compound"])
   defp cached?(lists, {:members, ""}), do: is_list(lists["repos"])
@@ -436,12 +479,14 @@ defmodule Gitspace.CLI.Completion do
          {:ok,
           %{
             "version" => @cache_version,
+            "app" => app,
             "stamp" => stamp,
             "sources" => sources,
             "env" => env,
             "lists" => lists
           }}
          when is_map(lists) <- Jason.decode(body),
+         true <- app == app_version(),
          true <- stamp == current_stamp(),
          true <- env == current_env(),
          true <- sources_current?(sources) do
@@ -454,6 +499,7 @@ defmodule Gitspace.CLI.Completion do
   defp write_cache(lists, stamp, sources) do
     payload = %{
       "version" => @cache_version,
+      "app" => app_version(),
       "stamp" => stamp,
       "sources" => sources,
       "env" => current_env(),
@@ -527,6 +573,13 @@ defmodule Gitspace.CLI.Completion do
     }
   end
 
+  defp app_version do
+    case Application.spec(:gitspace, :vsn) do
+      nil -> "dev"
+      vsn -> to_string(vsn)
+    end
+  end
+
   defp cache_path, do: Config.config_path() <> ".complete.json"
   defp stamp_path, do: Config.config_path() <> ".stamp"
 
@@ -577,14 +630,22 @@ defmodule Gitspace.CLI.Completion do
     _gitspace_complete() {
       local cur="${COMP_WORDS[COMP_CWORD]}"
       local base="${cur%"${cur##*[/:@]}"}"
+      if [[ $cur == -* ]]; then
+        base="-"
+      fi
       local -a before=("${COMP_WORDS[@]:1:COMP_CWORD-1}")
       local index=$((COMP_CWORD - 1))
       local config="${GITSPACE_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/gitspace/config.toml}"
       local stamp
       [[ -r "${config}.stamp" ]] && stamp=$(<"${config}.stamp")
+      local bin fingerprint
+      bin=$(command -v gitspace)
+      if [[ -n $bin ]]; then
+        fingerprint=$(stat -c '%Y-%s' "$bin" 2>/dev/null || stat -f '%m-%z' "$bin" 2>/dev/null)
+      fi
       local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/gitspace"
       local sum
-      sum=$(printf '%s\\n' "$config" "$stamp" "$index" "$base" "${before[@]}" | cksum)
+      sum=$(printf '%s\\n' "$config" "$stamp" "$fingerprint" "$index" "$base" "${before[@]}" | cksum)
       local cache="$cache_dir/${sum%% *}"
       local -a candidates=()
       if [[ ! -f $cache ]]; then
@@ -609,14 +670,22 @@ defmodule Gitspace.CLI.Completion do
     _gitspace_complete() {
       local cur="$PREFIX"
       local base="${cur%"${cur##*[/:@]}"}"
+      if [[ $cur == -* ]]; then
+        base="-"
+      fi
       local -a before=("${words[2,CURRENT-1]}")
       local index=$((CURRENT - 2))
       local config="${GITSPACE_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/gitspace/config.toml}"
       local stamp
       [[ -r "${config}.stamp" ]] && stamp=$(<"${config}.stamp")
+      local bin fingerprint
+      bin=$(command -v gitspace)
+      if [[ -n $bin ]]; then
+        fingerprint=$(stat -c '%Y-%s' "$bin" 2>/dev/null || stat -f '%m-%z' "$bin" 2>/dev/null)
+      fi
       local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/gitspace"
       local sum
-      sum=$(printf '%s\\n' "$config" "$stamp" "$index" "${before[@]}" | cksum)
+      sum=$(printf '%s\\n' "$config" "$stamp" "$fingerprint" "$index" "$base" "${before[@]}" | cksum)
       local cache="$cache_dir/${sum%% *}"
       local -a reply
       if [[ ! -f $cache ]]; then
@@ -647,6 +716,9 @@ defmodule Gitspace.CLI.Completion do
         if test "$base" = "$current"
             set base ""
         end
+        if test (string sub -l 1 -- "$current") = "-"
+            set base "-"
+        end
         set -e tokens[1]
         set -l config $GITSPACE_CONFIG
         if not set -q GITSPACE_CONFIG
@@ -660,11 +732,19 @@ defmodule Gitspace.CLI.Completion do
         if test -r "$config.stamp"
             set stamp (cat "$config.stamp")
         end
+        set -l bin (command -s gitspace)
+        set -l fingerprint
+        if test -n "$bin"
+            set fingerprint (stat -c '%Y-%s' "$bin" 2>/dev/null)
+            if test -z "$fingerprint"
+                set fingerprint (stat -f '%m-%z' "$bin" 2>/dev/null)
+            end
+        end
         set -l cache_dir $HOME/.cache/gitspace
         if set -q XDG_CACHE_HOME
             set cache_dir $XDG_CACHE_HOME/gitspace
         end
-        set -l sum (printf '%s\\n' "$config" "$stamp" (count $tokens) "$base" $tokens | cksum)
+        set -l sum (printf '%s\\n' "$config" "$stamp" "$fingerprint" (count $tokens) "$base" $tokens | cksum)
         set -l cache $cache_dir/(string split ' ' -- $sum)[1]
         if not test -f $cache
             mkdir -p $cache_dir

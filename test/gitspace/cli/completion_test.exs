@@ -27,7 +27,7 @@ defmodule Gitspace.CLI.CompletionTest do
     end
 
     {_, 0} = cli(["project", "new", "vemags", "--repo", "api", "--repo", "web"])
-    {_, 0} = cli(["co", "vemags@main", "--topic", "dev", "--json"])
+    {_, 0} = cli(["co", "vemags@main", "--topic", "dev", "--label", "one", "--json"])
 
     {:ok, config: config}
   end
@@ -125,6 +125,26 @@ defmodule Gitspace.CLI.CompletionTest do
     assert lines(workspace_command) == ["vemags@dev"]
   end
 
+  test "completes filters, prefixed targets and workspace new" do
+    {workspaces, 0} = cli(["__complete", "2", "ls", "--workspace", ""])
+    assert lines(workspaces) == ["vemags@dev"]
+
+    {labels, 0} = cli(["__complete", "2", "ls", "--label", ""])
+    assert lines(labels) == ["one"]
+
+    {repos, 0} = cli(["__complete", "1", "status", "repo:"])
+    assert lines(repos) == ["repo:api", "repo:web"]
+
+    {repos_partial, 0} = cli(["__complete", "1", "status", "repo:a"])
+    assert lines(repos_partial) == ["repo:api"]
+
+    {projects, 0} = cli(["__complete", "1", "status", "project:"])
+    assert lines(projects) == ["project:vemags"]
+
+    {new_projects, 0} = cli(["__complete", "2", "workspace", "new", ""])
+    assert lines(new_projects) == ["vemags"]
+  end
+
   test "completes config keys and shell names" do
     {keys, 0} = cli(["__complete", "2", "config", "get", ""])
     assert "projects.root" in lines(keys)
@@ -142,10 +162,13 @@ defmodule Gitspace.CLI.CompletionTest do
       |> File.read!()
       |> Jason.decode!()
 
-    assert payload["version"] == 2
+    assert payload["version"] == 3
+    assert payload["app"] == to_string(Application.spec(:gitspace, :vsn))
     assert payload["lists"]["projects"] == ["vemags"]
     assert "vemags@dev" in payload["lists"]["targets"]
     assert payload["lists"]["members"]["vemags"] == ["api", "web"]
+    assert payload["lists"]["workspace_names"] == ["vemags@dev"]
+    assert payload["lists"]["labels"] == ["one"]
 
     # A cache hit must not start the index or parse the config again.
     Gitspace.Index.stop()
@@ -161,7 +184,7 @@ defmodule Gitspace.CLI.CompletionTest do
 
     {output, 0} = cli(["__complete", "1", "co", ""])
     assert "vemags" in lines(output)
-    assert Jason.decode!(File.read!(config.path <> ".complete.json"))["version"] == 2
+    assert Jason.decode!(File.read!(config.path <> ".complete.json"))["version"] == 3
   end
 
   test "mutations invalidate the cache, reads do not", %{config: config} do
