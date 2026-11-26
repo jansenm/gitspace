@@ -100,6 +100,31 @@ defmodule Gitspace.CLI.CompletionTest do
     assert lines(set_url_flags) == ["--push"]
   end
 
+  test "completes compound workspace targets segment by segment" do
+    {path_topics, 0} = cli(["__complete", "1", "status", "vemags/"])
+    assert lines(path_topics) == ["vemags/dev"]
+
+    {path_members, 0} = cli(["__complete", "1", "status", "vemags/dev/"])
+    assert "vemags/dev/api" in lines(path_members)
+    assert "vemags/dev/web" in lines(path_members)
+
+    {path_partial, 0} = cli(["__complete", "1", "status", "vemags/dev/a"])
+    assert lines(path_partial) == ["vemags/dev/api"]
+
+    {workspace, 0} = cli(["__complete", "1", "status", "vemags@"])
+    assert lines(workspace) == ["vemags@dev"]
+
+    {handles, 0} = cli(["__complete", "1", "status", "vemags@dev:"])
+    assert "vemags@dev:api" in lines(handles)
+    assert "vemags@dev:web" in lines(handles)
+
+    {at_path_members, 0} = cli(["__complete", "1", "status", "vemags@dev/"])
+    assert "vemags@dev/api" in lines(at_path_members)
+
+    {workspace_command, 0} = cli(["__complete", "2", "workspace", "status", "vemags@"])
+    assert lines(workspace_command) == ["vemags@dev"]
+  end
+
   test "completes config keys and shell names" do
     {keys, 0} = cli(["__complete", "2", "config", "get", ""])
     assert "projects.root" in lines(keys)
@@ -117,7 +142,7 @@ defmodule Gitspace.CLI.CompletionTest do
       |> File.read!()
       |> Jason.decode!()
 
-    assert payload["version"] == 1
+    assert payload["version"] == 2
     assert payload["lists"]["projects"] == ["vemags"]
     assert "vemags@dev" in payload["lists"]["targets"]
     assert payload["lists"]["members"]["vemags"] == ["api", "web"]
@@ -136,7 +161,7 @@ defmodule Gitspace.CLI.CompletionTest do
 
     {output, 0} = cli(["__complete", "1", "co", ""])
     assert "vemags" in lines(output)
-    assert Jason.decode!(File.read!(config.path <> ".complete.json"))["version"] == 1
+    assert Jason.decode!(File.read!(config.path <> ".complete.json"))["version"] == 2
   end
 
   test "mutations invalidate the cache, reads do not", %{config: config} do

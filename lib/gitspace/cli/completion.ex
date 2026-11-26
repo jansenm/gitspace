@@ -15,7 +15,7 @@ defmodule Gitspace.CLI.Completion do
   alias Gitspace.{Config, Projects, Repos, Workspaces}
   alias Gitspace.CLI.Helpers
 
-  @cache_version 1
+  @cache_version 2
 
   @commands ~w(ls co workspace project status show path repo scan link unlink doctor setup reindex config completion help)
 
@@ -101,9 +101,19 @@ defmodule Gitspace.CLI.Completion do
       if String.starts_with?(current, "-") do
         flags(before)
       else
-        before
-        |> value_requests()
-        |> resolve_requests()
+        case value_requests(before) do
+          {:data, keys} = request ->
+            if compound?(keys, current) do
+              [:compound]
+              |> resolve()
+              |> expand_compound(current)
+            else
+              resolve_requests(request)
+            end
+
+          request ->
+            resolve_requests(request)
+        end
       end
 
     values
@@ -139,6 +149,41 @@ defmodule Gitspace.CLI.Completion do
 
   defp resolve_requests({:static, values}), do: values
   defp resolve_requests({:data, keys}), do: resolve(keys)
+
+  # Positional targets accept `project/topic/member`, `workspace:member` and
+  # `project@topic` spellings. Once the current word contains a separator,
+  # complete the next segment of those compound forms instead of filtering the
+  # flat target list.
+  defp compound?(keys, current) do
+    (keys == [:targets] or keys == [:workspaces]) and
+      String.contains?(current, ["/", ":", "@"])
+  end
+
+  defp expand_compound(candidates, current) do
+    {base, _partial} = split_base(current)
+
+    if base == "" do
+      candidates
+    else
+      candidates
+      |> Enum.filter(&String.starts_with?(&1, base))
+      |> Enum.map(fn candidate ->
+        candidate
+        |> String.replace_prefix(base, "")
+        |> String.split(["/", ":", "@"], parts: 2)
+        |> hd()
+        |> then(&(base <> &1))
+      end)
+      |> Enum.uniq()
+    end
+  end
+
+  defp split_base(current) do
+    case Regex.run(~r{^(.*[/:@])}, current) do
+      [_, base] -> {base, String.replace_prefix(current, base, "")}
+      nil -> {"", current}
+    end
+  end
 
   defp flags(before) do
     if "--" in before do
@@ -325,13 +370,36 @@ defmodule Gitspace.CLI.Completion do
         {project.name, slugs}
       end)
 
+    compounds =
+      Enum.flat_map(workspaces, fn workspace ->
+        {project, topic} = Workspaces.parts(workspace)
+
+        paths =
+          if project do
+            [workspace.name, "#{project}/#{topic}"]
+          else
+            [workspace.name]
+          end
+
+        member_forms =
+          Enum.flat_map(workspace.members, fn member ->
+            name = member.name || member.checkout.repository.slug
+
+            forms = ["#{workspace.name}:#{name}", "#{workspace.name}/#{name}"]
+            if project, do: forms ++ ["#{project}/#{topic}/#{name}"], else: forms
+          end)
+
+        paths ++ member_forms
+      end)
+
     %{
       "projects" => project_names,
       "repos" => repos,
       "topics" => topics,
       "workspaces" => workspace_targets,
       "targets" => Enum.uniq(project_names ++ workspace_targets ++ repos),
-      "members" => members
+      "members" => members,
+      "compound" => Enum.uniq(compounds)
     }
   end
 
@@ -343,6 +411,7 @@ defmodule Gitspace.CLI.Completion do
       :topics -> lists["topics"]
       :workspaces -> lists["workspaces"]
       :targets -> lists["targets"]
+      :compound -> lists["compound"]
       {:members, ""} -> lists["repos"]
       {:members, project} -> Map.get(lists["members"] || %{}, project, [])
     end)
@@ -354,6 +423,7 @@ defmodule Gitspace.CLI.Completion do
   defp cached?(lists, :topics), do: is_list(lists["topics"])
   defp cached?(lists, :workspaces), do: is_list(lists["workspaces"])
   defp cached?(lists, :targets), do: is_list(lists["targets"])
+  defp cached?(lists, :compound), do: is_list(lists["compound"])
   defp cached?(lists, {:members, ""}), do: is_list(lists["repos"])
   defp cached?(lists, {:members, project}), do: is_map_key(lists["members"] || %{}, project)
   defp cached?(_lists, _key), do: false
@@ -506,6 +576,7 @@ defmodule Gitspace.CLI.Completion do
     """
     _gitspace_complete() {
       local cur="${COMP_WORDS[COMP_CWORD]}"
+      local base="${cur%"${cur##*[/:@]}"}"
       local -a before=("${COMP_WORDS[@]:1:COMP_CWORD-1}")
       local index=$((COMP_CWORD - 1))
       local config="${GITSPACE_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/gitspace/config.toml}"
@@ -513,13 +584,13 @@ defmodule Gitspace.CLI.Completion do
       [[ -r "${config}.stamp" ]] && stamp=$(<"${config}.stamp")
       local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/gitspace"
       local sum
-      sum=$(printf '%s\\n' "$config" "$stamp" "$index" "${before[@]}" | cksum)
+      sum=$(printf '%s\\n' "$config" "$stamp" "$index" "$base" "${before[@]}" | cksum)
       local cache="$cache_dir/${sum%% *}"
       local -a candidates=()
       if [[ ! -f $cache ]]; then
         mkdir -p "$cache_dir"
         find "$cache_dir" -type f -mtime +1 -delete 2>/dev/null
-        gitspace __complete "$index" "${before[@]}" "" >"$cache"
+        gitspace __complete "$index" "${before[@]}" "$base" >"$cache"
       fi
       if [[ -s $cache ]]; then
         mapfile -t candidates <"$cache"
@@ -536,6 +607,8 @@ defmodule Gitspace.CLI.Completion do
     """
     #compdef gitspace gsp
     _gitspace_complete() {
+      local cur="$PREFIX"
+      local base="${cur%"${cur##*[/:@]}"}"
       local -a before=("${words[2,CURRENT-1]}")
       local index=$((CURRENT - 2))
       local config="${GITSPACE_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/gitspace/config.toml}"
@@ -549,7 +622,7 @@ defmodule Gitspace.CLI.Completion do
       if [[ ! -f $cache ]]; then
         mkdir -p "$cache_dir"
         find "$cache_dir" -type f -mtime +1 -delete 2>/dev/null
-        gitspace __complete "$index" "${before[@]}" "" >"$cache"
+        gitspace __complete "$index" "${before[@]}" "$base" >"$cache"
       fi
       if [[ -s $cache ]]; then
         reply=("${(@f)$(cat "$cache")}")
@@ -570,6 +643,10 @@ defmodule Gitspace.CLI.Completion do
     function __gitspace_complete
         set -l tokens (commandline -opc)
         set -l current (commandline -ct)
+        set -l base (string replace -r '^(.*[/:@]).*\$' '\$1' -- "$current")
+        if test "$base" = "$current"
+            set base ""
+        end
         set -e tokens[1]
         set -l config $GITSPACE_CONFIG
         if not set -q GITSPACE_CONFIG
@@ -587,12 +664,12 @@ defmodule Gitspace.CLI.Completion do
         if set -q XDG_CACHE_HOME
             set cache_dir $XDG_CACHE_HOME/gitspace
         end
-        set -l sum (printf '%s\\n' "$config" "$stamp" (count $tokens) $tokens | cksum)
+        set -l sum (printf '%s\\n' "$config" "$stamp" (count $tokens) "$base" $tokens | cksum)
         set -l cache $cache_dir/(string split ' ' -- $sum)[1]
         if not test -f $cache
             mkdir -p $cache_dir
             find $cache_dir -type f -mtime +1 -delete 2>/dev/null
-            gitspace __complete (count $tokens) $tokens "" >$cache
+            gitspace __complete (count $tokens) $tokens "$base" >$cache
         end
         if test -s $cache
             string match -a "$current*" (cat $cache)

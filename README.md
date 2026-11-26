@@ -308,8 +308,11 @@ gitspace completion fish | source
 ```
 
 Completions cover commands, subcommands, flags, project names, repository aliases,
-workspace handles, bare topics, project members and config keys. They call the hidden
-`gitspace __complete` command, so they follow the live index rather than a static snapshot.
+workspace handles, bare topics, project members and config keys. Compound targets are
+completed segment by segment (`project/`, `project/topic/`, `project@topic:`,
+`project@topic/member`), so shell scripts, workspace commands and `status` share the same
+addressing forms. They call the hidden `gitspace __complete` command, so they follow the
+live index rather than a static snapshot.
 
 Starting the BEAM costs more than the lookup, so the generated scripts memoize each
 context and `__complete` keeps a snapshot next to the config file
