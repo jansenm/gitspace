@@ -176,10 +176,11 @@ share a basename, every auto-aliased member of that group is qualified with its 
 `beta-config`. If groups still collide across hosts, the host is prefixed
 (`github.com-acme-config`); a content hash is the final fallback. Aliases stay globally unique.
 
-Mirrors are content-addressed by canonical remote key: `<data>/repos/<sha256>.git`.
-`<data>/repos/remotes.txt` is a human-readable cache of `hash`, canonical remote, alias and
-alias source. Mirror directories and their `remote.origin.url` are authoritative; `doctor` and
-`reindex` report disagreements and rebuild the text index.
+Mirrors are named by the repository's **immutable identity**: `<data>/repos/<sha256>.git`.
+The identity is assigned once when the repository is registered and written into the mirror as
+`gitspace.remote-key`; `remote.origin.url` is only the fallback for mirrors created before that
+key was pinned. `<data>/repos/remotes.txt` is a human-readable cache of `hash`, identity, alias
+and alias source. `doctor` and `reindex` report disagreements and rebuild the text index.
 
 An explicit name opts a repository out of auto-disambiguation. The bare basename is allowed if
 it is free; duplicate explicit aliases are errors.
@@ -220,9 +221,9 @@ All owned checkouts remain direct children of the topic workspace:
 `--as` name for an existing member is a conflict.
 
 The same remote written in another URL form (`git@…`, `https://…`, with or without `.git`) is
-matched by its canonical remote key and is not duplicated. Default ports are omitted; other
-ports remain part of the key. `gitspace repo ls` shows the remote, alias, and mirror hash behind
-each repository.
+matched by its canonical address and is not duplicated, even after its fetch URL was changed.
+Default ports are omitted; other ports remain part of the address. `gitspace repo ls` shows the
+remote, alias, and mirror hash behind each repository.
 
 ## Changing remote URLs
 
@@ -230,14 +231,14 @@ each repository.
 
 ```sh
 gitspace repo set-url ferroclass git@github.com:jansenm/ferroclass.git
+gitspace repo set-url ferroclass git@gitlab.com:jansenm/ferroclass.git
 gitspace repo set-url ferroclass git@github.com:jansenm/ferroclass.git --push
 ```
 
-The new URL must resolve to the same canonical remote key. Switching between `https` and `ssh`
-is allowed; a different host, port or path is refused because the mirror hash, index rows,
-project members and markers all refer to the canonical key. Remove and re-add the repository
-for that case. A remote with several fetch or push URLs is also refused instead of guessing
-which one to replace.
+A repository's identity is immutable, so any host, port or path may change: the mirror
+directory, index rows, project members and markers all keep referring to the same repository.
+Only an address that already belongs to another repository is refused. A remote with several
+fetch or push URLs is also refused instead of guessing which one to replace.
 
 ## Removing workspaces
 

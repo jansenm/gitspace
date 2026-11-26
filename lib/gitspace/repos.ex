@@ -129,8 +129,19 @@ defmodule Gitspace.Repos do
 
   @spec find_by_remote(String.t()) :: Repository.t() | nil
   def find_by_remote(url) do
-    Repo.get_by(Repository, remote_key: Layout.normalize_remote(url))
+    key = Layout.normalize_remote(url)
+    Repo.get_by(Repository, remote_key: key) || find_by_address(key)
   end
+
+  defp find_by_address(key) when is_binary(key) do
+    Repository
+    |> Repo.all()
+    |> Enum.find(fn repo ->
+      is_binary(repo.remote_url) and Layout.normalize_remote(repo.remote_url) == key
+    end)
+  end
+
+  defp find_by_address(_key), do: nil
 
   @doc "Permanently sets an explicit alias for a repository."
   @spec set_alias(Config.t(), String.t(), String.t()) ::
@@ -202,8 +213,10 @@ defmodule Gitspace.Repos do
   @doc """
   Registers mirrors found under the data directory.
 
-  The directory and the mirror's `remote.origin.url` are authoritative; the
-  text index is rebuilt from them. Mismatches are reported, not hidden.
+  A mirror's identity comes from `gitspace.remote-key` when present;
+  `remote.origin.url` is only the fallback for mirrors created before identity
+  was pinned. The text index is rebuilt from them. Mismatches are reported,
+  not hidden.
   """
   @spec discover(Config.t()) :: %{discovered: non_neg_integer(), issues: [map()]}
   def discover(%Config{} = config) do
@@ -224,7 +237,8 @@ defmodule Gitspace.Repos do
   @doc """
   Read-only audit of mirror directories against the index and `remotes.txt`.
 
-  Mirrors and their `remote.origin.url` are authoritative. The audit reports
+  A mirror's stored identity (`gitspace.remote-key`, falling back to
+  `remote.origin.url`) is authoritative. The audit reports missing identities,
   hash-name mismatches, unregistered mirrors, stale text entries, and mirrors
   that disagree with the text index; `discover/1` repairs the caches.
   """
@@ -238,7 +252,7 @@ defmodule Gitspace.Repos do
     indexed = Repo.all(Repository)
     indexed_paths = MapSet.new(indexed, & &1.bare_path)
     indexed_keys = MapSet.new(indexed, & &1.remote_key)
-    entry_keys = MapSet.new(entries, & &1.remote_key)
+    entry_keys = entries |> Enum.map(& &1.remote_key) |> Enum.reject(&is_nil/1) |> MapSet.new()
 
     text =
       case MirrorIndex.read(config) do
@@ -253,7 +267,11 @@ defmodule Gitspace.Repos do
       Enum.flat_map(entries, fn entry ->
         []
         |> maybe_issue(
-          entry.expected_hash != entry.actual_hash,
+          is_nil(entry.remote_key),
+          %{kind: :missing_identity, path: entry.bare_path}
+        )
+        |> maybe_issue(
+          is_binary(entry.expected_hash) and entry.expected_hash != entry.actual_hash,
           %{
             kind: :hash_mismatch,
             path: entry.bare_path,
@@ -268,14 +286,14 @@ defmodule Gitspace.Repos do
         )
         |> maybe_issue(
           not MapSet.member?(indexed_paths, entry.bare_path) and
-            not MapSet.member?(indexed_keys, entry.remote_key),
+            (is_nil(entry.remote_key) or not MapSet.member?(indexed_keys, entry.remote_key)),
           %{kind: :unregistered_mirror, path: entry.bare_path, remote: entry.remote_key}
         )
         |> maybe_issue(
-          not MapSet.member?(text_keys, entry.remote_key),
+          is_binary(entry.remote_key) and not MapSet.member?(text_keys, entry.remote_key),
           %{kind: :missing_from_text, path: entry.bare_path, remote: entry.remote_key}
         )
-        |> maybe_text_issue(Map.get(text_by_key, entry.remote_key), entry)
+        |> maybe_text_issue(entry.remote_key && Map.get(text_by_key, entry.remote_key), entry)
       end)
 
     stale_text =
@@ -379,10 +397,12 @@ defmodule Gitspace.Repos do
   @doc """
   Changes the fetch or push URL of a mirror's `origin` remote.
 
-  The new URL must resolve to the same canonical remote key, so changing the
-  scheme or user is allowed while a host or path change is refused. Only a
-  single fetch URL and a single push URL are managed; multiple entries are
-  reported instead of being replaced by guesswork.
+  The mirror's identity is immutable, so any URL may be set: a different host,
+  port or path only changes the address, never the mirror directory or the
+  key that projects, markers and `remotes.txt` refer to. For the fetch URL the
+  new address must not already belong to another repository. Only a single
+  fetch URL and a single push URL are managed; multiple entries are reported
+  instead of being replaced by guesswork.
   """
   @spec set_remote_url(Config.t(), Repository.t(), String.t(), keyword()) ::
           {:ok, map()} | {:error, Error.t()}
@@ -393,10 +413,11 @@ defmodule Gitspace.Repos do
     with :ok <- validate_url(url),
          key = Layout.normalize_remote(url),
          :ok <- validate_remote_key(key),
-         :ok <- same_remote_key(repo, key, push?),
+         :ok <- ensure_address_available(repo, key, push?),
          {:ok, bare} <- git_mirror(repo),
          {:ok, previous} <- remote_urls(bare, push?),
          :ok <- single_remote_url(repo, push?, previous),
+         :ok <- pin_identity(bare, repo.remote_key),
          :ok <- write_and_index(bare, repo, push?, previous, url) do
       {:ok,
        %{
@@ -549,7 +570,8 @@ defmodule Gitspace.Repos do
   defp prepare(_config, url, key, bare) do
     existing =
       Repo.get_by(Repository, remote_key: key) ||
-        Repo.get_by(Repository, bare_path: bare)
+        Repo.get_by(Repository, bare_path: bare) ||
+        find_by_address(key)
 
     case existing do
       nil ->
@@ -744,9 +766,10 @@ defmodule Gitspace.Repos do
 
   defp mirror_entry(bare) do
     remote = read_config(bare, ["config", "--get", "remote.origin.url"])
+    configured = read_config(bare, ["config", "--get", "gitspace.remote-key"])
     remote_url = remote || bare
-    key = Layout.normalize_remote(remote_url)
-    expected_hash = Layout.remote_hash(key)
+    key = identity_key(configured, remote)
+    expected_hash = key && Layout.remote_hash(key)
     actual_hash = bare |> Path.basename() |> String.replace_suffix(".git", "")
     alias_name = read_config(bare, ["config", "--get", "gitspace.alias"])
 
@@ -758,6 +781,7 @@ defmodule Gitspace.Repos do
       origin: remote,
       remote_url: remote_url,
       remote_key: key,
+      identity_source: if(configured in [nil, ""], do: :origin, else: :config),
       expected_hash: expected_hash,
       actual_hash: actual_hash,
       alias: alias_name,
@@ -765,10 +789,27 @@ defmodule Gitspace.Repos do
     }
   end
 
+  # The key is the repository's identity, assigned once. A mirror created by
+  # gitspace carries it in its config; `origin` is only the legacy fallback.
+  defp identity_key(configured, _origin) when is_binary(configured) and configured != "",
+    do: configured
+
+  defp identity_key(_configured, origin) when is_binary(origin),
+    do: Layout.normalize_remote(origin)
+
+  defp identity_key(_configured, _origin), do: nil
+
   defp register_entries(entries) do
     Enum.reduce(entries, {[], [], %{}}, fn entry, {registered, issues, overrides} ->
       issues =
-        if entry.actual_hash != entry.expected_hash do
+        if is_nil(entry.remote_key) do
+          [%{kind: :missing_identity, path: entry.bare_path} | issues]
+        else
+          issues
+        end
+
+      issues =
+        if is_binary(entry.expected_hash) and entry.actual_hash != entry.expected_hash do
           [
             %{
               kind: :hash_mismatch,
@@ -792,6 +833,8 @@ defmodule Gitspace.Repos do
 
       case register_entry(entry) do
         {:ok, repo} ->
+          _ = pin_entry_identity(entry)
+
           overrides =
             if entry.alias_source == "explicit" and is_binary(entry.alias) do
               Map.put(overrides, repo.id, %{alias: entry.alias, source: "explicit"})
@@ -806,6 +849,19 @@ defmodule Gitspace.Repos do
       end
     end)
   end
+
+  defp pin_entry_identity(%{
+         identity_source: :origin,
+         origin: origin,
+         remote_key: key,
+         bare_path: bare
+       })
+       when is_binary(origin) and is_binary(key) do
+    _ = pin_identity(bare, key)
+    :ok
+  end
+
+  defp pin_entry_identity(_entry), do: :ok
 
   defp register_entry(entry) do
     existing =
@@ -827,6 +883,12 @@ defmodule Gitspace.Repos do
       end
 
     cond do
+      is_nil(entry.remote_key) ->
+        {:error,
+         Error.new(:error, "mirror has no identity: #{entry.bare_path}",
+           hint: "restore remote.origin.url or set gitspace.remote-key in the mirror config"
+         )}
+
       existing && is_nil(entry.origin) ->
         existing
         |> Ecto.Changeset.change(%{
@@ -843,12 +905,6 @@ defmodule Gitspace.Repos do
         )
         |> Repo.update()
 
-      is_nil(entry.origin) ->
-        {:error,
-         Error.new(:error, "mirror has no remote.origin.url: #{entry.bare_path}",
-           hint: "restore the origin remote in the mirror or remove it"
-         )}
-
       true ->
         %Repository{}
         |> Repository.changeset(
@@ -862,6 +918,7 @@ defmodule Gitspace.Repos do
     end
     |> case do
       {:ok, repo} -> {:ok, repo}
+      {:error, %Error{} = error} -> {:error, error}
       {:error, changeset} -> {:error, changeset_error(changeset)}
     end
   end
@@ -1103,20 +1160,37 @@ defmodule Gitspace.Repos do
     end
   end
 
-  defp same_remote_key(repo, key, push?) do
-    if key == repo.remote_key do
-      :ok
-    else
-      target = if(push?, do: "push", else: "fetch")
+  defp ensure_address_available(_repo, _key, true), do: :ok
 
-      {:error,
-       Error.new(:refused, "#{target} URL resolves to a different repository: #{key}",
-         hint:
-           "gitspace keys mirrors by canonical remote; host or path changes need `repo rm` and `repo add`",
-         details: %{repo: repo.slug, expected: repo.remote_key, got: key}
-       )}
+  defp ensure_address_available(repo, key, false) do
+    case find_by_address(key) do
+      %Repository{id: id, slug: slug} when id != repo.id ->
+        {:error,
+         Error.new(:conflict, "canonical address already belongs to #{slug}",
+           hint: "one remote address maps to one repository; pick a different URL",
+           details: %{repo: repo.slug, address: key, other: slug}
+         )}
+
+      _ ->
+        :ok
     end
   end
+
+  defp pin_identity(bare, key) when is_binary(bare) and is_binary(key) do
+    case Git.run(["config", "gitspace.remote-key", key], cd: bare, locks: true) do
+      {:ok, _} ->
+        :ok
+
+      {:error, result} ->
+        {:error,
+         Error.new(:error, "cannot pin repository identity in #{bare}",
+           hint: String.trim(result.stderr),
+           details: %{mirror: bare, key: key}
+         )}
+    end
+  end
+
+  defp pin_identity(_bare, _key), do: :ok
 
   defp remote_urls(bare, push?) do
     key = if(push?, do: "remote.origin.pushurl", else: "remote.origin.url")

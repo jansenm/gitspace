@@ -274,11 +274,12 @@ defmodule Gitspace.CLI.Repo do
 
     REMOTE URLS
       `repo set-url` changes the fetch URL by default and the push URL with
-      `--push`. The new URL must resolve to the same canonical remote key, so
-      switching between https and ssh is allowed while host or path changes
-      need `repo rm` and `repo add`. Multiple URL entries are refused.
+      `--push`. The repository keeps its identity and mirror directory, so any
+      host, port or path may change; only an address that already belongs to
+      another repository is refused. Multiple URL entries are refused.
 
         gitspace repo set-url ferroclass git@github.com:jansenm/ferroclass.git
+        gitspace repo set-url ferroclass git@gitlab.com:jansenm/ferroclass.git
         gitspace repo set-url ferroclass git@github.com:jansenm/ferroclass.git --push
     """
   end

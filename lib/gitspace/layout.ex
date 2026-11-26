@@ -237,7 +237,7 @@ defmodule Gitspace.Layout do
       not Regex.match?(~r/[\x00-\x1f\x7f]/, ref)
   end
 
-  @doc "Stable SHA-256 of a canonical remote key, lowercase hex."
+  @doc "Stable SHA-256 of a repository identity, lowercase hex."
   @spec remote_hash(String.t()) :: String.t()
   def remote_hash(remote_key) when is_binary(remote_key) do
     :crypto.hash(:sha256, remote_key)

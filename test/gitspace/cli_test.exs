@@ -236,22 +236,25 @@ defmodule Gitspace.CLITest do
     assert unchanged.remote_url == repo.remote_url
   end
 
-  test "repo set-url refuses a host or path change before writing", %{
+  test "repo set-url changes host and path while keeping the identity", %{
     config: config,
     repo: repo
   } do
-    {output, 5} =
-      cli(["--json", "repo", "set-url", "demo", "git@example.com:other/repo.git"])
+    moved = "git@example.com:other/repo.git"
 
-    error = Jason.decode!(output)["error"]
-    assert error["code"] == "refused"
-    assert error["message"] =~ "different repository"
+    {output, 0} = cli(["--json", "repo", "set-url", "demo", moved])
+    data = Jason.decode!(output)["data"]
 
-    assert {:ok, unchanged} = Repos.get(config, "demo")
-    assert unchanged.remote_url == repo.remote_url
+    assert data["target"] == "fetch"
+    assert data["url"] == moved
+
+    assert {:ok, updated} = Repos.get(config, "demo")
+    assert updated.remote_url == moved
+    assert updated.remote_key == repo.remote_key
+    assert updated.bare_path == repo.bare_path
 
     assert Git.run!(["config", "--get", "remote.origin.url"], cd: repo.bare_path)
-           |> String.trim() == repo.remote_url
+           |> String.trim() == moved
   end
 
   test "doctor warns on mirror index drift and --fix reconciles it", %{config: config} do
