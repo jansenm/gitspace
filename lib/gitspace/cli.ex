@@ -247,22 +247,24 @@ defmodule Gitspace.CLI do
         """
         USAGE
           gitspace co <project>[@<ref>] [--topic T] [--only M,...] [--exclude M,...]
-                                      [--new-branch] [--branch B] [--detach]
+                                      [--as-is] [--branch B] [--detach]
                                       [--as DIR] [--label L]... [--fetch] [--json]
 
-        @<ref> is the starting point. With no branch flag the ref is checked
-        out directly. --new-branch creates an owned branch from the template
-        (default feature/{topic}); --branch creates that explicit branch from
-        the ref. --detach checks out the ref without a branch.
+        @<ref> is the starting point. Without an explicit --topic/--name the
+        ref is checked out as-is. Naming a topic derives an owned branch from
+        the template (default feature/{topic}); --branch creates that explicit
+        branch instead. --as-is checks the ref out unchanged; --detach checks
+        it out without a branch.
 
         --only and --exclude are mutually exclusive. By default every member
         of the project is checked out.
 
         EXAMPLES
           gitspace co ferroclass@main --topic dev
-          gitspace co vemags@development --topic MT4711 --new-branch
-          gitspace co vemags@development --topic MT4711 --new-branch --only api,web
+          gitspace co vemags@development --topic MT4711
+          gitspace co vemags@development --topic MT4711 --only api,web
           gitspace co vemags@feature/MT4711 --topic MT4711 --exclude legacy
+          gitspace co vemags@main --as-is --topic main
         """
 
       "project" ->

@@ -58,6 +58,23 @@ defmodule Gitspace.LayoutTest do
     assert Layout.branch_for("x", "feature/{work}..") == {:error, :invalid_branch}
   end
 
+  test "topics allow slug segments and '/' but reserve '@'" do
+    assert Layout.valid_topic?("4711")
+    assert Layout.valid_topic?("4711/sub")
+    assert Layout.valid_topic?("feature/4711-x")
+
+    refute Layout.valid_topic?("4711@sub")
+    refute Layout.valid_topic?("My Work")
+    refute Layout.valid_topic?("a//b")
+    refute Layout.valid_topic?("a/../b")
+    refute Layout.valid_topic?("4711/ü")
+  end
+
+  test "repository names reserve '@'" do
+    assert Layout.repo_slug("api") == {:ok, "api"}
+    assert Layout.repo_slug("api@v2") == {:error, :invalid_repo}
+  end
+
   test "paths are workspace-first and contained" do
     assert Layout.path("/data/work", "JENKINS-123", "job-dsl") ==
              {:ok, "/data/work/JENKINS-123/job-dsl"}

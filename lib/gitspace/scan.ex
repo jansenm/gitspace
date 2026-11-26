@@ -260,6 +260,25 @@ defmodule Gitspace.Scan do
   end
 
   defp create_external(slug, remote_url, entry) do
+    with {:ok, slug} <- external_slug(slug) do
+      insert_external(slug, remote_url, entry)
+    end
+  end
+
+  defp external_slug(slug) do
+    case Layout.repo_slug(slug) do
+      {:ok, slug} ->
+        {:ok, slug}
+
+      {:error, _reason} ->
+        {:error,
+         Error.new(:usage, "cannot derive a repository name: #{inspect(slug)}",
+           hint: "choose one with --repo NAME"
+         )}
+    end
+  end
+
+  defp insert_external(slug, remote_url, entry) do
     %Repository{}
     |> Repository.changeset(%{
       slug: slug,

@@ -173,7 +173,7 @@ defmodule Gitspace.CLI.Project do
   end
 
   defp workspace_in_project?(workspace, project) do
-    workspace.name == project.name or String.starts_with?(workspace.name, project.name <> "/")
+    workspace.name == project.name or String.starts_with?(workspace.name, project.name <> "@")
   end
 
   defp count_workspaces(workspaces, project) do

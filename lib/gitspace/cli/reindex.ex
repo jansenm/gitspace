@@ -36,6 +36,10 @@ defmodule Gitspace.CLI.Reindex do
   defp format_issue(%{kind: :missing_project_path, project: project, path: path}),
     do: "missing_project_path #{project}: #{path}"
 
+  defp format_issue(%{kind: :legacy_workspace_name} = issue) do
+    "legacy_workspace_name #{issue.workspace}: recreate it as project@topic"
+  end
+
   defp format_issue(%{kind: :hash_mismatch} = issue) do
     "hash_mismatch #{issue.path}: expected #{String.slice(issue.expected, 0, 12)}, got #{String.slice(issue.actual, 0, 12)}"
   end

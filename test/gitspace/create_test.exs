@@ -15,7 +15,7 @@ defmodule Gitspace.CreateTest do
 
   test "CREATE-1/5 co creates at a branch and is idempotent", %{config: config} do
     assert {:ok, result} = Create.co(config, "a", "main")
-    assert result.workspace == "a/main"
+    assert result.workspace == "a@main"
     assert result.path == Path.join([config.projects_root, "a", "main"])
     assert File.exists?(result.marker_path)
 
@@ -34,13 +34,13 @@ defmodule Gitspace.CreateTest do
     assert reused.action == "kept"
     assert reused.path == member.path
 
-    assert {:ok, workspace} = Workspaces.get(config, "a/main")
+    assert {:ok, workspace} = Workspaces.get(config, "a@main")
     assert length(workspace.members) == 1
   end
 
   test "CREATE-2 refs with slashes derive a sanitized work name", %{config: config} do
     assert {:ok, result} = Create.co(config, "a", "hotfix/timeout")
-    assert result.workspace == "a/hotfix-timeout"
+    assert result.workspace == "a@hotfix-timeout"
     assert result.path == Path.join([config.projects_root, "a", "hotfix-timeout"])
 
     assert [member] = result.members
@@ -57,7 +57,7 @@ defmodule Gitspace.CreateTest do
     assert is_nil(tag_member.branch)
     assert tag_member.head == tag_sha
 
-    assert {:ok, sha} = Create.co(config, "a", tag_sha, name: "by-sha")
+    assert {:ok, sha} = Create.co(config, "a", tag_sha, name: "by-sha", as_is: true)
     assert [sha_member] = sha.members
     assert sha_member.detached
     assert sha_member.head == tag_sha
@@ -101,11 +101,11 @@ defmodule Gitspace.CreateTest do
     assert Enum.all?(result.members, &File.dir?(&1.path))
 
     marker = Marker.read!(result.path)
-    assert marker["workspace"] == "a/mt4711-update-dependencies"
+    assert marker["workspace"] == "a@mt4711-update-dependencies"
     assert marker["labels"] == ["jira-mt4711"]
     assert marker["description"] == "update dependencies"
 
-    assert {:ok, workspace} = Workspaces.get(config, "a/mt4711-update-dependencies")
+    assert {:ok, workspace} = Workspaces.get(config, "a@mt4711-update-dependencies")
     assert length(workspace.members) == 2
     assert Enum.map(workspace.labels, & &1.label) == ["jira-mt4711"]
   end
@@ -140,7 +140,7 @@ defmodule Gitspace.CreateTest do
   end
 
   test "CREATE-8 an occupied branch asks for a decision and never overwrites", %{config: config} do
-    assert {:ok, _holder} = Create.co(config, "a", "main", name: "holder")
+    assert {:ok, _holder} = Create.co(config, "a", "main", name: "holder", as_is: true)
 
     occupied = %{repo: "a", ref: "main", ownership: "owned", branch_mode: :ref}
 
@@ -237,7 +237,7 @@ defmodule Gitspace.CreateTest do
     assert failure.repo == "b"
     assert failure.code == :not_found
 
-    assert {:ok, workspace} = Workspaces.get(config, "a/partial-create")
+    assert {:ok, workspace} = Workspaces.get(config, "a@partial-create")
     assert length(workspace.members) == 1
 
     assert {:ok, completed} =
@@ -247,7 +247,7 @@ defmodule Gitspace.CreateTest do
     assert actions["a"] == "kept"
     assert actions["b"] == "created"
 
-    assert {:ok, workspace} = Workspaces.get(config, "a/partial-create")
+    assert {:ok, workspace} = Workspaces.get(config, "a@partial-create")
     assert length(workspace.members) == 2
   end
 
@@ -271,27 +271,62 @@ defmodule Gitspace.CreateTest do
     assert subset.labels == ["one", "two"]
     assert subset.description == "kept"
 
-    assert {:ok, workspace} = Workspaces.get(config, "a/subset")
+    assert {:ok, workspace} = Workspaces.get(config, "a@subset")
     assert length(workspace.members) == 2
   end
 
-  test "CREATE-13 spaces, unicode and slashes are sanitized inside the root", %{
+  test "CREATE-13 topics allow '/' but reject spaces, unicode and reserved '@'", %{
     config: config
   } do
-    assert {:ok, result} =
-             Create.workspace_new(config, "My Work/ü", [owned("a")], [])
+    assert {:ok, slashed} = Create.workspace_new(config, "4711/sub", [owned("a")], [])
+    assert slashed.workspace == "a@4711/sub"
+    assert Path.basename(slashed.path) == "4711-sub"
+    assert [slashed_member] = slashed.members
+    assert slashed_member.branch == "feature/4711-sub"
 
-    assert result.workspace == "a/My Work/ü"
-    assert Path.basename(result.path) == "My-Work"
+    assert {:error, spaced} = Create.workspace_new(config, "My Work", [owned("a")], [])
+    assert spaced.code == :usage
 
-    assert String.starts_with?(
-             result.path,
-             Path.expand(Path.join(config.projects_root, "a")) <> "/"
-           )
+    assert {:error, unicode} = Create.workspace_new(config, "4711/ü", [owned("a")], [])
+    assert unicode.code == :usage
 
+    assert {:error, at} = Create.workspace_new(config, "4711@x", [owned("a")], [], project: "a")
+    assert at.code == :usage
+  end
+
+  test "project branch template and default ref drive derived branches", %{
+    config: config,
+    repo_a: repo_a
+  } do
+    hotfix_sha = git_sha(repo_a.bare_path, "refs/remotes/origin/hotfix/timeout")
+
+    assert {:ok, _project} =
+             Projects.create(config, "work",
+               repo: ["a"],
+               branch_template: "task/{topic}",
+               default_ref: "hotfix/timeout"
+             )
+
+    assert {:ok, result} = Create.workspace_new(config, "work@x", [owned("a")], [])
+
+    assert result.workspace == "work@x"
     assert [member] = result.members
-    assert member.branch == "feature/My-Work"
-    assert Marker.read!(result.path)["workspace"] == "a/My Work/ü"
+    assert member.branch == "task/x"
+    assert member.head == hotfix_sha
+  end
+
+  test "a slashed topic and its dashed twin collide loudly", %{config: config} do
+    assert {:ok, first} = Create.workspace_new(config, "a@x/y", [owned("a")], [])
+    assert first.workspace == "a@x/y"
+
+    assert {:error, conflict} = Create.workspace_new(config, "a@x-y", [owned("a")], [])
+    assert conflict.code == :conflict
+    assert conflict.message =~ "a@x/y"
+  end
+
+  test "project names may not contain '@'", %{config: config} do
+    assert {:error, error} = Projects.create(config, "a@b")
+    assert error.code == :usage
   end
 
   test "CREATE-14 a warm mirror works without the source; missing refs hint at fetch", %{
@@ -355,7 +390,7 @@ defmodule Gitspace.CreateTest do
     assert Enum.map(result.members, & &1.action) == ["create", "create"]
     refute File.exists?(result.path)
     refute File.exists?(result.marker_path)
-    assert {:error, _} = Workspaces.get(config, "a/dry-run")
+    assert {:error, _} = Workspaces.get(config, "a@dry-run")
   end
 
   test "the configured branch template drives derived branches", %{config: config} do
@@ -369,7 +404,9 @@ defmodule Gitspace.CreateTest do
   end
 
   test "repo selectors can include an owner prefix", %{config: config} do
-    assert {:ok, result} = Create.co(config, "jenkins/a", "main", name: "owner-prefix")
+    assert {:ok, result} =
+             Create.co(config, "jenkins/a", "main", name: "owner-prefix", as_is: true)
+
     assert [member] = result.members
     assert member.repo == "a"
     assert member.branch == "main"
@@ -391,7 +428,7 @@ defmodule Gitspace.CreateTest do
     assert Enum.map(marker["members"], & &1["name"]) == ["acme", "beta"]
     assert Enum.all?(marker["members"], &is_binary(&1["remote"]))
 
-    assert {:ok, workspace} = Workspaces.get(config, "a/aliased")
+    assert {:ok, workspace} = Workspaces.get(config, "a@aliased")
     names = workspace.members |> Enum.map(& &1.name) |> Enum.sort()
     assert names == ["acme", "beta"]
 
@@ -455,7 +492,7 @@ defmodule Gitspace.CreateTest do
     assert summary.workspaces == 1
     assert summary.workspace_members == 2
 
-    assert {:ok, workspace} = Workspaces.get(config, "a/recovered")
+    assert {:ok, workspace} = Workspaces.get(config, "a@recovered")
     assert length(workspace.members) == 2
     assert Enum.map(workspace.labels, & &1.label) == ["recover"]
     assert workspace.description == "survives"
@@ -470,7 +507,7 @@ defmodule Gitspace.CreateTest do
     assert {:ok, result} = Create.co(config, "a", "main")
 
     assert result.project == "a"
-    assert result.workspace == "a/main"
+    assert result.workspace == "a@main"
     assert result.path == Path.join([config.projects_root, "a", "main"])
     assert [member] = result.members
     assert member.repo == "a"

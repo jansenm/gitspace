@@ -15,7 +15,7 @@ defmodule Gitspace.CLI.Co do
         only: Keyword.get_values(opts, :only),
         exclude: Keyword.get_values(opts, :exclude),
         as: opts[:as],
-        new_branch: opts[:new_branch],
+        as_is: opts[:as_is],
         branch: opts[:branch],
         detach: opts[:detach],
         labels: Keyword.get_values(opts, :label),
@@ -43,7 +43,7 @@ defmodule Gitspace.CLI.Co do
       only: :keep,
       exclude: :keep,
       as: :string,
-      new_branch: :boolean,
+      as_is: :boolean,
       branch: :string,
       detach: :boolean,
       label: :keep,
@@ -68,7 +68,7 @@ defmodule Gitspace.CLI.Co do
       _ ->
         {:error,
          Error.new(:usage, "usage: gitspace co <project>[@<ref>]",
-           hint: "for example: gitspace co vemags@development --topic MT4711 --new-branch"
+           hint: "for example: gitspace co vemags@development --topic MT4711"
          )}
     end
   end

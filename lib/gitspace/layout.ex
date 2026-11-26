@@ -87,10 +87,10 @@ defmodule Gitspace.Layout do
     end
   end
 
-  @doc "A repo name must be a single path segment."
+  @doc "A repo name must be a single path segment without `@`."
   @spec repo_slug(String.t()) :: {:ok, String.t()} | {:error, atom()}
   def repo_slug(repo) when is_binary(repo) do
-    if String.contains?(repo, ["/", "\\", "\0"]) do
+    if String.contains?(repo, ["/", "\\", "\0", "@"]) do
       {:error, :invalid_repo}
     else
       work_slug(repo)
@@ -220,6 +220,28 @@ defmodule Gitspace.Layout do
       not String.ends_with?(branch, ["/", ".", ".lock"]) and
       Regex.match?(~r/^[A-Za-z0-9._\/-]+$/, branch)
   end
+
+  @doc """
+  Validation for a workspace topic.
+
+  A topic is one or more slug segments separated by `/`. `@` separates the
+  project from the topic on the command line and is therefore reserved.
+  """
+  @spec valid_topic?(String.t()) :: boolean()
+  def valid_topic?(topic) when is_binary(topic) do
+    topic = String.trim(topic)
+
+    topic != "" and
+      byte_size(topic) <= 255 and
+      not String.contains?(topic, ["@", ":", "\\", "\0"]) and
+      topic
+      |> String.split("/")
+      |> Enum.all?(fn segment ->
+        segment not in ["", ".", ".."] and Regex.match?(~r/^[A-Za-z0-9._-]+$/, segment)
+      end)
+  end
+
+  def valid_topic?(_topic), do: false
 
   @doc """
   Validation for a user-supplied git ref.

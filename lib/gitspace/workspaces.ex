@@ -41,7 +41,19 @@ defmodule Gitspace.Workspaces do
                  |> Map.put_new("topic", Path.basename(dir))}
               end)
 
-            {markers ++ found, bad ++ invalid, issues}
+            {kept, legacy} = Enum.split_with(found, &canonical_workspace?/1)
+
+            legacy_issues =
+              Enum.map(legacy, fn {dir, marker} ->
+                %{
+                  kind: :legacy_workspace_name,
+                  workspace: marker["workspace"],
+                  path: dir,
+                  hint: "recreate it as project@topic"
+                }
+              end)
+
+            {markers ++ kept, bad ++ invalid, issues ++ legacy_issues}
         end
       end)
 
@@ -99,10 +111,11 @@ defmodule Gitspace.Workspaces do
         # A bare topic is accepted when it is unique across projects.
         matches =
           from(w in Workspace,
-            where: w.state == "active" and like(w.name, ^"%/#{name}"),
+            where: w.state == "active",
             preload: [members: [checkout: :repository], labels: []]
           )
           |> Repo.all()
+          |> Enum.filter(&String.ends_with?(&1.name, "@" <> name))
 
         case matches do
           [workspace] ->
@@ -123,10 +136,10 @@ defmodule Gitspace.Workspaces do
     end
   end
 
-  @doc "Project and topic for a workspace whose name is `project/topic`."
+  @doc "Project and topic for a workspace whose name is `project@topic`."
   @spec parts(Workspace.t()) :: {String.t() | nil, String.t()}
   def parts(%Workspace{name: name}) do
-    case String.split(name, "/", parts: 2) do
+    case String.split(name, "@", parts: 2) do
       [project, topic] -> {project, topic}
       [topic] -> {nil, topic}
     end
@@ -379,6 +392,11 @@ defmodule Gitspace.Workspaces do
           limit: :infinity
         )
     }
+  end
+
+  defp canonical_workspace?({_dir, marker}) do
+    name = marker["workspace"]
+    is_binary(name) and String.contains?(name, "@")
   end
 
   defp orphaned_workspaces(markers) do

@@ -30,7 +30,7 @@ defmodule Gitspace.CLITest do
 
     Marker.write!(Path.dirname(path), %{
       "schema_version" => 1,
-      "workspace" => "demo/JENKINS-123",
+      "workspace" => "demo@JENKINS-123",
       "project" => "demo",
       "topic" => "JENKINS-123",
       "description" => "move the deploy job",
@@ -56,7 +56,7 @@ defmodule Gitspace.CLITest do
 
     assert data["ok"] == true
     assert data["schema_version"] == 1
-    assert data["data"]["workspace"]["name"] == "demo/JENKINS-123"
+    assert data["data"]["workspace"]["name"] == "demo@JENKINS-123"
     assert data["data"]["workspace"]["labels"] == ["jira-123"]
     assert [member] = data["data"]["workspace"]["members"]
     assert member["path"] == path
@@ -68,11 +68,11 @@ defmodule Gitspace.CLITest do
     data = Jason.decode!(output)
     assert [checkout] = data["data"]["checkouts"]
     assert checkout["repo"] == "demo"
-    assert checkout["workspace"] == "demo/JENKINS-123"
+    assert checkout["workspace"] == "demo@JENKINS-123"
     assert checkout["mirror"] == repo.bare_path
     assert checkout["hash"] == Path.basename(repo.bare_path, ".git")
 
-    {path_output, 0} = cli(["path", "demo/JENKINS-123:demo", "--json"])
+    {path_output, 0} = cli(["path", "demo@JENKINS-123:demo", "--json"])
     assert Jason.decode!(path_output)["data"]["path"] == path
   end
 
@@ -132,7 +132,7 @@ defmodule Gitspace.CLITest do
 
     {status_output, 0} = cli(["status", "JENKINS-123", "--json"])
     workspace = Jason.decode!(status_output)["data"]["workspace"]
-    assert workspace["name"] == "demo/JENKINS-123"
+    assert workspace["name"] == "demo@JENKINS-123"
     assert workspace["labels"] == ["jira-123"]
   end
 
