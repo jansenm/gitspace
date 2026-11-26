@@ -442,6 +442,10 @@ defmodule Gitspace.CLI.Workspace do
       IO.puts("workspace removed; the name may be reused")
     end
 
+    if result[:project_directory_removed] do
+      IO.puts("removed project directory #{result.project_path}")
+    end
+
     if result.directory_kept do
       IO.puts("directory kept because it still contains files")
     end
@@ -464,7 +468,9 @@ defmodule Gitspace.CLI.Workspace do
       one tombstones the workspace. Borrowed checkouts are unlinked, never deleted.
       Risky owned members are refused unless --force archives their work under
       <data>/trash first. Branches are kept and listed as `branches kept`, in
-      --dry-run and after removal.
+      --dry-run and after removal. The project directory is removed with its
+      last workspace when only the gitspace project marker is left; the
+      project definition stays.
 
     USAGE
       gitspace workspace new [<project>@]<topic> [--own <repo>[@<ref>]]...

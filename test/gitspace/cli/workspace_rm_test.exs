@@ -88,7 +88,9 @@ defmodule Gitspace.CLI.WorkspaceRmTest do
 
     assert data["tombstoned"]
     assert data["directory_removed"]
+    assert data["project_directory_removed"]
     refute File.exists?(Path.join([config.projects_root, "vemags", "dev"]))
+    refute File.exists?(Path.join(config.projects_root, "vemags"))
     assert {:error, _} = Workspaces.get(config, "vemags@dev")
     assert Workspaces.list(config) == []
 
@@ -105,6 +107,7 @@ defmodule Gitspace.CLI.WorkspaceRmTest do
 
     assert data["tombstoned"]
     refute File.exists?(dir)
+    refute File.exists?(Path.join(config.projects_root, "vemags"))
     assert {:ok, _} = Projects.get(config, "vemags")
     assert Workspaces.list(config) == []
   end
@@ -160,6 +163,29 @@ defmodule Gitspace.CLI.WorkspaceRmTest do
 
     assert "info.json" in trash_files
     assert "untracked.tar.gz" in trash_files
+  end
+
+  test "keeps a project directory that has other content", %{config: config} do
+    project_dir = Path.join(config.projects_root, "vemags")
+    notes = Path.join(project_dir, "notes.txt")
+    File.write!(notes, "do not lose me\n")
+
+    {output, 0} = cli(["workspace", "rm", "vemags@dev", "--yes", "--json"])
+    data = Jason.decode!(output)["data"]
+
+    assert data["tombstoned"]
+    refute data["project_directory_removed"]
+    assert File.dir?(project_dir)
+    assert File.read!(notes) == "do not lose me\n"
+  end
+
+  test "dry-run does not touch the project directory", %{config: config} do
+    {output, 0} = cli(["workspace", "rm", "vemags@dev", "--dry-run", "--json"])
+    data = Jason.decode!(output)["data"]
+
+    refute data["project_directory_removed"]
+    assert File.dir?(Path.join(config.projects_root, "vemags"))
+    assert File.dir?(Path.join([config.projects_root, "vemags", "dev"]))
   end
 
   test "requires confirmation in non-interactive mode" do

@@ -11,7 +11,7 @@ defmodule Gitspace.Teardown do
 
   import Ecto.Query
 
-  alias Gitspace.{Config, Error, Marker, Repo, Safety, Workspaces}
+  alias Gitspace.{Config, Error, Marker, Projects, Repo, Safety, Workspaces}
   alias Gitspace.Git.Worktree
   alias Gitspace.Index.{Checkout, Workspace, WorkspaceMember}
 
@@ -443,7 +443,14 @@ defmodule Gitspace.Teardown do
 
     result =
       if remaining == [] do
-        tombstone_workspace(workspace, plan.workspace_dir, removed, failures, plan.branches)
+        tombstone_workspace(
+          config,
+          workspace,
+          plan.workspace_dir,
+          removed,
+          failures,
+          plan.branches
+        )
       else
         rewrite_workspace(
           config,
@@ -472,7 +479,7 @@ defmodule Gitspace.Teardown do
     end
   end
 
-  defp tombstone_workspace(workspace, dir, removed, failures, branches) do
+  defp tombstone_workspace(config, workspace, dir, removed, failures, branches) do
     _ = File.rm(Path.join(dir, Marker.marker_filename()))
 
     workspace
@@ -481,6 +488,7 @@ defmodule Gitspace.Teardown do
     |> case do
       {:ok, workspace} ->
         directory_removed = empty_dir_removed?(dir)
+        {project_removed, project_path} = remove_empty_project_dir(config, workspace)
 
         {:ok,
          result(
@@ -490,7 +498,11 @@ defmodule Gitspace.Teardown do
            false,
            true,
            directory_removed
-         )}
+         )
+         |> Map.merge(%{
+           project_directory_removed: project_removed,
+           project_path: project_path
+         })}
 
       {:error, changeset} ->
         {:error,
@@ -605,6 +617,8 @@ defmodule Gitspace.Teardown do
       removed: Enum.map(removed, &public_target/1),
       risky: Enum.map(plan.risky, &public_risky/1),
       branches: Map.get(plan, :branches, []),
+      project_path: nil,
+      project_directory_removed: false,
       failures: Enum.map(failures, &Map.drop(&1, [:error]))
     }
   end
@@ -664,6 +678,36 @@ defmodule Gitspace.Teardown do
     Error.new(:error, "cannot remove #{target.path}: #{String.trim(result.stderr)}",
       hint: "inspect the directory; it was not removed"
     )
+  end
+
+  # A project directory holds the project marker until its last workspace is
+  # gone. Remove it then, but never touch a directory that has other content.
+  defp remove_empty_project_dir(config, workspace) do
+    {project_name, _topic} = Workspaces.parts(workspace)
+
+    with true <- is_binary(project_name),
+         {:ok, project} <- Projects.get(config, project_name),
+         path = Path.expand(project.path),
+         true <- File.dir?(path),
+         {:ok, entries} <- File.ls(path),
+         true <- Enum.sort(entries) == [Projects.marker_filename()] do
+      marker = Path.join(path, Projects.marker_filename())
+
+      with :ok <- File.rm(marker) do
+        case File.rmdir(path) do
+          :ok ->
+            {true, path}
+
+          {:error, _reason} ->
+            _ = Projects.write_marker!(project)
+            {false, path}
+        end
+      else
+        _ -> {false, path}
+      end
+    else
+      _ -> {false, nil}
+    end
   end
 
   @spec empty_dir_removed?(Path.t()) :: boolean()
