@@ -197,7 +197,7 @@ defmodule Gitspace.Teardown do
       true ->
         case File.lstat(path) do
           {:ok, %File.Stat{type: :directory}} ->
-            case Safety.detect(path) do
+            case Safety.detect(path, remote: repo.origin_kind != "local") do
               {:ok, risk} -> {:ok, %{base | risk: risk}}
               {:error, reason} -> {:ok, %{base | risk_error: reason}}
             end

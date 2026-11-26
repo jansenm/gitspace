@@ -213,9 +213,22 @@ defmodule Gitspace.Scan do
   end
 
   defp find_or_create_repo(_config, entry, opts) do
+    case Checkouts.get_by_path(entry.path) do
+      {:ok, checkout} ->
+        {:ok, Repo.get!(Repository, checkout.repository_id)}
+
+      {:error, _} ->
+        do_find_or_create_repo(entry, opts)
+    end
+  end
+
+  defp do_find_or_create_repo(entry, opts) do
     remote_url = entry.remote_url || entry.path
 
     cond do
+      is_nil(entry.remote_url) ->
+        find_or_create_local_external(entry, opts)
+
       repo = Repos.find_by_remote(remote_url) ->
         {:ok, repo}
 
@@ -256,6 +269,52 @@ defmodule Gitspace.Scan do
                )}
             end
         end
+    end
+  end
+
+  defp find_or_create_local_external(entry, opts) do
+    slug = opts[:repo] || entry.repo_slug || Path.basename(entry.path)
+
+    with {:ok, slug} <- slug!(slug) do
+      case Repo.get_by(Repository, slug: slug) do
+        nil ->
+          attrs = %{
+            slug: slug,
+            remote_url: "",
+            remote_key: "local:" <> Ecto.UUID.generate(),
+            origin_kind: "local",
+            state: "external",
+            bare_path: nil,
+            default_branch: entry.branch
+          }
+
+          %Repository{}
+          |> Repository.changeset(attrs)
+          |> Repo.insert()
+          |> case do
+            {:ok, repo} ->
+              {:ok, repo}
+
+            {:error, changeset} ->
+              {:error,
+               Error.new(:conflict, "cannot index local repository #{slug}",
+                 hint: "choose a repository name with --repo",
+                 details: %{
+                   errors: Ecto.Changeset.traverse_errors(changeset, fn {msg, _} -> msg end)
+                 }
+               )}
+          end
+
+        %Repository{origin_kind: "local"} = repo ->
+          {:ok, repo}
+
+        repo ->
+          {:error,
+           Error.new(:conflict, "repository #{slug} points at a different remote",
+             hint: "choose another name with --repo",
+             details: %{existing: repo.remote_url, new: entry.path}
+           )}
+      end
     end
   end
 

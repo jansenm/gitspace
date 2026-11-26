@@ -841,6 +841,7 @@ defmodule Gitspace.Create do
       start_sha: nil,
       head: nil,
       path: path,
+      unborn: false,
       action: :created,
       branch_exists?: false,
       existing_member: nil
@@ -858,6 +859,7 @@ defmodule Gitspace.Create do
                start_ref: info.start,
                start_sha: info.sha,
                head: info.sha,
+               unborn: info.kind == :unborn,
                branch_exists?: Refs.local_branch?(repo.bare_path, branch)
            }}
         end
@@ -872,6 +874,7 @@ defmodule Gitspace.Create do
                start_ref: info.start,
                start_sha: info.sha,
                head: info.sha,
+               unborn: info.kind == :unborn,
                branch_exists?: Refs.local_branch?(repo.bare_path, info.branch)
            }}
         end
@@ -900,6 +903,7 @@ defmodule Gitspace.Create do
                start_ref: info.start,
                start_sha: info.sha,
                head: info.sha,
+               unborn: info.kind == :unborn,
                branch_exists?: Refs.local_branch?(repo.bare_path, branch)
            }}
         end
@@ -1371,9 +1375,14 @@ defmodule Gitspace.Create do
   end
 
   defp default_info(config, repo, opts) do
-    case opts[:default_ref] do
-      ref when is_binary(ref) -> ref_info(config, repo, ref, opts)
-      _ -> default_branch_info(config, repo, opts)
+    if repo.origin_kind == "local" and Refs.empty?(repo.bare_path) do
+      branch = repo.default_branch || "main"
+      {:ok, repo, %{kind: :unborn, name: branch, branch: branch, start: nil, sha: nil}}
+    else
+      case opts[:default_ref] do
+        ref when is_binary(ref) -> ref_info(config, repo, ref, opts)
+        _ -> default_branch_info(config, repo, opts)
+      end
     end
   end
 
@@ -1546,6 +1555,9 @@ defmodule Gitspace.Create do
 
     result =
       cond do
+        plan.unborn ->
+          Worktree.add_orphan(plan.repo.bare_path, plan.path, plan.desired_branch)
+
         plan.detached ->
           Worktree.add(plan.repo.bare_path, plan.path, plan.start_ref || plan.head, detach: true)
 

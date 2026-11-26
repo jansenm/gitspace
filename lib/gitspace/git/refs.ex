@@ -55,6 +55,15 @@ defmodule Gitspace.Git.Refs do
     end
   end
 
+  @doc "True when the repository has no refs at all (a freshly initialized local repo)."
+  @spec empty?(Path.t()) :: boolean()
+  def empty?(bare) do
+    case Git.run(["for-each-ref", "--count=1"], cd: bare) do
+      {:ok, %{stdout: out}} -> String.trim(out) == ""
+      _ -> false
+    end
+  end
+
   @doc "The worktree currently holding a local branch, if any."
   @spec branch_checked_out(Path.t(), String.t()) :: %Worktree{} | nil
   def branch_checked_out(bare, branch) do
@@ -149,9 +158,12 @@ defmodule Gitspace.Git.Refs do
   - a local branch without upstream: commits not on any remote or tag
   - detached HEAD: commits not reachable from any branch, remote or tag
   """
-  @spec unpushed(Path.t(), %Status{}) :: non_neg_integer()
-  def unpushed(worktree, %Status{} = status) do
+  @spec unpushed(Path.t(), %Status{}, keyword()) :: non_neg_integer()
+  def unpushed(worktree, %Status{} = status, opts \\ []) do
     cond do
+      Keyword.get(opts, :remote, true) == false ->
+        0
+
       status.detached ->
         count(["HEAD", "--not", "--branches", "--remotes", "--tags"], worktree)
 

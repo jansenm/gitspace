@@ -15,7 +15,7 @@ defmodule Gitspace.CLI.Completion do
   @subcommands %{
     "workspace" => ~w(new ls status rm help),
     "project" => ~w(new ls show add remove rm help),
-    "repo" => ~w(add ls fetch rm alias set-url help),
+    "repo" => ~w(init import add ls fetch rm alias set-url help),
     "config" => ~w(list get set help),
     "completion" => ~w(bash zsh fish)
   }
@@ -28,6 +28,8 @@ defmodule Gitspace.CLI.Completion do
     "co" => ~w(--topic --only --exclude --as --as-is --branch --detach --label --fetch),
     "project:new" => ~w(--repo --at --description --branch-template --default-ref),
     "project:rm" => ~w(--force),
+    "repo:init" => ~w(--branch --topic --path),
+    "repo:import" => ~w(--name --no-link),
     "repo:add" => ~w(--name --remote --project --no-fetch),
     "repo:fetch" => ~w(--all --prune),
     "repo:rm" => ~w(--force --dry-run),

@@ -1,7 +1,7 @@
 defmodule Gitspace.CLI.Repo do
   @moduledoc false
 
-  alias Gitspace.{Error, Projects, Repos}
+  alias Gitspace.{Create, Error, Projects, Repos}
   alias Gitspace.CLI.{Helpers, Output}
 
   defp add_strict,
@@ -9,12 +9,20 @@ defmodule Gitspace.CLI.Repo do
       [name: :string, remote: :string, project: :string, no_fetch: :boolean] ++
         Helpers.global_strict()
 
+  defp init_strict,
+    do: [branch: :string, topic: :string, path: :string] ++ Helpers.global_strict()
+
+  defp import_strict,
+    do: [name: :string, no_link: :boolean] ++ Helpers.global_strict()
+
   defp list_strict, do: Helpers.global_strict()
   defp fetch_strict, do: [all: :boolean, prune: :boolean] ++ Helpers.global_strict()
   defp rm_strict, do: [force: :boolean, dry_run: :boolean] ++ Helpers.global_strict()
 
   def run(global, args) do
     case args do
+      ["init" | rest] -> init(global, rest)
+      ["import" | rest] -> import_local(global, rest)
       ["add" | rest] -> add(global, rest)
       ["ls" | rest] -> list(global, rest)
       ["fetch" | rest] -> fetch(global, rest)
@@ -23,6 +31,71 @@ defmodule Gitspace.CLI.Repo do
       ["set-url" | rest] -> set_url(global, rest)
       [] -> {:ok, %{help: help()}, &render_help/1}
       [other | _] -> {:error, Error.new(:usage, "unknown repo command: #{other}")}
+    end
+  end
+
+  defp init(_global, args) do
+    with {:ok, opts, rest} <- Helpers.parse(args, init_strict()),
+         {:ok, name} <-
+           one_arg(rest, "gitspace repo init <name> [--branch B] [--topic T] [--path P]"),
+         {:ok, config} <- Helpers.load_config(),
+         :ok <- Helpers.start_index(config) do
+      case Repos.init_local(config, name, branch: opts[:branch] || "main") do
+        {:ok, repo} ->
+          case first_workspace(config, repo, opts) do
+            {:ok, project, workspace} ->
+              {:ok,
+               %{
+                 repo: repo_map(repo, 1),
+                 project: project.name,
+                 branch: repo.default_branch,
+                 identity: repo.remote_key,
+                 workspace: workspace.workspace,
+                 path: workspace.path,
+                 checkout: workspace.members |> hd() |> Map.get(:path),
+                 marker: workspace.marker_path
+               }, &render_init/1}
+
+            {:error, error} ->
+              _ = Repos.remove(config, repo.slug, force: true)
+              {:error, error}
+          end
+
+        {:error, error} ->
+          {:error, error}
+      end
+    end
+  end
+
+  defp import_local(_global, args) do
+    with {:ok, opts, rest} <- Helpers.parse(args, import_strict()),
+         {:ok, path} <- one_arg(rest, "gitspace repo import <path> [--name N] [--no-link]"),
+         {:ok, config} <- Helpers.load_config(),
+         :ok <- Helpers.start_index(config),
+         {:ok, result} <-
+           Repos.import_local(config, path, name: opts[:name], no_link: opts[:no_link]) do
+      {:ok,
+       %{
+         repo: repo_map(result.repo, if(result.linked, do: 1, else: 0)),
+         source: result.source,
+         branch: result.branch,
+         linked: result.linked
+       }, &render_import/1}
+    end
+  end
+
+  defp first_workspace(config, repo, opts) do
+    with {:ok, project} <- init_project(config, repo, opts),
+         {:ok, workspace} <-
+           Create.co(config, repo.slug, nil, topic: opts[:topic] || "main") do
+      {:ok, project, workspace}
+    end
+  end
+
+  defp init_project(config, repo, opts) do
+    case opts[:path] do
+      nil -> Projects.ensure_implicit(config, repo)
+      path -> Projects.create(config, repo.slug, path: path, repo: [repo.slug])
     end
   end
 
@@ -151,12 +224,16 @@ defmodule Gitspace.CLI.Repo do
          {:ok, config} <- Helpers.load_config(),
          :ok <- Helpers.start_index(config),
          {:ok, repo} <- Repos.get(config, selector),
-         {:ok, result} <- Repos.set_remote_url(config, repo, url, push: opts[:push]) do
+         {:ok, result} <-
+           Repos.set_remote_url(config, repo, url,
+             push: opts[:push],
+             no_fetch: opts[:no_fetch]
+           ) do
       {:ok, result, &render_set_url/1}
     end
   end
 
-  defp set_url_strict, do: [push: :boolean] ++ Helpers.global_strict()
+  defp set_url_strict, do: [push: :boolean, no_fetch: :boolean] ++ Helpers.global_strict()
 
   defp two_args([selector, url], _usage) when selector != "" and url != "",
     do: {:ok, selector, url}
@@ -177,6 +254,7 @@ defmodule Gitspace.CLI.Repo do
       slug: repo.slug,
       remote_url: repo.remote_url,
       remote_key: repo.remote_key,
+      origin_kind: repo.origin_kind,
       alias_source: repo.alias_source,
       hash: repo.bare_path && Path.basename(repo.bare_path, ".git"),
       bare_path: repo.bare_path,
@@ -205,6 +283,33 @@ defmodule Gitspace.CLI.Repo do
     end
   end
 
+  defp render_import(data) do
+    repo = data.repo
+
+    IO.puts("imported #{repo.slug}")
+    IO.puts("  identity:  #{repo.remote_key}")
+    IO.puts("  mirror:    #{repo.bare_path}")
+    IO.puts("  branch:    #{data.branch}")
+    IO.puts("  source:    #{data.source}")
+    IO.puts("  linked:    #{if data.linked, do: "yes (external)", else: "no"}")
+  end
+
+  defp remote_label(%{origin_kind: "local"}), do: "LOCAL"
+  defp remote_label(repo), do: repo.remote_url
+
+  defp render_init(data) do
+    repo = data.repo
+
+    IO.puts("initialized #{repo.slug}")
+    IO.puts("  identity:  #{data.identity}")
+    IO.puts("  mirror:    #{repo.bare_path}")
+    IO.puts("  branch:    #{data.branch}")
+    IO.puts("  project:   #{data.project}")
+    IO.puts("  workspace: #{data.workspace}")
+    IO.puts("  path:      #{data.path}")
+    IO.puts("  checkout:  #{data.checkout}")
+  end
+
   defp render_list(%{repositories: repositories}) do
     Output.table(
       ["SLUG", "PROJECT", "REMOTE", "STATE", "DEFAULT", "CHECKOUTS", "HASH", "MIRROR"],
@@ -212,7 +317,7 @@ defmodule Gitspace.CLI.Repo do
         [
           repo.slug,
           Enum.join(repo[:projects] || [], ","),
-          repo.remote_url,
+          remote_label(repo),
           repo.state,
           repo.default_branch,
           repo.checkouts,
@@ -251,17 +356,30 @@ defmodule Gitspace.CLI.Repo do
     IO.puts("removed mirror #{data.repository}")
     IO.puts("  checkouts unindexed: #{data.removed_checkouts}")
     IO.puts("  directories kept:    #{data.checkouts_kept}")
+
+    if data[:bundle] do
+      IO.puts("  bundle:              #{data.bundle}")
+    end
   end
 
   defp help do
     """
     USAGE
+      gitspace repo init <name> [--branch B] [--topic T] [--path P]
+      gitspace repo import <path> [--name N] [--no-link]
       gitspace repo add <url-or-path> [--name N] [--remote NAME] [--project P] [--no-fetch]
       gitspace repo ls
       gitspace repo fetch [<repo>|--all] [--prune]
       gitspace repo rm <repo> [--force] [--dry-run] [--yes]
       gitspace repo alias <repo> <name>
       gitspace repo set-url <repo> <url> [--push]
+
+    LOCAL REPOSITORIES
+      `repo init` creates an empty managed repository with no upstream and its
+      first checkout on an unborn branch. The mirror is the source of truth;
+      `repo fetch` is a no-op and `repo rm` writes an `--all` bundle first.
+      `--path` is the project directory, which must end with the repository
+      name.
 
     ADD FROM A CHECKOUT
       Point `repo add` at an existing clone or worktree. With one remote its
@@ -276,7 +394,9 @@ defmodule Gitspace.CLI.Repo do
       `repo set-url` changes the fetch URL by default and the push URL with
       `--push`. The repository keeps its identity and mirror directory, so any
       host, port or path may change; only an address that already belongs to
-      another repository is refused. Multiple URL entries are refused.
+      another repository is refused. Adopting the first upstream for a local
+      repository fetches once (`--no-fetch` opts out). Multiple URL entries are
+      refused.
 
         gitspace repo set-url ferroclass git@github.com:jansenm/ferroclass.git
         gitspace repo set-url ferroclass git@gitlab.com:jansenm/ferroclass.git
@@ -285,10 +405,22 @@ defmodule Gitspace.CLI.Repo do
   end
 
   defp render_set_url(data) do
-    IO.puts("set #{data.target} URL for #{data.repo}")
+    action = if data.previous == [], do: "adopted", else: "set"
+    IO.puts("#{action} #{data.target} URL for #{data.repo}")
     IO.puts("  from:   #{List.first(data.previous) || "(none)"}")
     IO.puts("  to:     #{data.url}")
     IO.puts("  mirror: #{data.mirror}")
+
+    cond do
+      data[:fetch_error] ->
+        IO.puts(:stderr, "fetch failed: #{data.fetch_error}")
+
+      data[:fetched] ->
+        IO.puts("  fetched: yes")
+
+      true ->
+        :ok
+    end
   end
 
   defp render_help(%{help: help}), do: IO.puts(help)

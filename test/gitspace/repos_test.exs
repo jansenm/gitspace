@@ -171,10 +171,11 @@ defmodule Gitspace.ReposTest do
     Git.run!(["config", "--unset", "remote.origin.url"], cd: repo.bare_path)
 
     assert %{issues: issues} = Repos.discover(config)
-    assert Enum.any?(issues, &(&1.kind == :missing_remote))
+    refute Enum.any?(issues, &(&1.kind == :missing_remote))
 
     assert {:ok, found} = Repos.get(config, "demo")
     assert found.remote_url == Fixtures.repo_url(source)
+    assert found.origin_kind == "local"
     assert found.remote_key == Layout.normalize_remote(source)
     assert found.bare_path == repo.bare_path
   end
@@ -280,7 +281,7 @@ defmodule Gitspace.ReposTest do
     assert {:error, error} = Repos.add(config, source)
     assert error.code == :usage
     assert error.message =~ "no remotes"
-    assert error.hint =~ "remote URL"
+    assert error.hint =~ "repo import"
 
     assert {:error, with_remote} = Repos.add(config, source, remote: "origin")
     assert with_remote.code == :usage
@@ -406,12 +407,12 @@ defmodule Gitspace.ReposTest do
     Gitspace.Index.stop()
     File.rm_rf!(Config.db_path(config))
 
-    assert {:ok, summary} = Gitspace.Index.reindex(config)
-    assert Enum.any?(summary.issues, &(&1.kind == :missing_remote))
+    assert {:ok, _summary} = Gitspace.Index.reindex(config)
 
     assert {:ok, found} = Repos.get(config, repo.remote_key)
     assert found.remote_key == repo.remote_key
     assert found.bare_path == repo.bare_path
+    assert found.origin_kind == "local"
   end
 
   test "set_remote_url refuses multiple fetch URLs and leaves them untouched", %{config: config} do

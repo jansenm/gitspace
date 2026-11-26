@@ -26,6 +26,15 @@ defmodule Gitspace.Git.Mirror do
     bare
   end
 
+  @doc "Creates an empty local mirror with no origin; `refs/heads/*` is canonical."
+  @spec init_local!(Path.t(), String.t()) :: Path.t()
+  def init_local!(bare, branch) do
+    File.mkdir_p!(Path.dirname(bare))
+    Git.run!(["init", "--bare", "--initial-branch=#{branch}", bare])
+    Git.run!(["config", "gc.auto", "0"], cd: bare)
+    bare
+  end
+
   defp init_plain!(bare, url, opts) do
     Git.run!(["init", "--bare", "--initial-branch=main", bare])
     Git.run!(["remote", "add", "origin", url], cd: bare)

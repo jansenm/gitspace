@@ -33,7 +33,7 @@ defmodule Gitspace.ConfigTest do
     assert loaded.data_dir == config.data_dir
     assert loaded.projects_root == config.projects_root
     assert loaded.branch_template == "feature/{topic}"
-    assert loaded.git_minimum == "2.40"
+    assert loaded.git_minimum == "2.42"
   end
 
   test "ENV-1 environment overrides take precedence", %{root: root, path: path} do

@@ -35,6 +35,7 @@ defmodule Gitspace.Git.Status do
     |> Enum.reduce(%__MODULE__{}, &parse_record/2)
   end
 
+  defp parse_record("# branch.oid (initial)", acc), do: %{acc | head: nil}
   defp parse_record("# branch.oid " <> oid, acc), do: %{acc | head: oid}
   defp parse_record("# branch.head (detached)", acc), do: %{acc | detached: true}
 

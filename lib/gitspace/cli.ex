@@ -289,6 +289,8 @@ defmodule Gitspace.CLI do
       "repo" ->
         """
         USAGE
+          gitspace repo init <name> [--branch B] [--topic T] [--path P]
+          gitspace repo import <path> [--name N] [--no-link]
           gitspace repo add <url-or-path> [--name N] [--remote NAME] [--project P] [--no-fetch]
           gitspace repo ls
           gitspace repo fetch [<repo>|--all] [--prune]
@@ -296,8 +298,10 @@ defmodule Gitspace.CLI do
           gitspace repo alias <repo> <name>
           gitspace repo set-url <repo> <url> [--push]
 
-        `set-url` changes the fetch URL, or the push URL with `--push`.
-        The new URL must resolve to the same canonical remote key.
+        `repo init` creates an empty local repository with its first checkout;
+        `repo import` adopts an existing clone without a remote.
+        `set-url` changes the fetch URL, or the push URL with `--push`; the
+        repository keeps its identity and mirror directory.
         """
 
       "scan" ->

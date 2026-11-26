@@ -26,7 +26,10 @@ defmodule Gitspace.Checkouts do
         ahead: status.ahead || 0,
         behind: status.behind || 0,
         untracked: status.untracked,
-        unpushed: Refs.unpushed(root, status),
+        unpushed:
+          Refs.unpushed(root, status,
+            remote: repo.origin_kind != "local" or (opts[:source] || "managed") == "external"
+          ),
         last_status_at: DateTime.utc_now(),
         last_seen_at: DateTime.utc_now(),
         created_by: opts[:created_by]
@@ -39,6 +42,7 @@ defmodule Gitspace.Checkouts do
   @spec refresh(Config.t(), Checkout.t()) :: {:ok, Checkout.t()} | {:error, Error.t()}
   def refresh(%Config{} = _config, %Checkout{} = checkout) do
     now = DateTime.utc_now()
+    repo = Repo.get(Repository, checkout.repository_id)
 
     if File.dir?(checkout.path) do
       case read_status(checkout.path) do
@@ -53,7 +57,11 @@ defmodule Gitspace.Checkouts do
             ahead: status.ahead || 0,
             behind: status.behind || 0,
             untracked: status.untracked,
-            unpushed: Refs.unpushed(root, status),
+            unpushed:
+              Refs.unpushed(root, status,
+                remote:
+                  is_nil(repo) or repo.origin_kind != "local" or checkout.source == "external"
+              ),
             last_status_at: now,
             last_seen_at: now
           }

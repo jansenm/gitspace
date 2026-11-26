@@ -5,6 +5,17 @@ defmodule Gitspace.Git.Worktree do
 
   defstruct [:path, :head, :branch, :detached, :bare, :locked, :prunable]
 
+  @doc "Creates a worktree on an unborn branch (git ≥ 2.42)."
+  @spec add_orphan(Path.t(), Path.t(), String.t()) ::
+          {:ok, Git.result()} | {:error, Git.result()}
+  def add_orphan(bare, path, branch) do
+    unless Path.type(path) == :absolute do
+      raise ArgumentError, "worktree paths must be absolute, got: #{inspect(path)}"
+    end
+
+    Git.run(["worktree", "add", "--orphan", "-b", branch, path], cd: bare, locks: true)
+  end
+
   @spec add(Path.t(), Path.t(), String.t(), keyword()) ::
           {:ok, Git.result()} | {:error, Git.result()}
   def add(bare, path, ref, opts \\ []) do

@@ -24,7 +24,7 @@ Product scope, CLI contract and acceptance plan live in the planning repository:
 | Creation | `project new|ls|show|add|remove|rm`, `co`, `workspace new|ls|status|rm` |
 | Setup, config and health | `setup`, `config [list|get|set]`, `doctor`, `doctor --fix`, `doctor --reindex` |
 | Completion | `completion bash|zsh|fish` |
-| Mirrors | `repo add`, `repo ls`, `repo fetch`, `repo alias`, `repo set-url`, `repo rm` |
+| Mirrors | `repo init`, `repo import`, `repo add`, `repo ls`, `repo fetch`, `repo alias`, `repo set-url`, `repo rm` |
 | Discovery | `scan` (read-only), `link`, `unlink` |
 | Inventory | `gitspace`, `ls`, `status`, `show`, `path` |
 | Recovery | `reindex` — rediscover mirrors from disk, rebuild workspaces from markers |
@@ -214,7 +214,27 @@ gitspace repo add ~/src/app --remote upstream   # picks one remote explicitly
 
 With one remote, its URL is registered automatically. With several, `repo add` refuses and
 lists the candidates until you choose one with `--remote <name>`. A path without a remote is
-refused rather than implicitly mirrored; pass a remote URL instead.
+refused rather than implicitly mirrored; use `gitspace repo import <path>` or pass a remote URL.
+
+### Local repositories
+
+A repository can live in gitspace without any upstream. The mirror is the source of truth and
+its worktrees share the object store:
+
+```sh
+gitspace repo init demo                        # empty repo, first checkout on main
+gitspace repo init demo --branch devel --topic dev
+gitspace repo import ~/src/scratch --name scratch   # copy history from a local clone
+gitspace repo import ~/src/scratch --no-link        # do not index the source clone
+```
+
+`repo init` creates the mirror, an implicit one-repo project and the first checkout; commit in
+that checkout and the branch exists immediately, with no push or fetch. `repo import` copies
+committed history into a local mirror offline, leaves the source clone untouched, and links it
+as an external checkout unless `--no-link`. Both use an identity of `local:<uuid>`; `repo ls`
+shows them as `LOCAL`. `repo fetch` is a no-op, and `repo rm` writes `git bundle --all` under
+`<data>/trash/repos/` before deleting the mirror, because that mirror is the only copy.
+`repo set-url <repo> <url>` adopts an upstream later without changing the identity.
 
 When fetching is enabled, the mirror is seeded from the checkout with
 `git clone --reference <checkout> --dissociate`, so objects already present locally are reused
@@ -240,7 +260,9 @@ remote, alias, and mirror hash behind each repository.
 
 ## Changing remote URLs
 
-`repo set-url` changes the mirror's fetch URL. `--push` changes the push URL instead:
+`repo set-url` changes the mirror's fetch URL. `--push` changes the push URL instead; on a
+local repository the first call adopts an upstream and fetches once (`--no-fetch` opts out).
+The identity and mirror directory never change:
 
 ```sh
 gitspace repo set-url ferroclass git@github.com:jansenm/ferroclass.git
@@ -332,7 +354,7 @@ need.
   `main` in one repository never blocks `main` in another.
 - **TTY detection:** read the stdin device (`/proc/self/fd/0`). `:io.columns()` returns
   `:enotsup` in release-style stdin even under a PTY. `GITSPACE_NO_PROMPT=1` forces off.
-- **Git floor:** 2.40.
+- **Git floor:** 2.42 (`worktree add --orphan` for local repositories).
 - **Packaging:** `mix release` + Burrito 1.5.0 with the host glibc ERTS.
 
 ## Burrito caveats — do not “fix” these casually

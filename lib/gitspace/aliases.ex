@@ -31,6 +31,9 @@ defmodule Gitspace.Aliases do
       key == "" ->
         %{host: "local", group: "local", basename: "repo", local?: true}
 
+      String.starts_with?(key, "local:") ->
+        %{host: "local", group: "local", basename: "local", local?: true}
+
       String.starts_with?(key, "/") ->
         local_descriptor(key)
 

@@ -19,10 +19,10 @@ defmodule Gitspace.Safety do
           at_risk: boolean()
         }
 
-  @spec detect(Path.t()) :: {:ok, report()} | {:error, term()}
-  def detect(worktree) do
+  @spec detect(Path.t(), keyword()) :: {:ok, report()} | {:error, term()}
+  def detect(worktree, opts \\ []) do
     with {:ok, status} <- Status.read(worktree) do
-      unpushed = Refs.unpushed(worktree, status)
+      unpushed = Refs.unpushed(worktree, status, opts)
 
       report = %{
         head: status.head,

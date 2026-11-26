@@ -17,7 +17,7 @@ defmodule Gitspace.Config do
             data_dir: nil,
             projects_root: nil,
             branch_template: "feature/{topic}",
-            git_minimum: "2.40",
+            git_minimum: "2.42",
             status_max_age: 3600
 
   @type t :: %__MODULE__{
@@ -208,7 +208,7 @@ defmodule Gitspace.Config do
              )
            ),
          branch_template: get_in_map(data, ["branch", "template"], "feature/{topic}"),
-         git_minimum: get_in_map(data, ["git", "minimum_version"], "2.40"),
+         git_minimum: get_in_map(data, ["git", "minimum_version"], "2.42"),
          status_max_age: get_in_map(data, ["status", "max_age_seconds"], 3600)
        }}
     end

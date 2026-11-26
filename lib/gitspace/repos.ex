@@ -3,7 +3,19 @@ defmodule Gitspace.Repos do
 
   import Ecto.Query
 
-  alias Gitspace.{Aliases, Config, Error, Git, Layout, MirrorIndex, Projects, Repo}
+  alias Gitspace.{
+    Aliases,
+    Checkouts,
+    Config,
+    Error,
+    Git,
+    Layout,
+    MirrorIndex,
+    Projects,
+    Repo,
+    Scan
+  }
+
   alias Gitspace.Git.Mirror
   alias Gitspace.Index.Checkout
   alias Gitspace.Index.Repository
@@ -83,6 +95,334 @@ defmodule Gitspace.Repos do
     end
   end
 
+  @doc """
+  Creates an empty local repository: a bare mirror with no origin and its
+  first-class identity `local:<uuid>`.
+
+  The mirror is the source of truth; `repo init` then creates the first
+  checkout on an unborn branch.
+  """
+  @spec init_local(Config.t(), String.t(), keyword()) :: result()
+  def init_local(%Config{} = config, name, opts \\ []) do
+    branch = Keyword.get(opts, :branch, "main")
+
+    with {:ok, slug} <- requested_alias(name),
+         :ok <- ensure_slug_free(slug),
+         :ok <- validate_local_branch(branch),
+         key = local_identity(),
+         bare = mirror_path(config, key),
+         :ok <- create_local_mirror(bare, key, slug, branch) do
+      attrs = %{
+        slug: slug,
+        remote_url: "",
+        remote_key: key,
+        bare_path: bare,
+        default_branch: branch,
+        origin_kind: "local",
+        state: "managed",
+        alias_source: "explicit"
+      }
+
+      case %Repository{} |> Repository.changeset(attrs) |> Repo.insert() do
+        {:ok, repo} ->
+          _ = sync_index(config)
+          {:ok, repo}
+
+        {:error, changeset} ->
+          File.rm_rf(bare)
+          {:error, changeset_error(changeset)}
+      end
+    end
+  end
+
+  @doc """
+  Imports an existing clone without a remote as a managed local repository.
+
+  The history is copied into a bare mirror offline; the source clone is never
+  converted. Unless `no_link` is set, it is linked as an external checkout so
+  divergence stays visible.
+  """
+  @spec import_local(Config.t(), String.t(), keyword()) :: {:ok, map()} | {:error, Error.t()}
+  def import_local(%Config{} = config, path, opts \\ []) do
+    path = Path.expand(path)
+
+    with {:ok, entry} <- import_entry(path),
+         {:ok, slug} <- import_slug(entry, opts[:name]),
+         {:ok, existing} <- import_existing(path, slug),
+         branch = entry.branch || "main",
+         :ok <- validate_local_branch(branch),
+         {:ok, key} <- import_key(existing),
+         bare = mirror_path(config, key),
+         :ok <- seed_import_mirror(bare, entry.path, key, slug, branch),
+         {:ok, repo} <- save_import(existing, slug, key, bare, branch, opts),
+         {:ok, linked} <- link_import_source(config, repo, entry.path, opts) do
+      _ = sync_index(config)
+
+      {:ok,
+       %{
+         repo: repo,
+         source: entry.path,
+         branch: branch,
+         linked: linked,
+         head: entry.head
+       }}
+    end
+  end
+
+  defp import_entry(path) do
+    case Scan.detect(path) do
+      {:repo, %{kind: "clone", remote_url: nil} = entry} ->
+        {:ok, entry}
+
+      {:repo, %{kind: "clone", remote_url: remote}} ->
+        {:error,
+         Error.new(:usage, "checkout has a remote: #{remote}",
+           hint: "register it with `gitspace repo add #{path}`"
+         )}
+
+      {:repo, %{kind: "worktree"}} ->
+        {:error,
+         Error.new(:usage, "cannot import a linked worktree",
+           hint: "import its main repository instead"
+         )}
+
+      {:repo, _entry} ->
+        {:error, Error.new(:usage, "cannot import this checkout")}
+
+      {:bare, _entry} ->
+        {:error,
+         Error.new(:usage, "cannot import a bare repository",
+           hint: "bare repositories are registered with `gitspace repo add <path>`"
+         )}
+
+      :none ->
+        {:error, Error.new(:not_found, "not a git checkout: #{path}")}
+    end
+  end
+
+  defp import_slug(entry, nil) do
+    slug = entry.repo_slug || Path.basename(entry.path)
+
+    case Layout.repo_slug(slug) do
+      {:ok, slug} -> {:ok, slug}
+      {:error, _} -> import_name_error(entry.path)
+    end
+  end
+
+  defp import_slug(_entry, name) do
+    case requested_alias(name) do
+      {:ok, slug} -> {:ok, slug}
+      {:error, error} -> {:error, error}
+    end
+  end
+
+  defp import_name_error(path) do
+    {:error,
+     Error.new(:usage, "cannot derive a repository name from #{path}",
+       hint: "choose one with --name NAME"
+     )}
+  end
+
+  defp import_existing(path, slug) do
+    checkout_repo =
+      case Checkouts.get_by_path(path) do
+        {:ok, checkout} -> Repo.get(Repository, checkout.repository_id)
+        {:error, _} -> nil
+      end
+
+    repo = checkout_repo || Repo.get_by(Repository, slug: slug)
+
+    case repo do
+      nil ->
+        {:ok, nil}
+
+      %Repository{origin_kind: "local"} = repo ->
+        {:ok, repo}
+
+      %Repository{} = repo ->
+        {:error,
+         Error.new(:conflict, "#{repo.slug} already exists as a remote repository",
+           hint: "import needs a repository without an upstream"
+         )}
+    end
+  end
+
+  defp import_key(nil), do: {:ok, local_identity()}
+
+  defp import_key(%Repository{remote_key: "local:" <> _ = key}), do: {:ok, key}
+
+  defp import_key(%Repository{} = repo) do
+    {:error,
+     Error.new(:conflict, "#{repo.slug} is not a local repository",
+       hint: "only repositories without an upstream can be imported"
+     )}
+  end
+
+  defp seed_import_mirror(bare, source, key, slug, branch) do
+    if File.dir?(bare) do
+      :ok
+    else
+      Mirror.init_local!(bare, branch)
+
+      with :ok <- copy_import_refs(bare, source),
+           {:ok, _} <- Git.run(["config", "gitspace.remote-key", key], cd: bare),
+           {:ok, _} <- Git.run(["config", "gitspace.origin-kind", "local"], cd: bare),
+           {:ok, _} <- Git.run(["config", "gitspace.alias", slug], cd: bare),
+           {:ok, _} <- Git.run(["config", "gitspace.alias-source", "explicit"], cd: bare) do
+        :ok
+      else
+        {:error, result} ->
+          File.rm_rf(bare)
+
+          {:error,
+           Error.new(:error, "cannot seed local mirror from #{source}",
+             hint: String.trim(result.stderr),
+             details: %{mirror: bare}
+           )}
+      end
+    end
+  rescue
+    error in Git.Error ->
+      File.rm_rf(bare)
+
+      {:error,
+       Error.new(:error, "cannot create local mirror: #{Exception.message(error)}",
+         hint: "check that the data directory is writable"
+       )}
+  end
+
+  defp copy_import_refs(bare, source) do
+    if refs?(source) do
+      case Git.run(
+             [
+               "fetch",
+               source,
+               "+refs/heads/*:refs/heads/*",
+               "+refs/tags/*:refs/tags/*"
+             ],
+             cd: bare,
+             locks: true,
+             timeout: 300_000
+           ) do
+        {:ok, _} -> :ok
+        {:error, result} -> {:error, result}
+      end
+    else
+      :ok
+    end
+  end
+
+  defp refs?(path) do
+    case Git.run(["for-each-ref", "--count=1"], cd: path) do
+      {:ok, %{stdout: out}} -> String.trim(out) != ""
+      _ -> false
+    end
+  end
+
+  defp save_import(nil, slug, key, bare, branch, opts) do
+    attrs = %{
+      slug: slug,
+      remote_url: "",
+      remote_key: key,
+      bare_path: bare,
+      default_branch: branch,
+      origin_kind: "local",
+      state: "managed",
+      alias_source: if(opts[:name], do: "explicit", else: "auto")
+    }
+
+    %Repository{}
+    |> Repository.changeset(attrs)
+    |> Repo.insert()
+    |> case do
+      {:ok, repo} -> {:ok, repo}
+      {:error, changeset} -> {:error, changeset_error(changeset)}
+    end
+  end
+
+  defp save_import(%Repository{} = repo, _slug, _key, bare, branch, _opts) do
+    repo
+    |> Ecto.Changeset.change(%{
+      bare_path: bare,
+      remote_url: "",
+      origin_kind: "local",
+      state: "managed",
+      default_branch: repo.default_branch || branch
+    })
+    |> Repo.update()
+    |> case do
+      {:ok, repo} -> {:ok, repo}
+      {:error, changeset} -> {:error, changeset_error(changeset)}
+    end
+  end
+
+  defp link_import_source(config, repo, path, opts) do
+    if opts[:no_link] do
+      {:ok, false}
+    else
+      case Checkouts.import(config, repo, path,
+             kind: "clone",
+             source: "external",
+             created_by: "repo import"
+           ) do
+        {:ok, _checkout, _created} -> {:ok, true}
+        {:error, error} -> {:error, error}
+      end
+    end
+  end
+
+  defp ensure_slug_free(slug) do
+    case Repo.get_by(Repository, slug: slug) do
+      nil ->
+        :ok
+
+      repo ->
+        {:error,
+         Error.new(:conflict, "repository already exists: #{repo.slug}",
+           hint: "choose another name",
+           details: %{alias: repo.slug}
+         )}
+    end
+  end
+
+  defp validate_local_branch(branch) do
+    if Layout.valid_branch?(branch) do
+      :ok
+    else
+      {:error, Error.new(:usage, "invalid branch: #{branch}")}
+    end
+  end
+
+  defp local_identity, do: "local:" <> Ecto.UUID.generate()
+
+  defp create_local_mirror(bare, key, slug, branch) do
+    Mirror.init_local!(bare, branch)
+
+    with {:ok, _} <- Git.run(["config", "gitspace.remote-key", key], cd: bare),
+         {:ok, _} <- Git.run(["config", "gitspace.origin-kind", "local"], cd: bare),
+         {:ok, _} <- Git.run(["config", "gitspace.alias", slug], cd: bare),
+         {:ok, _} <- Git.run(["config", "gitspace.alias-source", "explicit"], cd: bare) do
+      :ok
+    else
+      {:error, result} ->
+        File.rm_rf(bare)
+
+        {:error,
+         Error.new(:error, "cannot write local mirror metadata",
+           hint: String.trim(result.stderr),
+           details: %{mirror: bare}
+         )}
+    end
+  rescue
+    error in Git.Error ->
+      File.rm_rf(bare)
+
+      {:error,
+       Error.new(:error, "cannot create local mirror: #{Exception.message(error)}",
+         hint: "check that the data directory is writable"
+       )}
+  end
+
   @spec list(Config.t()) :: [map()]
   def list(%Config{} = _config) do
     counts =
@@ -138,7 +478,8 @@ defmodule Gitspace.Repos do
     Repository
     |> Repo.all()
     |> Enum.find(fn repo ->
-      is_binary(repo.remote_url) and Layout.normalize_remote(repo.remote_url) == key
+      is_binary(repo.remote_url) and repo.remote_url != "" and
+        Layout.normalize_remote(repo.remote_url) == key
     end)
   end
 
@@ -282,7 +623,7 @@ defmodule Gitspace.Repos do
           }
         )
         |> maybe_issue(
-          is_nil(entry.origin),
+          entry.origin_kind == "remote" and is_nil(entry.origin),
           %{kind: :missing_remote, path: entry.bare_path, repo: entry.alias || entry.remote_key}
         )
         |> maybe_issue(
@@ -348,6 +689,9 @@ defmodule Gitspace.Repos do
   @spec fetch(Config.t(), Repository.t()) :: {:ok, Repository.t()} | {:error, Error.t()}
   def fetch(%Config{} = _config, %Repository{} = repo) do
     cond do
+      repo.origin_kind == "local" ->
+        {:ok, repo}
+
       is_nil(repo.bare_path) ->
         {:error,
          Error.new(:refused, "#{repo.slug} has no mirror",
@@ -407,7 +751,7 @@ defmodule Gitspace.Repos do
   """
   @spec set_remote_url(Config.t(), Repository.t(), String.t(), keyword()) ::
           {:ok, map()} | {:error, Error.t()}
-  def set_remote_url(%Config{} = _config, %Repository{} = repo, url, opts \\ []) do
+  def set_remote_url(%Config{} = config, %Repository{} = repo, url, opts \\ []) do
     push? = !!opts[:push]
     url = String.trim(url)
 
@@ -419,29 +763,56 @@ defmodule Gitspace.Repos do
          {:ok, previous} <- remote_urls(bare, push?),
          :ok <- single_remote_url(repo, push?, previous),
          :ok <- pin_identity(bare, repo.remote_key),
+         :ok <- maybe_pin_origin_kind(bare, push?),
          :ok <- write_and_index(bare, repo, push?, previous, url) do
+      updated = Repo.get!(Repository, repo.id)
+      {fetched, fetch_error} = maybe_fetch_adopted(config, updated, repo, push?, opts)
+
       {:ok,
        %{
          repo: repo.slug,
          mirror: bare,
          target: if(push?, do: "push", else: "fetch"),
          url: url,
-         previous: previous
+         previous: previous,
+         fetched: fetched,
+         fetch_error: fetch_error
        }}
     end
   end
 
+  defp maybe_fetch_adopted(_config, _updated, _repo, true, _opts), do: {false, nil}
+
+  defp maybe_fetch_adopted(config, updated, %Repository{origin_kind: "local"}, false, opts) do
+    if opts[:no_fetch] do
+      {false, nil}
+    else
+      case fetch(config, updated) do
+        {:ok, _repo} -> {true, nil}
+        {:error, error} -> {false, error.message}
+      end
+    end
+  end
+
+  defp maybe_fetch_adopted(_config, _updated, _repo, false, _opts), do: {false, nil}
+
   @spec remove(Config.t(), String.t(), keyword()) :: {:ok, map()} | {:error, Error.t()}
   def remove(%Config{} = config, selector, opts \\ []) do
     with {:ok, repo} <- get(config, selector) do
-      project_names = Projects.projects_for_repo(config, repo)
+      projects =
+        Projects.list(config)
+        |> Enum.filter(&(repo.remote_key in &1.members))
+
+      blocking = Enum.reject(projects, &implicit_one_repo?(&1, repo))
 
       cond do
-        project_names != [] ->
+        blocking != [] ->
+          names = Enum.map_join(blocking, ", ", & &1.name)
+
           {:error,
-           Error.new(:refused, "#{repo.slug} is a member of: #{Enum.join(project_names, ", ")}",
+           Error.new(:refused, "#{repo.slug} is a member of: #{names}",
              hint: "remove it from the project first with `gitspace project remove`",
-             details: %{projects: project_names}
+             details: %{projects: names}
            )}
 
         repo.state == "external" ->
@@ -465,20 +836,61 @@ defmodule Gitspace.Repos do
                )}
 
             true ->
-              bare = repo.bare_path
-              {:ok, _} = Repo.delete(repo)
-              if bare && File.dir?(bare), do: File.rm_rf!(bare)
-              _ = sync_index(config)
+              with {:ok, bundle} <- local_bundle(config, repo) do
+                bare = repo.bare_path
+                {:ok, _} = Repo.delete(repo)
+                if bare && File.dir?(bare), do: File.rm_rf!(bare)
+                Enum.each(projects, &Projects.delete(config, &1.name))
+                _ = sync_index(config)
 
-              {:ok,
-               %{
-                 repository: repo.slug,
-                 removed_checkouts: count,
-                 mirror_removed: bare,
-                 checkouts_kept: count
-               }}
+                {:ok,
+                 %{
+                   repository: repo.slug,
+                   removed_checkouts: count,
+                   mirror_removed: bare,
+                   checkouts_kept: count,
+                   bundle: bundle
+                 }}
+              end
           end
       end
+    end
+  end
+
+  defp implicit_one_repo?(project, repo) do
+    project.source == "implicit" and project.members == [repo.remote_key]
+  end
+
+  defp local_bundle(%Config{} = config, %Repository{origin_kind: "local", bare_path: bare} = repo)
+       when is_binary(bare) do
+    if has_refs?(bare) do
+      dir = Path.join([config.data_dir, "trash", "repos"])
+      File.mkdir_p!(dir)
+      stamp = DateTime.utc_now() |> DateTime.to_iso8601() |> String.replace([":", "."], "-")
+      path = Path.join(dir, "#{repo.slug}-#{stamp}.bundle")
+
+      case Git.run(["bundle", "create", path, "--all"], cd: bare, locks: true) do
+        {:ok, _} ->
+          {:ok, path}
+
+        {:error, result} ->
+          {:error,
+           Error.new(:error, "cannot bundle local repository #{repo.slug}",
+             hint: String.trim(result.stderr),
+             details: %{mirror: bare}
+           )}
+      end
+    else
+      {:ok, nil}
+    end
+  end
+
+  defp local_bundle(_config, _repo), do: {:ok, nil}
+
+  defp has_refs?(bare) do
+    case Git.run(["for-each-ref", "--count=1"], cd: bare) do
+      {:ok, %{stdout: out}} -> String.trim(out) != ""
+      _ -> false
     end
   end
 
@@ -740,7 +1152,9 @@ defmodule Gitspace.Repos do
     with {:ok, _} <- Git.run(["config", "gitspace.alias", alias_name], cd: repo.bare_path),
          {:ok, _} <- Git.run(["config", "gitspace.alias-source", source], cd: repo.bare_path),
          {:ok, _} <-
-           Git.run(["config", "gitspace.remote-key", repo.remote_key], cd: repo.bare_path) do
+           Git.run(["config", "gitspace.remote-key", repo.remote_key], cd: repo.bare_path),
+         {:ok, _} <-
+           Git.run(["config", "gitspace.origin-kind", "remote"], cd: repo.bare_path) do
       :ok
     else
       {:error, result} ->
@@ -768,7 +1182,8 @@ defmodule Gitspace.Repos do
   defp mirror_entry(bare) do
     remote = read_config(bare, ["config", "--get", "remote.origin.url"])
     configured = read_config(bare, ["config", "--get", "gitspace.remote-key"])
-    remote_url = remote || bare
+    origin_kind = if is_binary(remote) and remote != "", do: "remote", else: "local"
+    remote_url = remote || ""
     key = identity_key(configured, remote)
     expected_hash = key && Layout.remote_hash(key)
     actual_hash = bare |> Path.basename() |> String.replace_suffix(".git", "")
@@ -782,6 +1197,7 @@ defmodule Gitspace.Repos do
       origin: remote,
       remote_url: remote_url,
       remote_key: key,
+      origin_kind: origin_kind,
       identity_source: if(configured in [nil, ""], do: :origin, else: :config),
       expected_hash: expected_hash,
       actual_hash: actual_hash,
@@ -826,7 +1242,7 @@ defmodule Gitspace.Repos do
         end
 
       issues =
-        if is_nil(entry.origin) do
+        if entry.origin_kind == "remote" and is_nil(entry.origin) do
           [%{kind: :missing_remote, path: entry.bare_path, remote: entry.remote_key} | issues]
         else
           issues
@@ -873,6 +1289,7 @@ defmodule Gitspace.Repos do
       bare_path: entry.bare_path,
       remote_url: entry.remote_url,
       remote_key: entry.remote_key,
+      origin_kind: entry.origin_kind,
       state: "managed"
     }
 
@@ -894,6 +1311,7 @@ defmodule Gitspace.Repos do
         existing
         |> Ecto.Changeset.change(%{
           bare_path: entry.bare_path,
+          origin_kind: entry.origin_kind,
           state: "managed",
           default_branch: default_branch_or_existing(entry, existing)
         })
@@ -1069,7 +1487,7 @@ defmodule Gitspace.Repos do
           [] ->
             {:error,
              Error.new(:usage, "checkout has no remotes: #{path}",
-               hint: "add a remote to the checkout or pass its remote URL instead"
+               hint: "use `gitspace repo import #{path}` to adopt it as a local repository"
              )}
 
           names ->
@@ -1211,6 +1629,21 @@ defmodule Gitspace.Repos do
 
   defp pin_identity(_bare, _key), do: :ok
 
+  defp maybe_pin_origin_kind(_bare, true), do: :ok
+
+  defp maybe_pin_origin_kind(bare, false) do
+    case Git.run(["config", "gitspace.origin-kind", "remote"], cd: bare, locks: true) do
+      {:ok, _} ->
+        :ok
+
+      {:error, result} ->
+        {:error,
+         Error.new(:error, "cannot update origin kind in #{bare}",
+           hint: String.trim(result.stderr)
+         )}
+    end
+  end
+
   defp remote_urls(bare, push?) do
     key = if(push?, do: "remote.origin.pushurl", else: "remote.origin.url")
 
@@ -1306,7 +1739,11 @@ defmodule Gitspace.Repos do
 
   defp update_indexed_remote(repo, false, url) do
     case repo
-         |> Ecto.Changeset.change(%{remote_url: url, last_fetch_error: nil})
+         |> Ecto.Changeset.change(%{
+           remote_url: url,
+           origin_kind: "remote",
+           last_fetch_error: nil
+         })
          |> Repo.update() do
       {:ok, _repo} -> :ok
       {:error, changeset} -> {:error, changeset_error(changeset)}

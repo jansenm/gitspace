@@ -163,6 +163,7 @@ defmodule Gitspace.CLI.Inventory do
       id: repo.id,
       slug: repo.slug,
       remote_url: repo.remote_url,
+      origin_kind: repo.origin_kind,
       bare_path: repo.bare_path,
       default_branch: repo.default_branch,
       state: repo.state,
@@ -376,7 +377,8 @@ defmodule Gitspace.CLI.Inventory do
   end
 
   defp render_show_repo(%{repo: repo, checkouts: rows}) do
-    IO.puts("#{repo.slug} · #{repo.remote_url}")
+    remote = if repo.origin_kind == "local", do: "LOCAL (no upstream)", else: repo.remote_url
+    IO.puts("#{repo.slug} · #{remote}")
     IO.puts("  mirror:    #{repo.bare_path || "(external)"}")
     IO.puts("  default:   #{repo.default_branch || "?"}")
     IO.puts("")
