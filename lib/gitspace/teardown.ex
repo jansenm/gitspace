@@ -5,7 +5,8 @@ defmodule Gitspace.Teardown do
   Owned members are removed as git worktrees. Borrowed members are only
   unlinked. Risky owned members are refused unless `--force` is given; force
   anchors HEAD, saves the tracked diff and untracked files under `<data>/trash`,
-  and only then removes the worktree. Branches are never deleted here.
+  and only then removes the worktree. Branches are never deleted here; the
+  branches of removed owned members are reported so the user knows what stays.
   """
 
   import Ecto.Query
@@ -20,6 +21,7 @@ defmodule Gitspace.Teardown do
           workspace_dir: Path.t(),
           targets: [target()],
           risky: [target()],
+          branches: [%{repo: String.t(), name: String.t()}],
           member: String.t() | nil
         }
 
@@ -34,6 +36,7 @@ defmodule Gitspace.Teardown do
          workspace_dir: workspace_dir,
          targets: targets,
          risky: Enum.filter(targets, &risky?/1),
+         branches: branch_hints(targets),
          member: opts[:member]
        }}
     end
@@ -211,6 +214,39 @@ defmodule Gitspace.Teardown do
           {:error, reason} ->
             {:ok, %{base | risk_error: reason}}
         end
+    end
+  end
+
+  defp branch_hints(targets) do
+    targets
+    |> Enum.map(&branch_hint/1)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+    |> Enum.sort_by(&{&1.repo, &1.name})
+  end
+
+  defp branch_hint(%{ownership: "owned"} = target) do
+    cond do
+      detached?(target) ->
+        nil
+
+      branch = live_branch(target) ->
+        %{repo: target.repo.slug, name: branch}
+
+      true ->
+        nil
+    end
+  end
+
+  defp branch_hint(_target), do: nil
+
+  defp detached?(%{risk: %{detached: detached}}), do: detached
+  defp detached?(target), do: target.checkout.detached
+
+  defp live_branch(target) do
+    case target.risk do
+      %{branch: branch} when is_binary(branch) -> branch
+      _ -> target.checkout.branch
     end
   end
 
@@ -407,9 +443,17 @@ defmodule Gitspace.Teardown do
 
     result =
       if remaining == [] do
-        tombstone_workspace(workspace, plan.workspace_dir, removed, failures)
+        tombstone_workspace(workspace, plan.workspace_dir, removed, failures, plan.branches)
       else
-        rewrite_workspace(config, workspace, plan.workspace_dir, remaining, removed, failures)
+        rewrite_workspace(
+          config,
+          workspace,
+          plan.workspace_dir,
+          remaining,
+          removed,
+          failures,
+          plan.branches
+        )
       end
 
     case result do
@@ -428,7 +472,7 @@ defmodule Gitspace.Teardown do
     end
   end
 
-  defp tombstone_workspace(workspace, dir, removed, failures) do
+  defp tombstone_workspace(workspace, dir, removed, failures, branches) do
     _ = File.rm(Path.join(dir, Marker.marker_filename()))
 
     workspace
@@ -440,7 +484,7 @@ defmodule Gitspace.Teardown do
 
         {:ok,
          result(
-           empty_plan(workspace, dir),
+           empty_plan(workspace, dir, branches),
            removed,
            failures,
            false,
@@ -456,7 +500,7 @@ defmodule Gitspace.Teardown do
     end
   end
 
-  defp rewrite_workspace(config, workspace, dir, remaining, removed, failures) do
+  defp rewrite_workspace(config, workspace, dir, remaining, removed, failures, branches) do
     marker = marker(workspace, dir, remaining)
 
     try do
@@ -466,7 +510,7 @@ defmodule Gitspace.Teardown do
         {:ok, _members, []} ->
           {:ok,
            result(
-             empty_plan(workspace, dir),
+             empty_plan(workspace, dir, branches),
              removed,
              failures,
              false,
@@ -530,8 +574,15 @@ defmodule Gitspace.Teardown do
     end
   end
 
-  defp empty_plan(workspace, dir) do
-    %{workspace: workspace, workspace_dir: dir, targets: [], risky: [], member: nil}
+  defp empty_plan(workspace, dir, branches) do
+    %{
+      workspace: workspace,
+      workspace_dir: dir,
+      targets: [],
+      risky: [],
+      branches: branches,
+      member: nil
+    }
   end
 
   @spec result(plan(), list(), list(), boolean(), boolean(), boolean()) :: map()
@@ -553,6 +604,7 @@ defmodule Gitspace.Teardown do
       directory_kept: tombstoned and not directory_removed and File.dir?(dir),
       removed: Enum.map(removed, &public_target/1),
       risky: Enum.map(plan.risky, &public_risky/1),
+      branches: Map.get(plan, :branches, []),
       failures: Enum.map(failures, &Map.drop(&1, [:error]))
     }
   end

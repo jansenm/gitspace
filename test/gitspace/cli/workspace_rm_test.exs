@@ -1,7 +1,7 @@
 defmodule Gitspace.CLI.WorkspaceRmTest do
   use Gitspace.IndexCase, async: false
 
-  alias Gitspace.{Config, Fixtures, Projects, Repos, Workspaces}
+  alias Gitspace.{Config, Fixtures, Git, Projects, Repos, Workspaces}
 
   setup %{config: config} do
     :ok = Config.save(config)
@@ -30,6 +30,28 @@ defmodule Gitspace.CLI.WorkspaceRmTest do
     {_, 0} = cli(["co", "vemags@main", "--topic", "dev", "--new-branch", "--json"])
 
     {:ok, config: config}
+  end
+
+  test "reports the branches that remain after removal", %{config: config} do
+    {dry, 0} = cli(["workspace", "rm", "vemags/dev", "--dry-run", "--json"])
+    planned = Jason.decode!(dry)["data"]
+
+    assert Enum.sort_by(planned["branches"], & &1["repo"]) == [
+             %{"repo" => "a", "name" => "feature/dev"},
+             %{"repo" => "b", "name" => "feature/dev"}
+           ]
+
+    {output, 0} = cli(["workspace", "rm", "vemags/dev", "--yes"])
+    assert output =~ "branches kept"
+    assert output =~ "a:feature/dev"
+    assert output =~ "b:feature/dev"
+
+    for name <- ["a", "b"] do
+      assert {:ok, repo} = Repos.get(config, name)
+
+      assert Git.run!(["rev-parse", "--verify", "refs/heads/feature/dev"], cd: repo.bare_path)
+             |> String.trim() != ""
+    end
   end
 
   test "dry-run reports the plan without changing anything", %{config: config} do
@@ -111,6 +133,7 @@ defmodule Gitspace.CLI.WorkspaceRmTest do
 
     assert [member] = data["removed"]
     assert member["action"] == "unlinked"
+    assert data["branches"] == []
     assert File.dir?(borrowed_path)
     assert {:ok, workspace} = Workspaces.get(config, "vemags/borrow")
     assert Enum.map(workspace.members, & &1.name) == ["b"]

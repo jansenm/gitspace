@@ -253,7 +253,8 @@ gitspace workspace rm vemags/MT4711 --dry-run
   remain.
 - Risky owned members (dirty, untracked, or unpushed work) are refused. `--force` anchors
   HEAD and saves the tracked diff plus untracked files under `<data>/trash` before removal.
-- Branches are never deleted.
+- Branches are never deleted. Branches of removed owned members are reported as
+  `branches kept`, in `--dry-run` and after removal, so nothing disappears silently.
 - `--yes` is required without a terminal; `--dry-run` shows the plan without changing anything.
 
 ## Shell completion
