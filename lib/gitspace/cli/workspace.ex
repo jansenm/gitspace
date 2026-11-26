@@ -254,6 +254,8 @@ defmodule Gitspace.CLI.Workspace do
             member -> "remove member #{workspace.name}:#{member}?"
           end
 
+        question = question <> branch_suffix(plan.branches)
+
         with :ok <- Helpers.require_confirmation(global, opts, question) do
           case Teardown.execute(config, plan, force: opts[:force]) do
             {:ok, result} -> {:ok, result, &render_rm/1}
@@ -268,6 +270,18 @@ defmodule Gitspace.CLI.Workspace do
   defp rm_strict do
     [force: :boolean, dry_run: :boolean] ++ Helpers.global_strict()
   end
+
+  defp branch_suffix([]), do: ""
+
+  defp branch_suffix([branch]), do: " (keeps branch #{branch_label(branch)})"
+
+  defp branch_suffix([first, second]) do
+    " (keeps branches #{branch_label(first)}, #{branch_label(second)})"
+  end
+
+  defp branch_suffix(branches), do: " (keeps #{length(branches)} branches)"
+
+  defp branch_label(%{repo: repo, name: name}), do: "#{repo}:#{name}"
 
   defp split_rm_target(target) do
     case String.split(target, ":", parts: 2) do
@@ -403,6 +417,15 @@ defmodule Gitspace.CLI.Workspace do
       end)
     end
 
+    if result.branches != [] do
+      IO.puts("")
+      IO.puts("branches kept")
+
+      Enum.each(result.branches, fn branch ->
+        IO.puts("  #{branch.repo}:#{branch.name}")
+      end)
+    end
+
     if result.tombstoned do
       IO.puts("")
       IO.puts("workspace removed; the name may be reused")
@@ -429,7 +452,8 @@ defmodule Gitspace.CLI.Workspace do
       `workspace rm <workspace>:<member>` removes one membership; removing the last
       one tombstones the workspace. Borrowed checkouts are unlinked, never deleted.
       Risky owned members are refused unless --force archives their work under
-      <data>/trash first. Branches are kept.
+      <data>/trash first. Branches are kept and listed as `branches kept`, in
+      --dry-run and after removal.
 
     USAGE
       gitspace workspace new <name> [--project P] [--own <repo>[@<ref>]]...
