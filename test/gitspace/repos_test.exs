@@ -54,7 +54,7 @@ defmodule Gitspace.ReposTest do
 
     assert File.exists?(MirrorIndex.path(config))
     index = File.read!(MirrorIndex.path(config))
-    assert index =~ "canonical-remote"
+    assert index =~ "identity"
     assert index =~ "/one/config"
     assert index =~ "/two/config"
     assert index =~ "one-config"
@@ -318,6 +318,100 @@ defmodule Gitspace.ReposTest do
 
     assert {:ok, after_push} = Repos.get(config, "remote-url")
     assert after_push.remote_url == ssh
+  end
+
+  test "set_remote_url may change host and path without rekeying", %{config: config} do
+    original = "https://example.com/acme/config.git"
+    moved = "https://gitlab.com/team/renamed.git"
+
+    assert {:ok, repo} = Repos.add(config, original, name: "moving", no_fetch: true)
+    assert repo.remote_key == "example.com/acme/config"
+
+    assert {:ok, result} = Repos.set_remote_url(config, repo, moved)
+    assert result.previous == [original]
+    assert result.url == moved
+
+    assert {:ok, updated} = Repos.get(config, "moving")
+    assert updated.remote_key == repo.remote_key
+    assert updated.bare_path == repo.bare_path
+    assert updated.remote_url == moved
+
+    assert Git.run!(["config", "--get", "gitspace.remote-key"], cd: repo.bare_path)
+           |> String.trim() == repo.remote_key
+
+    Gitspace.Index.stop()
+    File.rm_rf!(Config.db_path(config))
+
+    assert {:ok, _summary} = Gitspace.Index.reindex(config)
+    assert {:ok, found} = Repos.get(config, repo.remote_key)
+    assert found.remote_key == repo.remote_key
+    assert found.bare_path == repo.bare_path
+    assert found.remote_url == moved
+  end
+
+  test "set_remote_url refuses an address that belongs to another repository", %{config: config} do
+    one = "https://example.com/acme/one.git"
+    two = "https://example.com/acme/two.git"
+
+    assert {:ok, repo} = Repos.add(config, one, name: "one", no_fetch: true)
+    assert {:ok, _} = Repos.add(config, two, name: "two", no_fetch: true)
+
+    assert {:error, error} = Repos.set_remote_url(config, repo, two)
+    assert error.code == :conflict
+    assert error.details.other == "two"
+
+    assert {:ok, unchanged} = Repos.get(config, "one")
+    assert unchanged.remote_url == one
+  end
+
+  test "a push URL may point at another repository", %{config: config} do
+    one = "https://example.com/acme/one.git"
+    two = "https://example.com/acme/two.git"
+
+    assert {:ok, repo} = Repos.add(config, one, name: "one", no_fetch: true)
+    assert {:ok, _} = Repos.add(config, two, name: "two", no_fetch: true)
+
+    assert {:ok, result} = Repos.set_remote_url(config, repo, two, push: true)
+    assert result.target == "push"
+  end
+
+  test "adding the current address after a URL change is a conflict", %{config: config} do
+    assert {:ok, repo} =
+             Repos.add(config, "https://example.com/acme/one.git", name: "one", no_fetch: true)
+
+    moved = "https://gitlab.com/team/renamed.git"
+    assert {:ok, _} = Repos.set_remote_url(config, repo, moved)
+
+    assert {:error, error} = Repos.add(config, moved, name: "again", no_fetch: true)
+    assert error.code == :conflict
+    assert error.details.alias == "one"
+  end
+
+  test "discover pins an origin-derived identity into the mirror", %{config: config} do
+    source = Fixtures.source_repo!()
+    assert {:ok, repo} = Repos.add(config, Fixtures.repo_url(source), name: "legacy")
+    Git.run!(["config", "--unset", "gitspace.remote-key"], cd: repo.bare_path)
+
+    assert %{discovered: 1, issues: []} = Repos.discover(config)
+
+    assert Git.run!(["config", "--get", "gitspace.remote-key"], cd: repo.bare_path)
+           |> String.trim() == repo.remote_key
+  end
+
+  test "discover recovers an origin-less mirror from its pinned identity", %{config: config} do
+    source = Fixtures.source_repo!()
+    assert {:ok, repo} = Repos.add(config, Fixtures.repo_url(source), name: "pinned")
+    Git.run!(["config", "--unset", "remote.origin.url"], cd: repo.bare_path)
+
+    Gitspace.Index.stop()
+    File.rm_rf!(Config.db_path(config))
+
+    assert {:ok, summary} = Gitspace.Index.reindex(config)
+    assert Enum.any?(summary.issues, &(&1.kind == :missing_remote))
+
+    assert {:ok, found} = Repos.get(config, repo.remote_key)
+    assert found.remote_key == repo.remote_key
+    assert found.bare_path == repo.bare_path
   end
 
   test "set_remote_url refuses multiple fetch URLs and leaves them untouched", %{config: config} do

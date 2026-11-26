@@ -9,7 +9,7 @@ defmodule Gitspace.MirrorIndex do
   alias Gitspace.{Config, Layout}
 
   @filename "remotes.txt"
-  @header "# sha256\tcanonical-remote\talias\talias-source\n"
+  @header "# sha256\tidentity\talias\talias-source\n"
 
   @spec path(Config.t()) :: Path.t()
   def path(%Config{} = config), do: Path.join(Config.repos_dir(config), @filename)
