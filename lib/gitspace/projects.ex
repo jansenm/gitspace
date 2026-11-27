@@ -259,9 +259,13 @@ defmodule Gitspace.Projects do
   def resolve_members(%Config{} = _config, %__MODULE__{} = project) do
     {repos, missing} =
       Enum.reduce(project.members, {[], []}, fn key, {repos, missing} ->
-        case Repo.get_by(Repository, remote_key: key) do
-          nil -> {repos, [key | missing]}
-          repo -> {[repo | repos], missing}
+        if is_binary(key) do
+          case Repo.get_by(Repository, remote_key: key) do
+            nil -> {repos, [key | missing]}
+            repo -> {[repo | repos], missing}
+          end
+        else
+          {repos, [key | missing]}
         end
       end)
 
@@ -274,7 +278,9 @@ defmodule Gitspace.Projects do
          Error.new(:not_found, "project #{project.name} references unregistered repositories",
            hint:
              "restore them with `gitspace repo add`, or remove: " <>
-               Enum.join(Enum.reverse(keys), ", "),
+               Enum.map_join(Enum.reverse(keys), ", ", fn key ->
+                 if is_binary(key), do: key, else: inspect(key)
+               end),
            details: %{project: project.name, missing: Enum.reverse(keys)}
          )}
     end

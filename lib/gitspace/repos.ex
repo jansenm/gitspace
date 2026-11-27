@@ -1262,6 +1262,8 @@ defmodule Gitspace.Repos do
 
   defp register_entries(entries) do
     Enum.reduce(entries, {[], [], %{}}, fn entry, {registered, issues, overrides} ->
+      entry = restore_identity(entry)
+
       issues =
         if is_nil(entry.remote_key) do
           [%{kind: :missing_identity, path: entry.bare_path} | issues]
@@ -1292,24 +1294,55 @@ defmodule Gitspace.Repos do
           issues
         end
 
-      case register_entry(entry) do
-        {:ok, repo} ->
-          _ = pin_entry_identity(entry)
+      if is_nil(entry.remote_key) do
+        {registered, issues, overrides}
+      else
+        case register_entry(entry) do
+          {:ok, repo} ->
+            _ = pin_entry_identity(entry)
 
-          overrides =
-            if entry.alias_source == "explicit" and is_binary(entry.alias) do
-              Map.put(overrides, repo.id, %{alias: entry.alias, source: "explicit"})
-            else
-              overrides
-            end
+            overrides =
+              if entry.alias_source == "explicit" and is_binary(entry.alias) do
+                Map.put(overrides, repo.id, %{alias: entry.alias, source: "explicit"})
+              else
+                overrides
+              end
 
-          {[repo.id | registered], issues, overrides}
+            {[repo.id | registered], issues, overrides}
 
-        {:error, error} ->
-          {registered, [%{kind: :repository, reason: error.message} | issues], overrides}
+          {:error, error} ->
+            {registered, [%{kind: :repository, reason: error.message} | issues], overrides}
+        end
       end
     end)
   end
+
+  # A local mirror can lose its `gitspace.remote-key` (for example after a
+  # manual config edit or an older creation path). If the repository is still
+  # indexed by bare path, restore the identity from the index and pin it back
+  # onto the mirror instead of failing the whole reindex.
+  defp restore_identity(%{remote_key: nil} = entry) do
+    case Repo.get_by(Repository, bare_path: entry.bare_path) do
+      %Repository{remote_key: key} when is_binary(key) ->
+        case pin_identity(entry.bare_path, key) do
+          :ok ->
+            %{
+              entry
+              | remote_key: key,
+                expected_hash: Layout.remote_hash(key),
+                identity_source: :config
+            }
+
+          _ ->
+            entry
+        end
+
+      _ ->
+        entry
+    end
+  end
+
+  defp restore_identity(entry), do: entry
 
   defp pin_entry_identity(%{
          identity_source: :origin,
@@ -1345,12 +1378,6 @@ defmodule Gitspace.Repos do
       end
 
     cond do
-      is_nil(entry.remote_key) ->
-        {:error,
-         Error.new(:error, "mirror has no identity: #{entry.bare_path}",
-           hint: "restore remote.origin.url or set gitspace.remote-key in the mirror config"
-         )}
-
       existing && is_nil(entry.origin) ->
         existing
         |> Ecto.Changeset.change(%{

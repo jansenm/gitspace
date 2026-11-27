@@ -180,6 +180,29 @@ defmodule Gitspace.ReposTest do
     assert found.bare_path == repo.bare_path
   end
 
+  test "discover restores a local mirror identity from the index", %{config: config} do
+    assert {:ok, repo} = Repos.init_local(config, "demo")
+
+    Git.run!(["config", "--unset", "gitspace.remote-key"], cd: repo.bare_path)
+
+    assert %{discovered: 1, issues: []} = Repos.discover(config)
+
+    restored =
+      Git.run!(["config", "--get", "gitspace.remote-key"], cd: repo.bare_path) |> String.trim()
+
+    assert restored == repo.remote_key
+    assert {:ok, found} = Repos.get(config, "demo")
+    assert found.remote_key == repo.remote_key
+  end
+
+  test "discover reports an unknown local mirror without crashing", %{config: config} do
+    bare = Path.join(Config.repos_dir(config), "unknown.git")
+    Gitspace.Git.Mirror.init_local!(bare, "main")
+
+    assert %{issues: issues} = Repos.discover(config)
+    assert Enum.any?(issues, &(&1.kind == :missing_identity and &1.path == bare))
+  end
+
   test "explicit aliases survive index deletion via mirror metadata", %{config: config} do
     source = Fixtures.source_repo!()
     assert {:ok, _repo} = Repos.add(config, Fixtures.repo_url(source), name: "before")
