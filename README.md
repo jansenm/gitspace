@@ -32,7 +32,7 @@ Product scope, CLI contract and acceptance plan live in the planning repository:
 | Recovery | `reindex` — rediscover mirrors from disk, rebuild workspaces from markers |
 | Machine surface | `--json` on every command, exit codes 0–7, `--verbose` prints git argv |
 
-305 checks (301 tests, 3 properties, 1 doctest) in ~64 s.
+306 checks (302 tests, 3 properties, 1 doctest) in ~63 s.
 
 ## Commands
 
@@ -143,7 +143,7 @@ gitspace co vemags@feature/MT4711 --topic MT4711 --exclude legacy
 |---|---|
 | no `--topic`/`--name` | check out the ref as-is (branch, or detached for tag/SHA) |
 | `--topic T` with a ref | derive an owned branch from `feature/{topic}`, starting at the ref |
-| `--topic T` without a ref | check out **each repository's default branch** as-is (`main`, `master`, `devel`, …) |
+| `--topic T` without a ref | derive an owned branch from `feature/{topic}`, starting at **each repository's default ref** (`main`, `master`, `devel`, …) |
 | `--branch B` | create the explicit owned branch `B` from the ref or default |
 | `--as-is` | check out the ref (or default) unchanged even with a topic |
 | `--detach` | detached checkout at the ref |

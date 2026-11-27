@@ -107,7 +107,10 @@ defmodule Gitspace.CLI.Repo do
   defp first_workspace(config, repo, opts) do
     with {:ok, project} <- init_project(config, repo, opts),
          {:ok, workspace} <-
-           Create.co(config, repo.slug, nil, topic: opts[:topic] || "main") do
+           Create.co(config, repo.slug, nil,
+             topic: opts[:topic] || "main",
+             as_is: true
+           ) do
       {:ok, project, workspace}
     end
   end

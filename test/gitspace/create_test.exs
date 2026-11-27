@@ -342,13 +342,14 @@ defmodule Gitspace.CreateTest do
     assert error.code == :usage
   end
 
-  test "co without a ref checks out each repo's default branch", %{config: config} do
+  test "co with a topic and no ref derives from each repo's default branch", %{config: config} do
     main_source = Fixtures.source_repo!()
     devel_source = Fixtures.source_repo!()
 
     Git.run!(["checkout", "-b", "devel"], cd: devel_source)
     Fixtures.write(devel_source, "devel.txt", "devel\n")
     Fixtures.commit!(devel_source, "devel")
+    devel_tip = Git.run!(["rev-parse", "refs/heads/devel"], cd: devel_source) |> String.trim()
 
     assert {:ok, _} = Repos.add(config, Fixtures.repo_url(main_source), name: "main-repo")
     assert {:ok, _} = Repos.add(config, Fixtures.repo_url(devel_source), name: "devel-repo")
@@ -357,7 +358,18 @@ defmodule Gitspace.CreateTest do
     assert {:ok, result} = Create.co(config, "mixed", nil, topic: "dev")
 
     branches = Map.new(result.members, &{&1.repo, &1.branch})
-    assert branches == %{"main-repo" => "main", "devel-repo" => "devel"}
+    assert branches == %{"main-repo" => "feature/dev", "devel-repo" => "feature/dev"}
+
+    devel = Enum.find(result.members, &(&1.repo == "devel-repo"))
+    assert devel.head == devel_tip
+    assert File.read!(Path.join(devel.path, "devel.txt")) == "devel\n"
+
+    assert {:ok, as_is} = Create.co(config, "mixed", nil, topic: "plain", as_is: true)
+
+    assert Map.new(as_is.members, &{&1.repo, &1.branch}) == %{
+             "main-repo" => "main",
+             "devel-repo" => "devel"
+           }
 
     assert {:ok, derived} = Create.co(config, "mixed", "main", topic: "dev2")
     assert Enum.all?(derived.members, &(&1.branch == "feature/dev2"))

@@ -144,7 +144,7 @@ defmodule Gitspace.CLI.Co do
     IO.puts("#{action}: #{data.path}")
     IO.puts("  project:  #{data.project}")
     IO.puts("  topic:    #{data.topic}")
-    IO.puts("  ref:      #{data.ref || "(each default branch)"}")
+    IO.puts("  ref:      #{data.ref || "(each repository default)"}")
 
     IO.puts("  labels:   #{if data.labels == [], do: "-", else: Enum.join(data.labels, ", ")}")
 

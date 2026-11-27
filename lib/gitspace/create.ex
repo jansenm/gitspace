@@ -48,8 +48,6 @@ defmodule Gitspace.Create do
          {:ok, topic} <- co_topic(ref, opts),
          :ok <- validate_co_options(opts, topic),
          {:ok, branch_mode} <- co_branch_mode(opts, ref) do
-      branch_mode = if is_nil(ref) and branch_mode == :ref, do: :default, else: branch_mode
-
       specs =
         Enum.map(selected, fn repo ->
           %{
@@ -247,7 +245,7 @@ defmodule Gitspace.Create do
       opts[:detach] -> {:ok, :detach}
       is_binary(opts[:branch]) -> {:ok, {:create, opts[:branch]}}
       opts[:as_is] -> {:ok, if(is_nil(ref), do: :default, else: :ref)}
-      explicit_topic?(opts) and is_binary(ref) -> {:ok, :derive}
+      explicit_topic?(opts) -> {:ok, :derive}
       true -> {:ok, :ref}
     end
   end
