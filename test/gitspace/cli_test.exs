@@ -681,6 +681,17 @@ defmodule Gitspace.CLITest do
     assert Jason.decode!(output)["data"]["entries"] == []
   end
 
+  test "repo fetch --all reports each repository inline", %{} do
+    {output, 0} = cli(["repo", "fetch", "--all"])
+    assert output =~ "fetching demo ... ok"
+    assert output =~ "fetched 1 repositories"
+
+    {json, 0} = cli(["repo", "fetch", "--all", "--json"])
+    refute json =~ "fetching"
+    assert Jason.decode!(json)["data"]["fetched"] == ["demo"]
+    assert Jason.decode!(json)["data"]["inline"] == false
+  end
+
   test "repo shows help and repo ls includes the remote URI", %{source: source, repo: repo} do
     {help, 0} = cli(["repo"])
     assert help =~ "gitspace repo add"

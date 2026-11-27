@@ -32,7 +32,7 @@ Product scope, CLI contract and acceptance plan live in the planning repository:
 | Recovery | `reindex` — rediscover mirrors from disk, rebuild workspaces from markers |
 | Machine surface | `--json` on every command, exit codes 0–7, `--verbose` prints git argv |
 
-306 checks (302 tests, 3 properties, 1 doctest) in ~63 s.
+307 checks (303 tests, 3 properties, 1 doctest) in ~66 s.
 
 ## Commands
 
@@ -396,8 +396,9 @@ gitspace ls --json         # full rows, including path and mirror metadata
 A `?` in a count means the cached status is missing or older than
 `status.max_age_seconds` (default 3600). `gitspace ls --refresh` recomputes the listed
 checkouts; `gitspace status --refresh` refreshes every indexed checkout and shows the inbox.
-`repo fetch` is not a status refresh: fetching invalidates `last_status_at` and can make more
-`?` appear until a `status`/`ls --refresh` runs.
+`repo fetch --all` prints one progress line per repository (`fetching demo ... ok`) as it
+completes; `--json` remains a single document. `repo fetch` is not a status refresh: fetching
+invalidates `last_status_at` and can make more `?` appear until a `status`/`ls --refresh` runs.
 
 Use `gitspace path <target>` or `gitspace show <target>` when the checkout path is what you
 need.

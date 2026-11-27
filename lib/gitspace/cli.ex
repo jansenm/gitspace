@@ -462,6 +462,8 @@ defmodule Gitspace.CLI do
 
         `repo init` creates an empty local repository with its first checkout;
         `repo import` adopts an existing clone without a remote.
+        `repo fetch --all` prints one progress line per repository as it
+        completes; `--json` stays a single document.
         `set-url` changes the fetch URL, or the push URL with `--push`; the
         repository keeps its identity and mirror directory.
         """

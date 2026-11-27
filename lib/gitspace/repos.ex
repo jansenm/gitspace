@@ -753,17 +753,32 @@ defmodule Gitspace.Repos do
     end
   end
 
-  @spec fetch_selector(Config.t(), String.t() | :all) ::
-          {:ok, [Repository.t()]} | {:error, Error.t()}
-  def fetch_selector(config, :all) do
-    repos = Repo.all(Repository)
+  @spec fetch_selector(Config.t(), String.t() | :all, keyword()) ::
+          {:ok, [Repository.t()]}
+          | {:partial, [Repository.t()], [{String.t(), Error.t()}]}
+          | {:error, Error.t()}
+  def fetch_selector(config, selector, opts \\ [])
+
+  def fetch_selector(config, :all, opts) do
+    progress = opts[:on_progress]
 
     results =
-      Enum.map(repos, fn repo ->
-        case fetch(config, repo) do
-          {:ok, repo} -> {:ok, repo}
-          {:error, error} -> {:error, repo.slug, error}
+      Repo.all(Repository)
+      |> Enum.map(fn repo ->
+        notify(progress, {:start, repo})
+
+        result =
+          case fetch(config, repo) do
+            {:ok, repo} -> {:ok, repo}
+            {:error, error} -> {:error, repo.slug, error}
+          end
+
+        case result do
+          {:ok, repo} -> notify(progress, {:ok, repo})
+          {:error, slug, error} -> notify(progress, {:error, slug, error})
         end
+
+        result
       end)
 
     ok = for {:ok, repo} <- results, do: repo
@@ -776,12 +791,15 @@ defmodule Gitspace.Repos do
     end
   end
 
-  def fetch_selector(config, selector) do
+  def fetch_selector(config, selector, _opts) do
     with {:ok, repo} <- get(config, selector),
          {:ok, repo} <- fetch(config, repo) do
       {:ok, [repo]}
     end
   end
+
+  defp notify(nil, _event), do: :ok
+  defp notify(fun, event) when is_function(fun, 1), do: fun.(event)
 
   @doc """
   Changes the fetch or push URL of a mirror's `origin` remote.

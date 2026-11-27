@@ -164,20 +164,24 @@ defmodule Gitspace.CLI.Repo do
     end
   end
 
-  defp fetch(_global, args) do
+  defp fetch(global, args) do
     with {:ok, opts, rest} <- Helpers.parse(args, fetch_strict()),
          {:ok, selector} <- selector(opts, rest),
          {:ok, config} <- Helpers.load_config(),
          :ok <- Helpers.start_index(config) do
-      case Repos.fetch_selector(config, selector) do
+      progress = progress(global)
+      inline = selector == :all and not is_nil(progress)
+
+      case Repos.fetch_selector(config, selector, on_progress: progress) do
         {:ok, repos} ->
-          data = %{fetched: Enum.map(repos, & &1.slug), failed: []}
+          data = %{fetched: Enum.map(repos, & &1.slug), failed: [], inline: inline}
           {:ok, data, &render_fetch/1}
 
         {:partial, ok, errors} ->
           data = %{
             fetched: Enum.map(ok, & &1.slug),
-            failed: Enum.map(errors, fn {slug, error} -> %{repo: slug, error: error.message} end)
+            failed: Enum.map(errors, fn {slug, error} -> %{repo: slug, error: error.message} end),
+            inline: inline
           }
 
           {:error,
@@ -398,10 +402,35 @@ defmodule Gitspace.CLI.Repo do
     IO.puts("  mirror: #{repo.bare_path}")
   end
 
-  defp render_fetch(%{fetched: fetched, failed: failed}) do
+  defp progress(%{json: true}), do: nil
+
+  defp progress(_global) do
+    fn
+      {:start, repo} -> IO.write("fetching #{repo.slug} ... ")
+      {:ok, _repo} -> IO.puts("ok")
+      {:error, slug, error} -> IO.puts("failed: #{failure_reason(slug, error)}")
+    end
+  end
+
+  defp failure_reason(slug, error) do
+    error.message
+    |> String.replace_prefix("fetch failed for #{slug}: ", "")
+    |> String.split("\n", trim: true)
+    |> List.first()
+    |> case do
+      nil -> "fetch failed"
+      line -> line
+    end
+  end
+
+  defp render_fetch(%{inline: true, fetched: fetched}) do
+    IO.puts("fetched #{length(fetched)} repositories")
+  end
+
+  defp render_fetch(%{fetched: fetched} = data) do
     Enum.each(fetched, &IO.puts("fetched #{&1}"))
 
-    Enum.each(failed, fn failure ->
+    Enum.each(Map.get(data, :failed, []), fn failure ->
       IO.puts(:stderr, "failed #{failure.repo}: #{failure.error}")
     end)
   end
