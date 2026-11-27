@@ -440,6 +440,9 @@ defmodule Gitspace.CLI.Doctor do
         fix[:kind] == :mirrors ->
           IO.puts("  fixed mirrors: #{fix.discovered} registered, #{fix.issues} issue(s) remain")
 
+        fix[:kind] == :keep ->
+          IO.puts("  pruned keep refs: #{fix.pruned} (#{fix.errors} error(s))")
+
         fix[:error] ->
           IO.puts(:stderr, "fix #{fix.repo}: #{fix.error}")
 

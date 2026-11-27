@@ -25,7 +25,7 @@ defmodule Gitspace.MirrorIndex do
       |> Enum.sort_by(& &1.remote_key)
       |> Enum.map_join("", fn repo ->
         [
-          String.slice(Layout.remote_hash(repo.remote_key), 0, 64),
+          mirror_hash(repo),
           "\t",
           repo.remote_key,
           "\t",
@@ -85,6 +85,12 @@ defmodule Gitspace.MirrorIndex do
         {:error, reason}
     end
   end
+
+  defp mirror_hash(%{bare_path: bare}) when is_binary(bare) do
+    bare |> Path.basename() |> String.replace_suffix(".git", "")
+  end
+
+  defp mirror_hash(%{remote_key: key}), do: String.slice(Layout.remote_hash(key), 0, 64)
 
   defp empty_to_nil(""), do: nil
   defp empty_to_nil(value), do: value

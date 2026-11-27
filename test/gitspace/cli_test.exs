@@ -727,6 +727,11 @@ defmodule Gitspace.CLITest do
            |> String.trim() == moved
   end
 
+  test "doctor --fix renders the keep fix without a repo key", %{config: _config} do
+    {output, 0} = cli(["doctor", "--fix"])
+    assert output =~ "pruned keep refs"
+  end
+
   test "doctor warns on mirror index drift and --fix reconciles it", %{config: config} do
     File.rm!(Gitspace.MirrorIndex.path(config))
 

@@ -161,7 +161,7 @@ defmodule Gitspace.ReposTest do
     assert {:ok, moved} = Repos.get(config, "demo")
     assert moved.bare_path == renamed
     text = File.read!(MirrorIndex.path(config))
-    assert text =~ Layout.remote_hash(Layout.normalize_remote(source))
+    assert text =~ String.duplicate("0", 64)
   end
 
   test "discovery keeps the stored remote when a mirror has no origin", %{config: config} do
@@ -195,12 +195,55 @@ defmodule Gitspace.ReposTest do
     assert found.remote_key == repo.remote_key
   end
 
-  test "discover reports an unknown local mirror without crashing", %{config: config} do
+  test "discover adopts an unknown local mirror with a fresh identity", %{config: config} do
     bare = Path.join(Config.repos_dir(config), "unknown.git")
     Gitspace.Git.Mirror.init_local!(bare, "main")
 
-    assert %{issues: issues} = Repos.discover(config)
-    assert Enum.any?(issues, &(&1.kind == :missing_identity and &1.path == bare))
+    assert %{discovered: 1, issues: []} = Repos.discover(config)
+
+    found = Gitspace.Repo.get_by(Repository, bare_path: bare)
+    assert found.origin_kind == "local"
+    assert found.remote_key =~ ~r/^local:/
+  end
+
+  test "discover recovers a lost config identity from the index", %{config: config} do
+    source = Fixtures.source_repo!()
+    assert {:ok, repo} = Repos.add(config, Fixtures.repo_url(source), name: "lost-config")
+    Git.run!(["config", "--unset", "gitspace.remote-key"], cd: repo.bare_path)
+    Git.run!(["config", "--unset", "remote.origin.url"], cd: repo.bare_path)
+
+    assert %{discovered: 1, issues: []} = Repos.discover(config)
+
+    assert Git.run!(["config", "--get", "gitspace.remote-key"], cd: repo.bare_path)
+           |> String.trim() == repo.remote_key
+
+    assert {:ok, found} = Repos.get(config, repo.remote_key)
+    assert found.origin_kind == "local"
+  end
+
+  test "discover adopts an identity-less mirror as a local repository", %{config: config} do
+    source = Fixtures.source_repo!()
+    assert {:ok, repo} = Repos.add(config, Fixtures.repo_url(source), name: "orphan")
+    Repo.delete_all(Repository)
+    Git.run!(["config", "--unset", "gitspace.remote-key"], cd: repo.bare_path)
+    Git.run!(["config", "--unset", "remote.origin.url"], cd: repo.bare_path)
+
+    assert %{discovered: 1, issues: []} = Repos.discover(config)
+
+    found = Gitspace.Repo.get_by(Repository, bare_path: repo.bare_path)
+    assert found.origin_kind == "local"
+    assert found.remote_url == ""
+    assert found.remote_key =~ ~r/^local:/
+    assert found.bare_path == repo.bare_path
+
+    assert Git.run!(["config", "--get", "gitspace.remote-key"], cd: repo.bare_path)
+           |> String.trim() == found.remote_key
+
+    assert Git.run!(["config", "--get", "gitspace.origin-kind"], cd: repo.bare_path)
+           |> String.trim() == "local"
+
+    assert %{issues: []} = Repos.audit_mirrors(config)
+    assert %{discovered: 1, issues: []} = Repos.discover(config)
   end
 
   test "explicit aliases survive index deletion via mirror metadata", %{config: config} do

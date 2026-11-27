@@ -1197,13 +1197,23 @@ defmodule Gitspace.Repos do
          {:ok, _} <- Git.run(["config", "gitspace.alias-source", source], cd: repo.bare_path),
          {:ok, _} <-
            Git.run(["config", "gitspace.remote-key", repo.remote_key], cd: repo.bare_path),
-         {:ok, _} <-
-           Git.run(["config", "gitspace.origin-kind", "remote"], cd: repo.bare_path) do
+         :ok <- ensure_origin_kind(repo.bare_path) do
       :ok
     else
       {:error, result} ->
         {:error,
          Error.new(:error, "cannot write mirror alias for #{repo.slug}: #{result.stderr}")}
+    end
+  end
+
+  defp ensure_origin_kind(bare) do
+    if read_config(bare, ["config", "--get", "gitspace.origin-kind"]) in [nil, ""] do
+      case Git.run(["config", "gitspace.origin-kind", "remote"], cd: bare) do
+        {:ok, _} -> :ok
+        {:error, result} -> {:error, result}
+      end
+    else
+      :ok
     end
   end
 
@@ -1229,8 +1239,17 @@ defmodule Gitspace.Repos do
     origin_kind = if is_binary(remote) and remote != "", do: "remote", else: "local"
     remote_url = remote || ""
     key = identity_key(configured, remote)
-    expected_hash = key && Layout.remote_hash(key)
     actual_hash = bare |> Path.basename() |> String.replace_suffix(".git", "")
+
+    identity_source =
+      identity_source(
+        configured,
+        read_config(bare, ["config", "--get", "gitspace.identity-source"])
+      )
+
+    expected_hash =
+      if identity_source == :adopted, do: actual_hash, else: key && Layout.remote_hash(key)
+
     alias_name = read_config(bare, ["config", "--get", "gitspace.alias"])
 
     source =
@@ -1242,7 +1261,7 @@ defmodule Gitspace.Repos do
       remote_url: remote_url,
       remote_key: key,
       origin_kind: origin_kind,
-      identity_source: if(configured in [nil, ""], do: :origin, else: :config),
+      identity_source: identity_source,
       expected_hash: expected_hash,
       actual_hash: actual_hash,
       alias: alias_name,
@@ -1259,6 +1278,10 @@ defmodule Gitspace.Repos do
     do: Layout.normalize_remote(origin)
 
   defp identity_key(_configured, _origin), do: nil
+
+  defp identity_source(_configured, "adopted"), do: :adopted
+  defp identity_source(configured, _source) when configured in [nil, ""], do: :origin
+  defp identity_source(_configured, _source), do: :config
 
   defp register_entries(entries) do
     Enum.reduce(entries, {[], [], %{}}, fn entry, {registered, issues, overrides} ->
@@ -1329,8 +1352,12 @@ defmodule Gitspace.Repos do
             %{
               entry
               | remote_key: key,
-                expected_hash: Layout.remote_hash(key),
-                identity_source: :config
+                expected_hash:
+                  if(entry.identity_source == :adopted,
+                    do: entry.actual_hash,
+                    else: Layout.remote_hash(key)
+                  ),
+                identity_source: entry.identity_source
             }
 
           _ ->
@@ -1338,11 +1365,34 @@ defmodule Gitspace.Repos do
         end
 
       _ ->
-        entry
+        adopt_local_identity(entry)
     end
   end
 
   defp restore_identity(entry), do: entry
+
+  # A mirror without an origin and without a pinned identity has no address to
+  # derive a key from. Adopt it as a local repository with a fresh identity and
+  # keep its directory name as the authoritative mirror hash.
+  defp adopt_local_identity(entry) do
+    key = "local:" <> Ecto.UUID.generate()
+
+    with :ok <- pin_identity(entry.bare_path, key),
+         {:ok, _} <- Git.run(["config", "gitspace.origin-kind", "local"], cd: entry.bare_path),
+         {:ok, _} <-
+           Git.run(["config", "gitspace.identity-source", "adopted"], cd: entry.bare_path) do
+      %{
+        entry
+        | remote_key: key,
+          remote_url: "",
+          origin_kind: "local",
+          expected_hash: entry.actual_hash,
+          identity_source: :adopted
+      }
+    else
+      _ -> entry
+    end
+  end
 
   defp pin_entry_identity(%{
          identity_source: :origin,
