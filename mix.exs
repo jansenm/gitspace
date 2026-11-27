@@ -4,7 +4,7 @@ defmodule Gitspace.MixProject do
   def project do
     [
       app: :gitspace,
-      version: "0.6.1",
+      version: "0.7.0",
       elixir: "~> 1.20",
       start_permanent: Mix.env() == :prod,
       elixirc_paths: elixirc_paths(Mix.env()),
