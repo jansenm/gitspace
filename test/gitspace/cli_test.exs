@@ -425,6 +425,26 @@ defmodule Gitspace.CLITest do
     assert entry["status"] == "up_to_date"
   end
 
+  test "a not-yet-pushed branch is reported up to date in text and JSON", %{
+    path: path
+  } do
+    Git.run!(["config", "branch.feature_JENKINS-123.remote", "origin"], cd: path)
+
+    Git.run!(
+      ["config", "branch.feature_JENKINS-123.merge", "refs/heads/feature_JENKINS-123"],
+      cd: path
+    )
+
+    {json, 0} = cli(["rebase", "demo@JENKINS-123:demo", "--json"])
+    entry = Jason.decode!(json)["data"]["entries"] |> hd()
+    assert entry["status"] == "up_to_date"
+    assert entry["hint"] =~ "does not exist"
+
+    {text, 0} = cli(["rebase", "demo@JENKINS-123:demo"])
+    assert text =~ "result:   up to date"
+    assert text =~ "does not exist"
+  end
+
   test "a rebase conflict is visible in status, ls and the inbox", %{
     path: path,
     repo: repo,

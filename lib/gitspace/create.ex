@@ -1592,6 +1592,11 @@ defmodule Gitspace.Create do
          not plan.unborn do
       branch = plan.desired_branch
 
+      # The push target and the rebase base are different refs: the branch
+      # pushes to its own name on the remote, but integrates the ref it was
+      # split from.
+      _ = record_base(plan, branch)
+
       with remote when is_binary(remote) <- tracking_remote(plan),
            :ok <- set_tracking(plan.path, branch, remote) do
         :ok
@@ -1602,6 +1607,18 @@ defmodule Gitspace.Create do
       :ok
     end
   end
+
+  defp record_base(plan, branch) do
+    case base_name(plan.start_ref) do
+      nil -> :ok
+      base -> Gitspace.Git.run(["config", "branch.#{branch}.gitspace-base", base], cd: plan.path)
+    end
+  end
+
+  defp base_name("refs/remotes/" <> name), do: name
+  defp base_name("refs/heads/" <> name), do: name
+  defp base_name("refs/tags/" <> name), do: name
+  defp base_name(_), do: nil
 
   defp tracking_remote(plan) do
     remotes = remotes(plan.repo.bare_path)

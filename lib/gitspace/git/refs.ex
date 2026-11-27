@@ -174,6 +174,57 @@ defmodule Gitspace.Git.Refs do
   def upstream_ref(worktree, %Status{}), do: upstream_name(worktree)
 
   @doc """
+  The ref a rebase should use.
+
+  A branch derived by gitspace records the ref it was split from in
+  `branch.<name>.gitspace-base`. Rebasing onto that base is what users expect:
+  the push target (`branch.<name>.merge`) is the same-named remote branch and
+  is the wrong side to integrate, even after it exists. Branches without a
+  recorded base fall back to their configured upstream.
+
+  Returns `{:missing, ref}` when the configured upstream does not exist yet, so
+  callers can treat a not-yet-pushed branch as having nothing to integrate.
+  """
+  @spec rebase_base(Path.t(), %Status{}) :: {:ok, String.t()} | {:missing, String.t()} | :none
+  def rebase_base(worktree, %Status{} = status) do
+    case recorded_base(worktree, status) do
+      {:ok, base} ->
+        {:ok, base}
+
+      :none ->
+        case upstream_ref(worktree, status) do
+          nil ->
+            if is_binary(status.upstream), do: {:missing, status.upstream}, else: :none
+
+          upstream ->
+            {:ok, upstream}
+        end
+    end
+  end
+
+  defp recorded_base(worktree, %Status{branch: branch}) when is_binary(branch) do
+    case branch_config(worktree, branch, "gitspace-base") do
+      nil -> :none
+      base -> if commit_sha(worktree, base), do: {:ok, base}, else: :none
+    end
+  end
+
+  defp recorded_base(_worktree, _status), do: :none
+
+  defp branch_config(worktree, branch, key) do
+    case Git.run(["config", "--get", "branch.#{branch}.#{key}"], cd: worktree) do
+      {:ok, %{stdout: out}} ->
+        case String.trim(out) do
+          "" -> nil
+          value -> value
+        end
+
+      {:error, _} ->
+        nil
+    end
+  end
+
+  @doc """
   Revision arguments for commits that exist only here.
 
   - with an upstream: ahead of the upstream

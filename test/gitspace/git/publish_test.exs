@@ -99,6 +99,22 @@ defmodule Gitspace.Git.PublishTest do
     assert {:error, failure} = Publish.run(path)
     assert failure.kind == :refused
     assert failure.message =~ "no git remote"
+    assert is_binary(failure.hint)
+    assert failure.hint =~ "repo set-url"
+  end
+
+  test "refuses to guess between multiple remotes", %{bare: bare, path: path} do
+    Git.run!(["remote", "rename", "origin", "one"], cd: path)
+    Git.run!(["remote", "add", "two", bare], cd: path)
+    Git.run!(["config", "--unset", "branch.main.remote"], cd: path)
+    Git.run!(["config", "--unset", "branch.main.merge"], cd: path)
+    commit!(path, "first")
+
+    assert {:error, failure} = Publish.run(path)
+    assert failure.kind == :refused
+    assert failure.message =~ "multiple remotes"
+    assert is_binary(failure.hint)
+    assert failure.hint =~ "--remote"
   end
 
   test "honours an explicit remote", %{bare: bare, path: path} do

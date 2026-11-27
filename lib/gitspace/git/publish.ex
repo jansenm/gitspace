@@ -78,8 +78,10 @@ defmodule Gitspace.Git.Publish do
 
       remotes == [] ->
         {:error,
-         failure(:refused, "no git remote in this checkout",
-           hint: "adopt an upstream with `gitspace repo set-url` or add one with `git remote add`"
+         failure(
+           :refused,
+           "no git remote in this checkout",
+           "adopt an upstream with `gitspace repo set-url` or add one with `git remote add`"
          )}
 
       true ->
@@ -100,8 +102,10 @@ defmodule Gitspace.Git.Publish do
 
       true ->
         {:error,
-         failure(:refused, "multiple remotes, refusing to guess",
-           hint: "use --remote with one of: #{Enum.join(remotes, ", ")}"
+         failure(
+           :refused,
+           "multiple remotes, refusing to guess",
+           "use --remote with one of: #{Enum.join(remotes, ", ")}"
          )}
     end
   end

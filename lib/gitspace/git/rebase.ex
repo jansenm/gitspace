@@ -1,10 +1,12 @@
 defmodule Gitspace.Git.Rebase do
   @moduledoc """
-  Starts, continues and aborts a non-interactive rebase onto the upstream.
+  Starts, continues and aborts a non-interactive rebase onto the branch base.
 
-  A rebase is only started on a clean, attached checkout with a resolvable
-  upstream. Conflicts are left in place for the user to resolve; the CLI turns
-  them into a per-worktree result and keeps going with the remaining worktrees.
+  A derived branch records the ref it was split from and is rebased onto that
+  ref, not onto its same-named push target. A rebase is only started on a
+  clean, attached checkout. Conflicts are left in place for the user to
+  resolve; the CLI turns them into a per-worktree result and keeps going with
+  the remaining worktrees.
   """
 
   alias Gitspace.Git
@@ -39,43 +41,74 @@ defmodule Gitspace.Git.Rebase do
     with {:ok, status} <- Status.read(worktree),
          :ok <- ensure_clean(status),
          :ok <- ensure_branch(status),
-         :ok <- ensure_no_operation(worktree),
-         {:ok, upstream} <- ensure_upstream(worktree, status) do
-      old_head = head(worktree)
-      commits = count(worktree, ["#{upstream}..HEAD"])
-
-      case rebase(worktree, ["rebase", upstream]) do
-        {:ok, output} ->
-          new_head = head(worktree)
-
-          {:ok,
-           %{
-             status: if(new_head == old_head, do: :up_to_date, else: :rebased),
-             branch: status.branch,
-             upstream: upstream,
-             old_head: old_head,
-             new_head: new_head,
-             commits: commits,
-             step: nil,
-             total: nil,
-             files: [],
-             output: output,
-             hint: nil
-           }}
-
-        {:conflict, output, operation} ->
-          {:ok,
-           conflict(worktree, output, operation, %{
-             branch: status.branch,
-             upstream: upstream,
-             old_head: old_head,
-             commits: commits
-           })}
-
-        {:error, output} ->
-          {:error, failure(:error, last_line(output), "git rebase failed")}
+         :ok <- ensure_no_operation(worktree) do
+      case rebase_target(worktree, status) do
+        {:ok, upstream} -> start_onto(worktree, status, upstream)
+        {:up_to_date, upstream} -> up_to_date(worktree, status, upstream)
+        {:error, failure} -> {:error, failure}
       end
     end
+  end
+
+  defp start_onto(worktree, status, upstream) do
+    old_head = head(worktree)
+    commits = count(worktree, ["#{upstream}..HEAD"])
+
+    case rebase(worktree, ["rebase", upstream]) do
+      {:ok, output} ->
+        new_head = head(worktree)
+
+        {:ok,
+         %{
+           status: if(new_head == old_head, do: :up_to_date, else: :rebased),
+           branch: status.branch,
+           upstream: upstream,
+           old_head: old_head,
+           new_head: new_head,
+           commits: commits,
+           step: nil,
+           total: nil,
+           files: [],
+           output: output,
+           hint: nil
+         }}
+
+      {:conflict, output, operation} ->
+        {:ok,
+         conflict(worktree, output, operation, %{
+           branch: status.branch,
+           upstream: upstream,
+           old_head: old_head,
+           commits: commits
+         })}
+
+      {:error, output} ->
+        {:error, failure(:error, last_line(output), "git rebase failed")}
+    end
+  end
+
+  # A branch whose push target is configured but does not exist on the remote
+  # has nothing to integrate. This covers branches that predate the recorded
+  # base, and branches created outside gitspace.
+  defp up_to_date(worktree, status, upstream) do
+    head = head(worktree)
+
+    {:ok,
+     %{
+       status: :up_to_date,
+       branch: status.branch,
+       upstream: upstream,
+       old_head: head,
+       new_head: head,
+       commits: 0,
+       step: nil,
+       total: nil,
+       files: [],
+       output: "",
+       hint:
+         "upstream #{upstream} does not exist on the remote yet; " <>
+           "push the branch first with `gitspace push`"
+     }}
   end
 
   @spec continue(Path.t()) :: {:ok, result()} | {:error, failure()}
@@ -216,23 +249,21 @@ defmodule Gitspace.Git.Rebase do
     end
   end
 
-  defp ensure_upstream(worktree, status) do
-    case Refs.upstream_ref(worktree, status) do
-      nil ->
-        if is_binary(status.upstream) do
-          {:error,
-           failure(:refused, "upstream #{status.upstream} does not exist yet",
-             hint: "push the branch first with `gitspace push`"
-           )}
-        else
-          {:error,
-           failure(:refused, "no upstream configured",
-             hint: "push the branch first with `gitspace push`"
-           )}
-        end
+  defp rebase_target(worktree, status) do
+    case Refs.rebase_base(worktree, status) do
+      {:ok, ref} ->
+        {:ok, ref}
 
-      upstream ->
-        {:ok, upstream}
+      {:missing, ref} ->
+        {:up_to_date, ref}
+
+      :none ->
+        {:error,
+         failure(
+           :refused,
+           "no upstream configured",
+           "push the branch first with `gitspace push`"
+         )}
     end
   end
 

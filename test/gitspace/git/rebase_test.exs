@@ -83,6 +83,64 @@ defmodule Gitspace.Git.RebaseTest do
     assert Operation.read(path) == nil
   end
 
+  test "rebases a derived branch onto its recorded base, not its push target", %{
+    bare: bare,
+    path: path
+  } do
+    commit!(path, "base.txt", "base\n", "base")
+    push!(path)
+
+    Git.run!(["checkout", "-b", "feature"], cd: path)
+    Git.run!(["config", "branch.feature.remote", "origin"], cd: path)
+    Git.run!(["config", "branch.feature.merge", "refs/heads/feature"], cd: path)
+    Git.run!(["config", "branch.feature.gitspace-base", "origin/main"], cd: path)
+
+    other = clone!(bare)
+    commit!(other, "remote.txt", "remote\n", "remote change")
+    push!(other)
+
+    commit!(path, "local.txt", "local\n", "local change")
+    Git.run!(["fetch", "origin"], cd: path)
+
+    assert {:ok, result} = Rebase.start(path)
+
+    assert result.status == :rebased
+    assert result.upstream == "origin/main"
+    assert result.commits == 1
+    assert Git.run!(["log", "--format=%s"], cd: path) =~ "remote change"
+  end
+
+  test "treats a configured push target that does not exist yet as up to date", %{path: path} do
+    commit!(path, "base.txt", "base\n", "base")
+    push!(path)
+
+    Git.run!(["checkout", "-b", "feature"], cd: path)
+    commit!(path, "local.txt", "local\n", "local change")
+    Git.run!(["config", "branch.feature.remote", "origin"], cd: path)
+    Git.run!(["config", "branch.feature.merge", "refs/heads/feature"], cd: path)
+
+    assert {:ok, result} = Rebase.start(path)
+
+    assert result.status == :up_to_date
+    assert result.upstream == "origin/feature"
+    assert result.hint =~ "does not exist"
+    assert Operation.read(path) == nil
+  end
+
+  test "ignores a recorded base that no longer resolves", %{path: path} do
+    commit!(path, "base.txt", "base\n", "base")
+    push!(path)
+
+    Git.run!(["checkout", "-b", "feature"], cd: path)
+    Git.run!(["config", "branch.feature.remote", "origin"], cd: path)
+    Git.run!(["config", "branch.feature.merge", "refs/heads/feature"], cd: path)
+    Git.run!(["config", "branch.feature.gitspace-base", "origin/gone"], cd: path)
+
+    assert {:ok, result} = Rebase.start(path)
+    assert result.status == :up_to_date
+    assert result.upstream == "origin/feature"
+  end
+
   test "refuses a dirty tree", %{path: path} do
     commit!(path, "base.txt", "base\n", "base")
     push!(path)
@@ -110,6 +168,7 @@ defmodule Gitspace.Git.RebaseTest do
     assert {:error, failure} = Rebase.start(path)
     assert failure.kind == :refused
     assert failure.message =~ "no upstream"
+    assert is_binary(failure.hint)
   end
 
   test "continue and abort require a rebase in progress", %{path: path} do

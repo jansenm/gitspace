@@ -71,6 +71,9 @@ defmodule Gitspace.CreateTest do
     assert branch_member.branch == "my-work"
     assert branch_member.ref == "main"
 
+    assert Git.run!(["config", "--get", "branch.my-work.gitspace-base"], cd: branch_member.path)
+           |> String.trim() == "origin/main"
+
     assert {:ok, detached} = Create.co(config, "a", "main", name: "detached", detach: true)
     assert [detached_member] = detached.members
     assert detached_member.detached
@@ -99,6 +102,16 @@ defmodule Gitspace.CreateTest do
 
     assert Enum.all?(result.members, &(&1.action == "created"))
     assert Enum.all?(result.members, &File.dir?(&1.path))
+
+    for member <- result.members do
+      assert Git.run!(["config", "--get", "branch.#{member.branch}.gitspace-base"],
+               cd: member.path
+             )
+             |> String.trim() == "origin/main"
+
+      assert Git.run!(["config", "--get", "branch.#{member.branch}.merge"], cd: member.path)
+             |> String.trim() == "refs/heads/#{member.branch}"
+    end
 
     marker = Marker.read!(result.path)
     assert marker["workspace"] == "a@mt4711-update-dependencies"

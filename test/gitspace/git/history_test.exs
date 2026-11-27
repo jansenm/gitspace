@@ -77,6 +77,22 @@ defmodule Gitspace.Git.HistoryTest do
     refute history.incoming.enabled
   end
 
+  test "a derived branch compares incoming with its recorded base", %{source: source, bare: bare} do
+    path = Fixtures.worktree!(bare, "origin/main", detach: false, branch: "feature")
+    Git.run!(["config", "branch.feature.remote", "origin"], cd: path)
+    Git.run!(["config", "branch.feature.merge", "refs/heads/feature"], cd: path)
+    Git.run!(["config", "branch.feature.gitspace-base", "origin/main"], cd: path)
+
+    Fixtures.write(source, "upstream.txt", "upstream\n")
+    Fixtures.commit!(source, "upstream work")
+    Git.Mirror.fetch!(bare)
+
+    assert {:ok, history} = History.read(path)
+
+    assert history.incoming.base == "origin/main"
+    assert [%{subject: "upstream work"}] = history.incoming.commits
+  end
+
   test "a branch without upstream falls back to origin/<default> for incoming", %{bare: bare} do
     path = Fixtures.worktree!(bare, "origin/main")
     Git.run!(["checkout", "-B", "topic"], cd: path)

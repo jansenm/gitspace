@@ -452,12 +452,18 @@ gitspace rebase --abort --yes          # abort and roll back the last batch
 gitspace rebase --abort vemags@JENKINS-123:api
 ```
 
-Each worktree is rebased independently onto its upstream. A failure is reported per worktree
-and the remaining ones are still attempted. Conflicts are left in place with the conflicting
-files and progress (`1/3`): resolve them, `git add`, then `--continue`, or `--abort`.
-Starting requires a clean tree, an attached branch, an upstream that exists (push first) and
-no merge/rebase/cherry-pick/revert in progress. `--fetch` refreshes the mirrors before
-starting. Batch abort requires `--yes`.
+Each worktree is rebased independently onto the ref it was derived from. A topic branch
+created from `main` therefore rebases onto `origin/main`, not onto its own same-named remote
+branch, even after that branch has been pushed. The base is recorded as
+`branch.<name>.gitspace-base` when the branch is created; plain checkouts fall back to their
+configured upstream. A branch whose push target does not exist yet is reported up to date with
+a push hint instead of failing, so a fresh topic branch never blocks a batch.
+
+A failure is reported per worktree and the remaining ones are still attempted. Conflicts are
+left in place with the conflicting files and progress (`1/3`): resolve them, `git add`, then
+`--continue`, or `--abort`. Starting requires a clean tree, an attached branch and no
+merge/rebase/cherry-pick/revert in progress. `--fetch` refreshes the mirrors before starting.
+Batch abort requires `--yes`.
 
 `--abort` stops in-progress rebases and also **rolls back completed rebases from the last
 batch** (journal at `<data>/rebase.json`). Rollback only happens while the worktree is still

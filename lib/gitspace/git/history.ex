@@ -2,10 +2,10 @@ defmodule Gitspace.Git.History do
   @moduledoc """
   Outgoing and incoming commits between a checkout and its upstream.
 
-  `outgoing` is what a push would send. `incoming` is what a rebase or pull
-  would integrate. Both use the same upstream resolution as `Refs.unpushed/3`;
-  a branch without an upstream is compared with `origin/<default>` for the
-  incoming side when that ref exists, and otherwise reported as not comparable.
+  `outgoing` is what a push would send. `incoming` is what a rebase would
+  integrate: the branch's recorded base when it has one, otherwise its
+  upstream, otherwise `origin/<default>` when that ref exists. A branch whose
+  configured upstream does not exist yet is reported as not comparable.
   """
 
   alias Gitspace.Git
@@ -61,7 +61,7 @@ defmodule Gitspace.Git.History do
           :outgoing in directions
         )
 
-      incoming_ref = incoming_ref(worktree, upstream, default_branch)
+      incoming_ref = incoming_ref(worktree, status, default_branch)
 
       incoming =
         read_side(
@@ -104,13 +104,13 @@ defmodule Gitspace.Git.History do
     }
   end
 
-  defp incoming_ref(_worktree, upstream, _default_branch) when is_binary(upstream),
-    do: upstream
-
-  defp incoming_ref(worktree, nil, default_branch),
-    do: default_remote_ref(worktree, default_branch)
-
-  defp incoming_ref(_worktree, _upstream, _default_branch), do: nil
+  defp incoming_ref(worktree, status, default_branch) do
+    case Refs.rebase_base(worktree, status) do
+      {:ok, ref} -> ref
+      {:missing, _ref} -> nil
+      :none -> default_remote_ref(worktree, default_branch)
+    end
+  end
 
   defp default_remote_ref(_worktree, default_branch)
        when not is_binary(default_branch) or default_branch == "",
