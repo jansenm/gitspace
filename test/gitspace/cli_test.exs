@@ -187,6 +187,22 @@ defmodule Gitspace.CLITest do
     assert Enum.all?(Gitspace.Checkouts.list(config), & &1.last_status_at)
   end
 
+  test "refresh and doctor fix report inline progress in text mode", %{config: config} do
+    Gitspace.Repo.update_all(Gitspace.Index.Checkout, set: [last_status_at: nil])
+
+    {refresh, 0} = cli(["--refresh"])
+    assert refresh =~ "refreshing 1/"
+    assert refresh =~ "... ok"
+
+    {ls, 0} = cli(["ls", "--repo", "demo", "--refresh"])
+    assert ls =~ "refreshing 1/"
+    assert ls =~ "... ok"
+
+    {fix, 0} = cli(["doctor", "fix"])
+    assert fix =~ "fixing 1/"
+    assert fix =~ "... ok"
+  end
+
   test "ls is compact by default and --verbose adds hash and mirror", %{repo: repo} do
     {plain, 0} = cli(["ls"])
     assert plain =~ "PROJECT"
@@ -743,7 +759,7 @@ defmodule Gitspace.CLITest do
     {_, 2} = cli(["repo", "fetch", "--all", "demo"])
 
     {output, 0} = cli(["repo", "fetch", "--all"])
-    assert output =~ "fetching demo ... ok"
+    assert output =~ "fetching 1/1 demo ... ok"
     assert output =~ "fetched 1 repositories"
 
     {json, 0} = cli(["repo", "fetch", "--all", "--json"])

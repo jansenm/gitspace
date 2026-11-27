@@ -31,9 +31,9 @@ defmodule Gitspace.Inventory do
 
     refreshed =
       if opts[:refresh] do
-        refresh_all(config, all)
+        refresh_all(config, all, opts[:progress])
       else
-        refresh_unknown(config, all)
+        refresh_unknown(config, all, opts[:progress])
       end
 
     workspace_rows = Enum.map(workspaces, &workspace_row(config, &1, refreshed))
@@ -154,7 +154,11 @@ defmodule Gitspace.Inventory do
     checkouts =
       Checkouts.list(config, filters)
       |> then(fn checkouts ->
-        if filters[:refresh], do: Checkouts.refresh_many(config, checkouts), else: checkouts
+        if filters[:refresh] do
+          Checkouts.refresh_many(config, checkouts, on_progress: filters[:progress])
+        else
+          checkouts
+        end
       end)
 
     checkouts
@@ -181,11 +185,13 @@ defmodule Gitspace.Inventory do
           {:ok, map()} | {:error, Error.t()}
   def workspace_status(config, name, opts \\ []) do
     with {:ok, workspace} <- Workspaces.get(config, name) do
+      members = Enum.map(workspace.members, & &1.checkout)
+
       refreshed =
         if opts[:refresh] do
-          refresh_all(config, Enum.map(workspace.members, & &1.checkout))
+          refresh_all(config, members, opts[:progress])
         else
-          refresh_unknown(config, Enum.map(workspace.members, & &1.checkout))
+          refresh_unknown(config, members, opts[:progress])
         end
 
       {:ok, workspace_row(config, workspace, refreshed)}
@@ -201,7 +207,7 @@ defmodule Gitspace.Inventory do
           {:error, _} -> checkout
         end
       else
-        Map.get(refresh_unknown(config, [checkout]), checkout.id, checkout)
+        Map.get(refresh_unknown(config, [checkout], nil), checkout.id, checkout)
       end
 
     membership = Map.get(memberships_by_checkout(), checkout.id)
@@ -232,7 +238,7 @@ defmodule Gitspace.Inventory do
   @spec show_workspace(Config.t(), String.t()) :: {:ok, map()} | {:error, Error.t()}
   def show_workspace(config, name) do
     with {:ok, workspace} <- Workspaces.get(config, name) do
-      refreshed = refresh_unknown(config, Enum.map(workspace.members, & &1.checkout))
+      refreshed = refresh_unknown(config, Enum.map(workspace.members, & &1.checkout), nil)
       row = workspace_row(config, workspace, refreshed)
 
       {:ok,
@@ -282,36 +288,48 @@ defmodule Gitspace.Inventory do
     })
   end
 
-  defp refresh_unknown(config, checkouts) do
-    checkouts
-    |> List.flatten()
-    |> Enum.uniq_by(& &1.id)
-    |> Enum.take(@initial_refresh_limit)
-    |> Enum.reduce(%{}, fn checkout, acc ->
-      checkout =
-        if is_nil(checkout.last_status_at) and File.dir?(checkout.path) do
-          case Checkouts.refresh(config, checkout) do
-            {:ok, refreshed} -> refreshed
-            {:error, _} -> checkout
-          end
-        else
-          checkout
-        end
+  defp refresh_unknown(config, checkouts, progress) do
+    checkouts =
+      checkouts
+      |> List.flatten()
+      |> Enum.uniq_by(& &1.id)
+      |> Enum.take(@initial_refresh_limit)
 
-      Map.put(acc, checkout.id, checkout)
+    to_refresh =
+      Enum.filter(checkouts, &(is_nil(&1.last_status_at) and File.dir?(&1.path)))
+
+    refreshed = refresh_all(config, to_refresh, progress)
+
+    Map.new(checkouts, fn checkout ->
+      {checkout.id, Map.get(refreshed, checkout.id, checkout)}
     end)
   end
 
-  defp refresh_all(config, checkouts) do
+  defp refresh_all(config, checkouts, progress) do
     checkouts
-    |> Enum.map(fn checkout ->
+    |> Enum.with_index(1)
+    |> Enum.map(fn {checkout, index} ->
+      label = progress_label(checkout)
+      notify(progress, {:start, index, length(checkouts), label})
+
       case Checkouts.refresh(config, checkout) do
-        {:ok, refreshed} -> refreshed
-        {:error, _} -> checkout
+        {:ok, refreshed} ->
+          notify(progress, {:ok, index, length(checkouts), label})
+          refreshed
+
+        {:error, error} ->
+          notify(progress, {:error, index, length(checkouts), label, Exception.message(error)})
+          checkout
       end
     end)
     |> Map.new(&{&1.id, &1})
   end
+
+  defp progress_label(%{repository: %Gitspace.Index.Repository{slug: slug}}), do: slug
+  defp progress_label(%{path: path}), do: Path.basename(path)
+
+  defp notify(nil, _event), do: :ok
+  defp notify(callback, event) when is_function(callback, 1), do: callback.(event)
 
   defp memberships_by_checkout do
     from(m in WorkspaceMember,

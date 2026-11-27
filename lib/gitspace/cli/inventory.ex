@@ -3,15 +3,18 @@ defmodule Gitspace.CLI.Inventory do
 
   alias Gitspace.{Error, Inventory, Repo, Targets, Workspaces}
   alias Gitspace.Index.Repository
-  alias Gitspace.CLI.{Helpers, Output}
+  alias Gitspace.CLI.{Helpers, Output, Progress}
   alias Gitspace.Git.{Changes, Operation}
 
-  def inbox(_global, args) do
+  def inbox(global, args) do
     with {:ok, opts, rest} <- Helpers.parse(args, [refresh: :boolean] ++ Helpers.global_strict()),
          :ok <- Helpers.no_extra_args(rest),
          {:ok, config} <- Helpers.load_config(),
          :ok <- Helpers.start_index(config) do
-      {:ok, Inventory.inbox(config, refresh: !!opts[:refresh]), &render_inbox/1}
+      progress = Progress.callback(global, "refreshing")
+
+      {:ok, Inventory.inbox(config, refresh: !!opts[:refresh], progress: progress),
+       &render_inbox/1}
     end
   end
 
@@ -20,9 +23,12 @@ defmodule Gitspace.CLI.Inventory do
          :ok <- Helpers.no_extra_args(rest),
          {:ok, config} <- Helpers.load_config(),
          :ok <- Helpers.start_index(config) do
+      progress = if opts[:refresh], do: Progress.callback(global, "refreshing"), else: nil
+
       rows =
         Inventory.ls(config,
           refresh: opts[:refresh],
+          progress: progress,
           repo: opts[:repo],
           workspace: opts[:workspace],
           project: opts[:project],
@@ -39,14 +45,16 @@ defmodule Gitspace.CLI.Inventory do
     end
   end
 
-  def status(_global, args) do
+  def status(global, args) do
     with {:ok, opts, rest} <- Helpers.parse(args, status_strict(), l: :long, v: :diff),
          :ok <- validate_status_options(opts),
          {:ok, config} <- Helpers.load_config(),
          :ok <- Helpers.start_index(config) do
+      progress = if opts[:refresh], do: Progress.callback(global, "refreshing"), else: nil
+
       case rest do
         [target] ->
-          status_target(config, target, opts)
+          status_target(config, target, opts, progress)
 
         _ ->
           {:error,
@@ -124,12 +132,12 @@ defmodule Gitspace.CLI.Inventory do
     end
   end
 
-  defp status_target(config, target, opts) do
+  defp status_target(config, target, opts, progress) do
     with {:ok, resolved} <- Targets.resolve(config, target) do
       if detail?(opts) and not single_checkout?(resolved) do
         {:error, Error.new(:usage, "status --long/--diff needs a member or checkout target")}
       else
-        resolved_status(config, resolved, opts)
+        resolved_status(config, resolved, opts, progress)
       end
     end
   end
@@ -138,10 +146,13 @@ defmodule Gitspace.CLI.Inventory do
   defp single_checkout?({:checkout, _checkout}), do: true
   defp single_checkout?(_resolved), do: false
 
-  defp resolved_status(config, resolved, opts) do
+  defp resolved_status(config, resolved, opts, progress) do
     case resolved do
       {:workspace, workspace} ->
-        case Inventory.workspace_status(config, workspace.name, refresh: opts[:refresh]) do
+        case Inventory.workspace_status(config, workspace.name,
+               refresh: opts[:refresh],
+               progress: progress
+             ) do
           {:ok, row} ->
             {:ok, %{workspace: row, refreshed: !!opts[:refresh]}, &render_workspace_status/1}
 
@@ -161,14 +172,24 @@ defmodule Gitspace.CLI.Inventory do
         {:ok,
          %{
            project: project,
-           checkouts: Inventory.ls(config, project: project.name, refresh: opts[:refresh])
+           checkouts:
+             Inventory.ls(config,
+               project: project.name,
+               refresh: opts[:refresh],
+               progress: progress
+             )
          }, &render_project_status/1}
 
       {:repo, repo} ->
         {:ok,
          %{
            repo: repo.slug,
-           checkouts: Inventory.ls(config, repo: repo.slug, refresh: opts[:refresh])
+           checkouts:
+             Inventory.ls(config,
+               repo: repo.slug,
+               refresh: opts[:refresh],
+               progress: progress
+             )
          }, &render_repo_status/1}
     end
   end

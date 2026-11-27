@@ -416,9 +416,14 @@ defmodule Gitspace.CLI.Repo do
 
   defp progress(_global) do
     fn
-      {:start, repo} -> IO.write("fetching #{repo.slug} ... ")
-      {:ok, _repo} -> IO.puts("ok")
-      {:error, slug, error} -> IO.puts("failed: #{failure_reason(slug, error)}")
+      {:start, index, total, repo} ->
+        IO.write("fetching #{index}/#{total} #{repo.slug} ... ")
+
+      {:ok, _index, _total, _repo} ->
+        IO.puts("ok")
+
+      {:error, _index, _total, slug, error} ->
+        IO.puts("failed: #{failure_reason(slug, error)}")
     end
   end
 

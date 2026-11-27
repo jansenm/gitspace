@@ -761,11 +761,14 @@ defmodule Gitspace.Repos do
 
   def fetch_selector(config, :all, opts) do
     progress = opts[:on_progress]
+    repos = Repo.all(Repository)
+    total = length(repos)
 
     results =
-      Repo.all(Repository)
-      |> Enum.map(fn repo ->
-        notify(progress, {:start, repo})
+      repos
+      |> Enum.with_index(1)
+      |> Enum.map(fn {repo, index} ->
+        notify(progress, {:start, index, total, repo})
 
         result =
           case fetch(config, repo) do
@@ -774,8 +777,8 @@ defmodule Gitspace.Repos do
           end
 
         case result do
-          {:ok, repo} -> notify(progress, {:ok, repo})
-          {:error, slug, error} -> notify(progress, {:error, slug, error})
+          {:ok, repo} -> notify(progress, {:ok, index, total, repo})
+          {:error, slug, error} -> notify(progress, {:error, index, total, slug, error})
         end
 
         result

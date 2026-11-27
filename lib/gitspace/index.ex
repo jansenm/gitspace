@@ -47,27 +47,51 @@ defmodule Gitspace.Index do
   end
 
   @doc "Rebuilds the cache from git and the workspace markers."
-  @spec reindex(Config.t()) :: {:ok, map()}
-  def reindex(%Config{} = config) do
+  @spec reindex(Config.t(), keyword()) :: {:ok, map()}
+  def reindex(%Config{} = config, opts \\ []) do
     ensure_started(config)
     discovered = Repos.discover(config)
+    progress = opts[:on_progress]
+
+    repos = Repo.all(Repository)
+    total = length(repos)
 
     repo_results =
-      Repo.all(Repository)
-      |> Enum.map(fn repo ->
-        cond do
-          is_nil(repo.bare_path) ->
-            {:external, repo.slug}
+      repos
+      |> Enum.with_index(1)
+      |> Enum.map(fn {repo, index} ->
+        notify(progress, {:start, index, total, repo.slug})
 
-          not File.dir?(repo.bare_path) ->
-            {:missing_mirror, repo.slug}
+        result =
+          cond do
+            is_nil(repo.bare_path) ->
+              {:external, repo.slug}
 
-          true ->
-            case Repos.sync(config, repo) do
-              {:ok, summary} -> {:ok, summary}
-              {:error, error} -> {:error, repo.slug, error}
-            end
+            not File.dir?(repo.bare_path) ->
+              {:missing_mirror, repo.slug}
+
+            true ->
+              case Repos.sync(config, repo) do
+                {:ok, summary} -> {:ok, summary}
+                {:error, error} -> {:error, repo.slug, error}
+              end
+          end
+
+        case result do
+          {:ok, _summary} ->
+            notify(progress, {:ok, index, total, repo.slug})
+
+          {:external, _slug} ->
+            notify(progress, {:ok, index, total, repo.slug})
+
+          {:missing_mirror, slug} ->
+            notify(progress, {:error, index, total, slug, "mirror missing"})
+
+          {:error, slug, error} ->
+            notify(progress, {:error, index, total, slug, error.message})
         end
+
+        result
       end)
 
     {:ok, workspace_result} = Workspaces.reindex(config)
@@ -108,6 +132,9 @@ defmodule Gitspace.Index do
   def migrations_path do
     Application.app_dir(:gitspace, "priv/repo/migrations")
   end
+
+  defp notify(nil, _event), do: :ok
+  defp notify(callback, event) when is_function(callback, 1), do: callback.(event)
 
   defp start_repo(db_path, opts) do
     case Process.whereis(Repo) do

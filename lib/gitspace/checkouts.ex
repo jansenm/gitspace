@@ -82,15 +82,36 @@ defmodule Gitspace.Checkouts do
     end
   end
 
-  @spec refresh_many(Config.t(), [Checkout.t()]) :: [Checkout.t()]
-  def refresh_many(config, checkouts) do
-    Enum.map(checkouts, fn checkout ->
+  @spec refresh_many(Config.t(), [Checkout.t()], keyword()) :: [Checkout.t()]
+  def refresh_many(config, checkouts, opts \\ []) do
+    progress = opts[:on_progress]
+    total = length(checkouts)
+
+    checkouts
+    |> Enum.with_index(1)
+    |> Enum.map(fn {checkout, index} ->
+      label = progress_label(checkout)
+      notify(progress, {:start, index, total, label})
+
       case refresh(config, checkout) do
-        {:ok, checkout} -> checkout
-        {:error, _} -> checkout
+        {:ok, refreshed} ->
+          notify(progress, {:ok, index, total, label})
+          refreshed
+
+        {:error, error} ->
+          notify(progress, {:error, index, total, label, error_text(error)})
+          checkout
       end
     end)
   end
+
+  defp progress_label(%Checkout{repository: %Repository{slug: slug}}), do: slug
+  defp progress_label(%Checkout{path: path}), do: Path.basename(path)
+
+  defp error_text(%Error{message: message}), do: message
+
+  defp notify(nil, _event), do: :ok
+  defp notify(callback, event) when is_function(callback, 1), do: callback.(event)
 
   @doc "Imports every worktree of a mirror and marks vanished managed checkouts missing."
   @spec sync_repo(Config.t(), Repository.t()) :: {:ok, map()} | {:error, Error.t()}

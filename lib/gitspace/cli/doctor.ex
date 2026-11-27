@@ -6,7 +6,7 @@ defmodule Gitspace.CLI.Doctor do
   alias Gitspace.{Config, Error, Git, Index, Keep, Marker, Projects, Repo, Repos, Safety}
   alias Gitspace.Git.Worktree
   alias Gitspace.Index.{Checkout, Workspace}
-  alias Gitspace.CLI.Helpers
+  alias Gitspace.CLI.{Helpers, Progress}
 
   def run(global, args) do
     {before, rest} = Enum.split_while(args, &String.starts_with?(&1, "-"))
@@ -22,13 +22,20 @@ defmodule Gitspace.CLI.Doctor do
     end
   end
 
-  defp check_mode(_global, args, mode) do
+  defp check_mode(global, args, mode) do
     with {:ok, _opts, rest} <- Helpers.parse(args, Helpers.global_strict()),
          :ok <- Helpers.no_extra_args(rest),
          {:ok, config} <- Helpers.load_config(),
          :ok <- Helpers.start_index(config) do
-      fixes = if mode == :fix, do: fix(config), else: []
-      reindex = if mode == :reindex, do: reindex(config), else: nil
+      progress =
+        case mode do
+          :fix -> Progress.callback(global, "fixing")
+          :reindex -> Progress.callback(global, "reindexing")
+          :check -> nil
+        end
+
+      fixes = if mode == :fix, do: fix(config, progress), else: []
+      reindex = if mode == :reindex, do: reindex(config, progress), else: nil
       checks = checks(config)
       summary = summarize(checks)
 
@@ -333,13 +340,32 @@ defmodule Gitspace.CLI.Doctor do
     end
   end
 
-  defp fix(config) do
+  defp fix(config, progress) do
     discovery = Repos.discover(config)
 
-    prunes =
+    repos =
       Repo.all(Gitspace.Index.Repository)
       |> Enum.filter(&(&1.bare_path && File.dir?(&1.bare_path)))
-      |> Enum.map(&anchor_and_prune/1)
+
+    total = length(repos)
+
+    prunes =
+      repos
+      |> Enum.with_index(1)
+      |> Enum.map(fn {repo, index} ->
+        Progress.notify(progress, {:start, index, total, repo.slug})
+        result = anchor_and_prune(repo)
+
+        case result do
+          %{error: error} ->
+            Progress.notify(progress, {:error, index, total, repo.slug, to_string(error)})
+
+          _ ->
+            Progress.notify(progress, {:ok, index, total, repo.slug})
+        end
+
+        result
+      end)
 
     keep = Keep.prune(config, older_than: nil)
 
@@ -403,8 +429,8 @@ defmodule Gitspace.CLI.Doctor do
     end
   end
 
-  defp reindex(config) do
-    {:ok, summary} = Index.reindex(config)
+  defp reindex(config, progress) do
+    {:ok, summary} = Index.reindex(config, on_progress: progress)
     summary
   end
 
