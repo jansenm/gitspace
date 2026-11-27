@@ -310,10 +310,14 @@ defmodule Gitspace.CLI.Rebase do
   end
 
   defp reset(entry, old, new, branch) do
-    anchor(entry.path, old)
+    ref = anchor(entry.path, old)
 
     case Git.run(["reset", "--hard", old], cd: entry.path) do
       {:ok, _} ->
+        # The restored head is reachable from the branch again; the anchor has
+        # done its job and must not accumulate.
+        _ = Git.run(["update-ref", "-d", ref], cd: entry.path)
+
         Map.merge(base(entry), %{
           status: :rolled_back,
           branch: branch,
@@ -331,7 +335,7 @@ defmodule Gitspace.CLI.Rebase do
           entry,
           :error,
           last_line(result.stdout <> result.stderr),
-          "git reset --hard failed"
+          "git reset --hard failed; pre-rebase head kept at #{ref}"
         )
     end
   end
@@ -345,7 +349,7 @@ defmodule Gitspace.CLI.Rebase do
         "-" <> String.slice(head, 0, 12)
 
     _ = Git.run(["update-ref", ref, head], cd: path)
-    :ok
+    ref
   end
 
   defp repo_id(%{repo_struct: %Repository{id: id}}), do: id

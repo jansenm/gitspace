@@ -17,12 +17,13 @@ defmodule Gitspace.CLI.Completion do
 
   @cache_version 3
 
-  @commands ~w(ls log push rebase co workspace project status show path repo scan link unlink doctor setup reindex config completion help)
+  @commands ~w(ls log push rebase keep co workspace project status show path repo scan link unlink doctor setup reindex config completion help)
 
   @subcommands %{
     "workspace" => ~w(new ls status rm help),
     "project" => ~w(new ls show add remove rm help),
     "repo" => ~w(init import add ls fetch rm alias set-url help),
+    "keep" => ~w(ls prune help),
     "config" => ~w(list get set help),
     "completion" => ~w(bash zsh fish)
   }
@@ -50,6 +51,7 @@ defmodule Gitspace.CLI.Completion do
     "log" => ~w(--outgoing --incoming --both --limit --all --fetch),
     "push" => ~w(--dry-run --remote),
     "rebase" => ~w(--continue --abort --fetch),
+    "keep:prune" => ~w(--older-than --dry-run --gc),
     "config:set" => ~w(--force),
     "setup" => ~w(--data --projects --checkouts --force),
     "doctor" => ~w(--fix --reindex),
@@ -57,7 +59,7 @@ defmodule Gitspace.CLI.Completion do
     "link" => ~w(--repo)
   }
 
-  @value_flags ~w(--repo --project --topic --workspace --label --state --kind --source --only --exclude --as --branch --at --description --branch-template --default-ref --name --remote --own --borrow --data --projects --checkouts --max-depth --ide --shell --limit --diff-lines)
+  @value_flags ~w(--repo --project --topic --workspace --label --state --kind --source --only --exclude --as --branch --at --description --branch-template --default-ref --name --remote --own --borrow --data --projects --checkouts --max-depth --ide --shell --limit --diff-lines --older-than)
 
   @config_keys ~w(paths.data projects.root branch.template git.minimum_version status.max_age_seconds log.max_commits)
 

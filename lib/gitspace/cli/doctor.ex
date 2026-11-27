@@ -3,7 +3,7 @@ defmodule Gitspace.CLI.Doctor do
 
   import Ecto.Query
 
-  alias Gitspace.{Config, Git, Index, Marker, Projects, Repo, Repos, Safety}
+  alias Gitspace.{Config, Git, Index, Keep, Marker, Projects, Repo, Repos, Safety}
   alias Gitspace.Git.Worktree
   alias Gitspace.Index.{Checkout, Workspace}
   alias Gitspace.CLI.Helpers
@@ -40,6 +40,7 @@ defmodule Gitspace.CLI.Doctor do
       check_mirrors(config),
       check_checkouts(),
       check_workspaces(config),
+      check_keep(config),
       check_sync(config)
     ]
   end
@@ -223,6 +224,26 @@ defmodule Gitspace.CLI.Doctor do
     end
   end
 
+  defp check_keep(config) do
+    summary = Keep.summary(config)
+
+    cond do
+      summary.total == 0 ->
+        check("keep", "ok", "no keep refs")
+
+      summary.redundant > 0 ->
+        check(
+          "keep",
+          "warn",
+          "#{summary.total} keep ref(s), #{summary.redundant} redundant; run gitspace keep prune"
+        )
+
+      true ->
+        oldest = if summary.oldest_days, do: ", oldest #{summary.oldest_days}d", else: ""
+        check("keep", "ok", "#{summary.total} keep ref(s)#{oldest}")
+    end
+  end
+
   defp check_workspaces(config) do
     active = Repo.aggregate(from(w in Workspace, where: w.state == "active"), :count)
 
@@ -296,12 +317,15 @@ defmodule Gitspace.CLI.Doctor do
       |> Enum.filter(&(&1.bare_path && File.dir?(&1.bare_path)))
       |> Enum.map(&anchor_and_prune/1)
 
+    keep = Keep.prune(config, older_than: nil)
+
     [
       %{
         kind: :mirrors,
         discovered: discovery.discovered,
         issues: length(discovery.issues)
-      }
+      },
+      %{kind: :keep, pruned: length(keep.pruned), errors: length(keep.errors)}
       | prunes
     ]
   end

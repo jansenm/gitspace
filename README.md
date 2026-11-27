@@ -28,10 +28,11 @@ Product scope, CLI contract and acceptance plan live in the planning repository:
 | Discovery | `scan` (read-only), `link`, `unlink` |
 | Inventory | `gitspace`, `ls`, `log`, `status`, `show`, `path` |
 | Publishing | `push`, `rebase` |
+| Maintenance | `keep ls|prune` |
 | Recovery | `reindex` — rediscover mirrors from disk, rebuild workspaces from markers |
 | Machine surface | `--json` on every command, exit codes 0–7, `--verbose` prints git argv |
 
-271 checks (267 tests, 3 properties, 1 doctest) in ~54 s.
+277 checks (273 tests, 3 properties, 1 doctest) in ~78 s.
 
 ## Commands
 
@@ -420,6 +421,25 @@ anchored under `refs/gitspace/keep/rebase/…`. A targeted abort needs no confir
 `gitspace status` prints `operation: rebase in progress (2/5) onto …` while a merge, rebase,
 cherry-pick or revert is in progress. `ls` and the inbox add the operation to the risk
 reasons. The state is read from the worktree's git dir, so no index migration is needed.
+The temporary anchor used during rollback is removed again after a successful reset.
+
+## Keep refs
+
+Teardown and `doctor --fix` anchor commits under `refs/gitspace/keep/…` before removing a
+worktree or pruning stale metadata. They are real backups, not garbage, so gitspace never
+deletes them silently:
+
+```sh
+gitspace keep ls --verbose                 # repo, kind, age, redundant/kept, commit
+gitspace keep prune                        # delete redundant anchors only
+gitspace keep prune --older-than 30 --yes  # also orphaned anchors older than 30 days
+gitspace keep prune --dry-run              # preview only
+```
+
+A redundant anchor points at a commit that is still reachable from a branch, remote or tag;
+deleting it loses nothing. An orphaned anchor is the only remaining reference to removed
+work: it is kept unless `--older-than` is explicit, and that asks for confirmation. `doctor`
+reports redundant anchors and `--fix` prunes those automatically.
 
 ## Decisions
 

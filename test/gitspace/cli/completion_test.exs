@@ -167,6 +167,12 @@ defmodule Gitspace.CLI.CompletionTest do
     {continue, 0} = cli(["__complete", "1", "rebase", "--c"])
     assert lines(continue) == ["--continue"]
 
+    {keep_subcommands, 0} = cli(["__complete", "1", "keep", ""])
+    assert "prune" in lines(keep_subcommands)
+
+    {older_than, 0} = cli(["__complete", "2", "keep", "prune", "--o"])
+    assert lines(older_than) == ["--older-than"]
+
     {keys, 0} = cli(["__complete", "2", "config", "get", ""])
     assert "log.max_commits" in lines(keys)
   end

@@ -9,6 +9,7 @@ defmodule Gitspace.CLI do
     Co,
     Doctor,
     Inventory,
+    Keep,
     Log,
     Output,
     Project,
@@ -89,6 +90,9 @@ defmodule Gitspace.CLI do
       "project" ->
         subcommand(args) in ["ls", "show"]
 
+      "keep" ->
+        subcommand(args) == "ls"
+
       _ ->
         false
     end
@@ -138,6 +142,9 @@ defmodule Gitspace.CLI do
 
         "log" ->
           Log.run(global, command_args)
+
+        "keep" ->
+          Keep.run(global, command_args)
 
         "push" ->
           Push.run(global, command_args)
@@ -257,6 +264,7 @@ defmodule Gitspace.CLI do
     COMMANDS
       ls                           all indexed checkouts
       log <target>                 outgoing and incoming commits
+      keep ls|prune                list and prune refs/gitspace/keep anchors
       push <target>                push the checked-out branch
       rebase [target]              rebase worktrees onto their upstream
       co <project>[@<ref>]         check out a project topic
@@ -306,6 +314,9 @@ defmodule Gitspace.CLI do
         reports it as `operation:`. `ls` and the inbox include it in the risk
         reasons.
         """
+
+      "keep" ->
+        Keep.help()
 
       "rebase" ->
         """
