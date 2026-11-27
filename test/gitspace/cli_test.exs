@@ -472,6 +472,16 @@ defmodule Gitspace.CLITest do
              Git.run(["config", "--get", "branch.feature_JENKINS-123.gitspace-base"], cd: path)
   end
 
+  test "base reports a missing checkout without crashing", %{path: path} do
+    File.rm_rf!(path)
+
+    {output, 0} = cli(["base", "demo@JENKINS-123", "--json"])
+    [entry] = Jason.decode!(output)["data"]["entries"]
+
+    assert entry["source"] == "checkout missing"
+    assert entry["base"] == nil
+  end
+
   test "base refuses an unknown ref without writing", %{path: path} do
     {output, 3} = cli(["base", "demo@JENKINS-123", "origin/nope", "--json"])
     assert Jason.decode!(output)["error"]["code"] == "not_found"

@@ -129,6 +129,14 @@ defmodule Gitspace.CLI.Base do
   end
 
   defp describe(entry) do
+    if File.dir?(entry.path) do
+      describe_checkout(entry)
+    else
+      row(entry, nil, nil, "checkout missing")
+    end
+  end
+
+  defp describe_checkout(entry) do
     case Status.read(entry.path) do
       {:ok, %Status{detached: true}} ->
         row(entry, nil, nil, "detached")
