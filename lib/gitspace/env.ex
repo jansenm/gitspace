@@ -51,7 +51,9 @@ defmodule Gitspace.Env do
       layers = if opts[:no_env], do: [], else: layers
       context = gitspace_vars(ctx)
       process = System.get_env()
-      base = Map.merge(process, context)
+      # A project target has no topic, member or repo. Keep those references
+      # literal instead of failing so the project environment stays inspectable.
+      base = Map.merge(interpolation_base(), context)
 
       with {:ok, values, sources, files} <- load_layers(layers, base),
            entries <- entries(values, sources, context, process) do
@@ -102,7 +104,7 @@ defmodule Gitspace.Env do
   end
 
   defp display(path, body, keys) do
-    case parse(body, display_base()) do
+    case parse(body, interpolation_base()) do
       {:ok, parsed} ->
         entries =
           keys
@@ -295,7 +297,7 @@ defmodule Gitspace.Env do
     |> Map.new(fn {key, value} -> {key, to_string(value)} end)
   end
 
-  defp display_base do
+  defp interpolation_base do
     placeholders =
       Map.new(
         [

@@ -88,6 +88,16 @@ defmodule Gitspace.EnvTest do
     refute "TOKEN" in keys
   end
 
+  test "project targets keep unresolved GITSPACE placeholders", %{config: config} do
+    assert {:ok, data} = Env.resolve(config, "project:demo")
+    values = Map.new(data.entries, &{&1.key, &1.value})
+
+    assert values["FOO"] == "secret"
+    assert values["DB"] == "demo_${GITSPACE_TOPIC}"
+    assert values["GITSPACE_PROJECT"] == "demo"
+    refute Map.has_key?(values, "GITSPACE_TOPIC")
+  end
+
   test "file listing keeps GITSPACE placeholders", %{project_path: project_path} do
     assert {:ok, entries} = Env.file_entries(Path.join(project_path, ".env"))
     values = Map.new(entries, &{&1.key, &1.value})
