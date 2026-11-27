@@ -32,7 +32,7 @@ defmodule Gitspace.CLI.Completion do
 
   @command_flags %{
     "ls" =>
-      ~w(--repo --project --topic --workspace --label --state --kind --source --verbose --wide),
+      ~w(--repo --project --topic --workspace --label --state --kind --source --verbose --wide --refresh),
     "co" => ~w(--topic --only --exclude --as --as-is --branch --detach --label --fetch),
     "project:new" => ~w(--repo --at --description --branch-template --default-ref),
     "project:rm" => ~w(--force),

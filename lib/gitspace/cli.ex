@@ -294,9 +294,12 @@ defmodule Gitspace.CLI do
         """
         USAGE
           gitspace ls [--repo R] [--workspace W] [--label L] [--state S]
-                      [--kind worktree|clone] [--source managed|external] [--verbose]
+                      [--kind worktree|clone] [--source managed|external]
+                      [--refresh] [--verbose]
 
         --verbose (or the old --wide) adds HASH and MIRROR to the table.
+        --refresh recomputes the cached git status of the listed checkouts
+        (no fetch).
         """
 
       "status" ->
@@ -309,6 +312,9 @@ defmodule Gitspace.CLI do
         --long lists the changed and untracked paths. --diff adds the staged and
         unstaged patch and implies --long. -l and -v are short for --long and
         --diff. Both need a single member or checkout target.
+
+        --refresh recomputes git status; with no target it refreshes every
+        indexed checkout before rendering the inbox. It never fetches.
 
         A checkout with a merge, rebase, cherry-pick or revert in progress
         reports it as `operation:`. `ls` and the inbox include it in the risk

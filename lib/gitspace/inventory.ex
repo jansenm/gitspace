@@ -9,8 +9,8 @@ defmodule Gitspace.Inventory do
 
   @initial_refresh_limit 20
 
-  @spec inbox(Config.t()) :: map()
-  def inbox(%Config{} = config) do
+  @spec inbox(Config.t(), keyword()) :: map()
+  def inbox(%Config{} = config, opts \\ []) do
     workspaces = Workspaces.list(config)
     member_ids = member_ids(workspaces)
 
@@ -27,7 +27,14 @@ defmodule Gitspace.Inventory do
       Checkouts.list(config, source: "managed")
       |> Enum.reject(&MapSet.member?(member_ids, &1.id))
 
-    refreshed = refresh_unknown(config, all_workspace_checkouts ++ external ++ orphans)
+    all = all_workspace_checkouts ++ external ++ orphans
+
+    refreshed =
+      if opts[:refresh] do
+        refresh_all(config, all)
+      else
+        refresh_unknown(config, all)
+      end
 
     workspace_rows = Enum.map(workspaces, &workspace_row(config, &1, refreshed))
     external_rows = Enum.map(external, &checkout_row(config, &1, nil, refreshed))
@@ -144,7 +151,13 @@ defmodule Gitspace.Inventory do
   def ls(%Config{} = config, filters \\ []) do
     memberships = memberships_by_checkout()
 
-    Checkouts.list(config, filters)
+    checkouts =
+      Checkouts.list(config, filters)
+      |> then(fn checkouts ->
+        if filters[:refresh], do: Checkouts.refresh_many(config, checkouts), else: checkouts
+      end)
+
+    checkouts
     |> Enum.map(fn checkout ->
       checkout_row(config, checkout, Map.get(memberships, checkout.id))
     end)

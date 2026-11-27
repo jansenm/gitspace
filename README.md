@@ -336,8 +336,15 @@ gitspace ls --verbose      # adds HASH and MIRROR
 gitspace ls --wide         # old name for --verbose
 gitspace ls --project P    # one project
 gitspace ls --topic T      # one topic across projects
+gitspace ls --refresh      # recompute git status, no fetch
 gitspace ls --json         # full rows, including path and mirror metadata
 ```
+
+A `?` in a count means the cached status is missing or older than
+`status.max_age_seconds` (default 3600). `gitspace ls --refresh` recomputes the listed
+checkouts; `gitspace status --refresh` refreshes every indexed checkout and shows the inbox.
+`repo fetch` is not a status refresh: fetching invalidates `last_status_at` and can make more
+`?` appear until a `status`/`ls --refresh` runs.
 
 Use `gitspace path <target>` or `gitspace show <target>` when the checkout path is what you
 need.

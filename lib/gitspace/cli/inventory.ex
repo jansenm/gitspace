@@ -21,6 +21,7 @@ defmodule Gitspace.CLI.Inventory do
          :ok <- Helpers.start_index(config) do
       rows =
         Inventory.ls(config,
+          refresh: opts[:refresh],
           repo: opts[:repo],
           workspace: opts[:workspace],
           project: opts[:project],
@@ -47,7 +48,7 @@ defmodule Gitspace.CLI.Inventory do
           if detail?(opts) do
             {:error, Error.new(:usage, "status --long/--diff needs a member or checkout target")}
           else
-            {:ok, Inventory.inbox(config), &render_inbox/1}
+            {:ok, Inventory.inbox(config, refresh: opts[:refresh]), &render_inbox/1}
           end
 
         [target] ->
@@ -150,12 +151,15 @@ defmodule Gitspace.CLI.Inventory do
         {:ok,
          %{
            project: project,
-           checkouts: Inventory.ls(config, project: project.name)
+           checkouts: Inventory.ls(config, project: project.name, refresh: opts[:refresh])
          }, &render_project_status/1}
 
       {:repo, repo} ->
-        {:ok, %{repo: repo.slug, checkouts: Inventory.ls(config, repo: repo.slug)},
-         &render_repo_status/1}
+        {:ok,
+         %{
+           repo: repo.slug,
+           checkouts: Inventory.ls(config, repo: repo.slug, refresh: opts[:refresh])
+         }, &render_repo_status/1}
     end
   end
 
@@ -202,7 +206,8 @@ defmodule Gitspace.CLI.Inventory do
       kind: :string,
       source: :string,
       all: :boolean,
-      wide: :boolean
+      wide: :boolean,
+      refresh: :boolean
     ] ++ Helpers.global_strict()
   end
 

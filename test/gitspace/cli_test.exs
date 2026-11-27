@@ -141,6 +141,29 @@ defmodule Gitspace.CLITest do
     assert checkout["path"] == path
   end
 
+  test "ls --refresh recomputes cached status without fetching", %{path: path} do
+    Gitspace.Repo.update_all(Gitspace.Index.Checkout, set: [last_status_at: nil])
+    File.write!(Path.join(path, "dirty.txt"), "x\n")
+
+    {stale, 0} = cli(["ls", "--repo", "demo", "--json"])
+    assert [before] = Jason.decode!(stale)["data"]["checkouts"]
+    assert before["stale"]
+
+    {fresh, 0} = cli(["ls", "--repo", "demo", "--refresh", "--json"])
+    assert [refreshed] = Jason.decode!(fresh)["data"]["checkouts"]
+    refute refreshed["stale"]
+    assert refreshed["untracked"] == 1
+  end
+
+  test "status --refresh recomputes every indexed checkout", %{config: config} do
+    Gitspace.Repo.update_all(Gitspace.Index.Checkout, set: [last_status_at: nil])
+
+    {output, 0} = cli(["status", "--refresh", "--json"])
+    assert Jason.decode!(output)["ok"]
+
+    assert Enum.all?(Gitspace.Checkouts.list(config), & &1.last_status_at)
+  end
+
   test "ls is compact by default and --verbose adds hash and mirror", %{repo: repo} do
     {plain, 0} = cli(["ls"])
     assert plain =~ "PROJECT"
