@@ -17,7 +17,7 @@ defmodule Gitspace.CLI.Completion do
 
   @cache_version 3
 
-  @commands ~w(ls log push rebase keep co workspace project label status show path repo scan link unlink doctor setup reindex config completion help)
+  @commands ~w(ls log push rebase base keep co workspace project label status show path repo scan link unlink doctor setup reindex config completion help)
 
   @subcommands %{
     "workspace" => ~w(new ls status rm help),
@@ -56,6 +56,7 @@ defmodule Gitspace.CLI.Completion do
     "log" => ~w(--outgoing --incoming --both --limit --all --fetch),
     "push" => ~w(--dry-run --remote),
     "rebase" => ~w(--continue --abort --fetch),
+    "base" => ~w(--clear),
     "keep:prune" => ~w(--older-than --dry-run --gc),
     "config:set" => ~w(--force),
     "setup" => ~w(--data --projects --checkouts --force),

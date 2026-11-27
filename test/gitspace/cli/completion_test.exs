@@ -89,6 +89,12 @@ defmodule Gitspace.CLI.CompletionTest do
     assert "api" in lines(repos)
     assert "web" in lines(repos)
 
+    {top, 0} = cli(["__complete", "0", ""])
+    assert "base" in lines(top)
+
+    {base_flags, 0} = cli(["__complete", "1", "base", "--c"])
+    assert lines(base_flags) == ["--clear"]
+
     {repo_commands, 0} = cli(["__complete", "1", "repo", ""])
     assert "set-url" in lines(repo_commands)
 

@@ -191,7 +191,7 @@ defmodule Gitspace.Git.Refs do
       {:ok, base} ->
         {:ok, base}
 
-      :none ->
+      _ ->
         case upstream_ref(worktree, status) do
           nil ->
             if is_binary(status.upstream), do: {:missing, status.upstream}, else: :none
@@ -202,14 +202,39 @@ defmodule Gitspace.Git.Refs do
     end
   end
 
-  defp recorded_base(worktree, %Status{branch: branch}) when is_binary(branch) do
+  @doc """
+  The rebase base recorded on the current branch, without a fallback.
+
+  Returns `{:stale, ref}` when the configured base no longer resolves.
+  """
+  @spec recorded_base(Path.t(), %Status{}) :: {:ok, String.t()} | {:stale, String.t()} | :none
+  def recorded_base(worktree, %Status{branch: branch}) when is_binary(branch) do
     case branch_config(worktree, branch, "gitspace-base") do
       nil -> :none
-      base -> if commit_sha(worktree, base), do: {:ok, base}, else: :none
+      base -> if commit_sha(worktree, base), do: {:ok, base}, else: {:stale, base}
     end
   end
 
-  defp recorded_base(_worktree, _status), do: :none
+  def recorded_base(_worktree, _status), do: :none
+
+  @doc "Records the ref a branch should rebase onto."
+  @spec set_recorded_base(Path.t(), String.t(), String.t()) :: :ok | {:error, Git.result()}
+  def set_recorded_base(worktree, branch, ref) do
+    case Git.run(["config", "branch.#{branch}.gitspace-base", ref], cd: worktree) do
+      {:ok, _} -> :ok
+      {:error, _} = error -> error
+    end
+  end
+
+  @doc "Removes a recorded rebase base. A missing key is not an error."
+  @spec clear_recorded_base(Path.t(), String.t()) :: :ok | {:error, Git.result()}
+  def clear_recorded_base(worktree, branch) do
+    case Git.run(["config", "--unset", "branch.#{branch}.gitspace-base"], cd: worktree) do
+      {:ok, _} -> :ok
+      {:error, %{exit: 5}} -> :ok
+      {:error, _} = error -> error
+    end
+  end
 
   defp branch_config(worktree, branch, key) do
     case Git.run(["config", "--get", "branch.#{branch}.#{key}"], cd: worktree) do

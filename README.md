@@ -27,12 +27,12 @@ Product scope, CLI contract and acceptance plan live in the planning repository:
 | Mirrors | `repo init`, `repo import`, `repo add`, `repo ls`, `repo branches`, `repo fetch`, `repo alias`, `repo set-url`, `repo rm` |
 | Discovery | `scan` (read-only), `link`, `unlink` |
 | Inventory | `gitspace`, `ls`, `log`, `status`, `show`, `path` |
-| Publishing | `push`, `rebase` |
+| Publishing | `push`, `rebase`, `base` |
 | Maintenance | `keep ls|prune` |
 | Recovery | `reindex` — rediscover mirrors from disk, rebuild workspaces from markers |
 | Machine surface | `--json` on every command, exit codes 0–7, `--verbose` prints git argv |
 
-277 checks (273 tests, 3 properties, 1 doctest) in ~78 s.
+300 checks (296 tests, 3 properties, 1 doctest) in ~63 s.
 
 ## Commands
 
@@ -470,6 +470,20 @@ batch** (journal at `<data>/rebase.json`). Rollback only happens while the workt
 at the recorded post-rebase head and the tree is clean; otherwise that entry is skipped, so
 new commits or local changes are never discarded. Before resetting, the pre-rebase head is
 anchored under `refs/gitspace/keep/rebase/…`. A targeted abort needs no confirmation.
+
+The base is recorded per branch and can be changed without fetching or rebasing:
+
+```sh
+gitspace base vemags@JENKINS-123              # show branch, base and source
+gitspace base vemags@JENKINS-123 origin/main
+gitspace base vemags@JENKINS-123:api origin/release/2.4
+gitspace base repo:vemags origin/develop      # every checkout of that repo
+gitspace base vemags@JENKINS-123 --clear      # fall back to the git upstream
+```
+
+`base` writes `branch.<name>.gitspace-base` in each owned checkout, so every repository
+keeps its own ref. The change applies to the next `gitspace rebase` and to
+`gitspace log --incoming`; it does not touch the push target (`branch.<name>.merge`).
 
 `gitspace status` prints `operation: rebase in progress (2/5) onto …` while a merge, rebase,
 cherry-pick or revert is in progress. `ls` and the inbox add the operation to the risk

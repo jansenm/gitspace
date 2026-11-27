@@ -4,6 +4,7 @@ defmodule Gitspace.CLI do
   alias Gitspace.Error
 
   alias Gitspace.CLI.{
+    Base,
     Completion,
     Config,
     Co,
@@ -153,6 +154,9 @@ defmodule Gitspace.CLI do
         "rebase" ->
           Rebase.run(global, command_args)
 
+        "base" ->
+          Base.run(global, command_args)
+
         "co" ->
           Co.run(global, command_args)
 
@@ -270,7 +274,8 @@ defmodule Gitspace.CLI do
       log <target>                 outgoing and incoming commits
       keep ls|prune                list and prune refs/gitspace/keep anchors
       push <target>                push the checked-out branch
-      rebase [target]              rebase worktrees onto their upstream
+      rebase [target]              rebase worktrees onto their base
+      base <target> [<ref>]        show or change the rebase base per checkout
       co <project>[@<ref>]         check out a project topic
       workspace new|ls|status|edit|rm  explicit workspace creation, inspection and removal
       label add|rm|set|ls <workspace>  add, remove or replace workspace labels
@@ -278,7 +283,7 @@ defmodule Gitspace.CLI do
       status [target]              inbox, or one workspace/checkout/repository
       show <target>                details and provenance
       path <target>                print a checkout path
-      repo add|ls|fetch|rm|alias|set-url  mirrors, aliases and remote URLs
+      repo add|ls|branches|fetch|rm|alias|set-url  mirrors, branches, aliases and remote URLs
       scan [path...]               discover existing clones and worktrees (read-only)
       link <path>                  index an external checkout
       unlink <path>                forget an external checkout
@@ -347,6 +352,23 @@ defmodule Gitspace.CLI do
         (recorded in <data>/rebase.json), but only while HEAD still matches the
         rebased head and the working tree is clean. --fetch updates the mirrors
         before starting.
+        """
+
+      "base" ->
+        """
+        USAGE
+          gitspace base <target>
+          gitspace base <target> <ref>
+          gitspace base <target> --clear
+
+        Shows or changes the ref a checkout rebases onto. Topic branches record
+        the ref they were split from as branch.<name>.gitspace-base; plain
+        checkouts fall back to their git upstream. The change is written to the
+        git config of every owned checkout in the target and takes effect on the
+        next `gitspace rebase` and in `gitspace log --incoming`; nothing is
+        fetched or rebased. --clear removes the recorded base and falls back to
+        the git upstream. Targets: workspace, workspace:member, checkout or
+        repo:<alias> (all its checkouts).
         """
 
       "push" ->

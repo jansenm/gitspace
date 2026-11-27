@@ -445,6 +445,51 @@ defmodule Gitspace.CLITest do
     assert text =~ "does not exist"
   end
 
+  test "base shows, sets and clears the recorded rebase base", %{path: path} do
+    {shown, 0} = cli(["base", "demo@JENKINS-123", "--json"])
+    [entry] = Jason.decode!(shown)["data"]["entries"]
+    assert entry["branch"] == "feature_JENKINS-123"
+    assert entry["base"] == "origin/main"
+    assert entry["source"] == "upstream"
+
+    {set, 0} = cli(["base", "demo@JENKINS-123:demo", "origin/main", "--json"])
+    [entry] = Jason.decode!(set)["data"]["entries"]
+    assert entry["source"] == "recorded"
+
+    assert Git.run!(["config", "--get", "branch.feature_JENKINS-123.gitspace-base"], cd: path)
+           |> String.trim() == "origin/main"
+
+    {text, 0} = cli(["base", "demo@JENKINS-123"])
+    assert text =~ "feature_JENKINS-123"
+    assert text =~ "origin/main"
+    assert text =~ "recorded"
+
+    {cleared, 0} = cli(["base", "demo@JENKINS-123", "--clear", "--json"])
+    [entry] = Jason.decode!(cleared)["data"]["entries"]
+    assert entry["source"] == "upstream"
+
+    assert {:error, _} =
+             Git.run(["config", "--get", "branch.feature_JENKINS-123.gitspace-base"], cd: path)
+  end
+
+  test "base refuses an unknown ref without writing", %{path: path} do
+    {output, 3} = cli(["base", "demo@JENKINS-123", "origin/nope", "--json"])
+    assert Jason.decode!(output)["error"]["code"] == "not_found"
+
+    assert {:error, _} =
+             Git.run(["config", "--get", "branch.feature_JENKINS-123.gitspace-base"], cd: path)
+  end
+
+  test "base applies to every checkout of a repo target", %{path: path} do
+    {output, 0} = cli(["base", "repo:demo", "origin/main", "--json"])
+    [entry] = Jason.decode!(output)["data"]["entries"]
+    assert entry["handle"] == "demo"
+    assert entry["source"] == "recorded"
+
+    assert {:ok, _} =
+             Git.run(["config", "--get", "branch.feature_JENKINS-123.gitspace-base"], cd: path)
+  end
+
   test "a rebase conflict is visible in status, ls and the inbox", %{
     path: path,
     repo: repo,
