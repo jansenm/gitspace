@@ -44,6 +44,9 @@ defmodule Gitspace.CLI.Reindex do
     "hash_mismatch #{issue.path}: expected #{String.slice(issue.expected, 0, 12)}, got #{String.slice(issue.actual, 0, 12)}"
   end
 
+  defp format_issue(%{kind: :missing_identity, path: path}),
+    do: "missing_identity #{path}"
+
   defp format_issue(%{kind: :missing_from_text} = issue),
     do: "missing_from_text #{issue.remote}"
 
