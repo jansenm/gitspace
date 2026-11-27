@@ -3,6 +3,7 @@ defmodule Gitspace.CLI.Inventory do
 
   alias Gitspace.{Error, Inventory, Targets, Workspaces}
   alias Gitspace.CLI.{Helpers, Output}
+  alias Gitspace.Git.Changes
 
   def inbox(_global, args) do
     with {:ok, _opts, rest} <- Helpers.parse(args, Helpers.global_strict()),
@@ -37,12 +38,17 @@ defmodule Gitspace.CLI.Inventory do
   end
 
   def status(_global, args) do
-    with {:ok, opts, rest} <- Helpers.parse(args, status_strict()),
+    with {:ok, opts, rest} <- Helpers.parse(args, status_strict(), l: :long, v: :diff),
+         :ok <- validate_status_options(opts),
          {:ok, config} <- Helpers.load_config(),
          :ok <- Helpers.start_index(config) do
       case rest do
         [] ->
-          {:ok, Inventory.inbox(config), &render_inbox/1}
+          if detail?(opts) do
+            {:error, Error.new(:usage, "status --long/--diff needs a member or checkout target")}
+          else
+            {:ok, Inventory.inbox(config), &render_inbox/1}
+          end
 
         [target] ->
           status_target(config, target, opts)
@@ -50,6 +56,16 @@ defmodule Gitspace.CLI.Inventory do
         _ ->
           {:error, Error.new(:usage, "usage: gitspace status [target]")}
       end
+    end
+  end
+
+  defp detail?(opts), do: !!opts[:long] or !!opts[:diff]
+
+  defp validate_status_options(opts) do
+    case opts[:diff_lines] do
+      nil -> :ok
+      lines when is_integer(lines) and lines >= 0 -> :ok
+      _ -> {:error, Error.new(:usage, "--diff-lines must be a non-negative integer")}
     end
   end
 
@@ -99,44 +115,81 @@ defmodule Gitspace.CLI.Inventory do
 
   defp status_target(config, target, opts) do
     with {:ok, resolved} <- Targets.resolve(config, target) do
-      case resolved do
-        {:workspace, workspace} ->
-          case Inventory.workspace_status(config, workspace.name, refresh: opts[:refresh]) do
-            {:ok, row} ->
-              {:ok, %{workspace: row, refreshed: !!opts[:refresh]}, &render_workspace_status/1}
-
-            {:error, error} ->
-              {:error, error}
-          end
-
-        {:member, _workspace, member} ->
-          {:ok,
-           %{
-             checkout:
-               Inventory.checkout_status(config, member.checkout, refresh: opts[:refresh]),
-             refreshed: !!opts[:refresh]
-           }, &render_checkout_status/1}
-
-        {:checkout, checkout} ->
-          {:ok,
-           %{
-             checkout: Inventory.checkout_status(config, checkout, refresh: opts[:refresh]),
-             refreshed: !!opts[:refresh]
-           }, &render_checkout_status/1}
-
-        {:project, project} ->
-          {:ok,
-           %{
-             project: project,
-             checkouts: Inventory.ls(config, project: project.name)
-           }, &render_project_status/1}
-
-        {:repo, repo} ->
-          {:ok, %{repo: repo.slug, checkouts: Inventory.ls(config, repo: repo.slug)},
-           &render_repo_status/1}
+      if detail?(opts) and not single_checkout?(resolved) do
+        {:error, Error.new(:usage, "status --long/--diff needs a member or checkout target")}
+      else
+        resolved_status(config, resolved, opts)
       end
     end
   end
+
+  defp single_checkout?({:member, _workspace, _member}), do: true
+  defp single_checkout?({:checkout, _checkout}), do: true
+  defp single_checkout?(_resolved), do: false
+
+  defp resolved_status(config, resolved, opts) do
+    case resolved do
+      {:workspace, workspace} ->
+        case Inventory.workspace_status(config, workspace.name, refresh: opts[:refresh]) do
+          {:ok, row} ->
+            {:ok, %{workspace: row, refreshed: !!opts[:refresh]}, &render_workspace_status/1}
+
+          {:error, error} ->
+            {:error, error}
+        end
+
+      {:member, _workspace, member} ->
+        row = Inventory.checkout_status(config, member.checkout, refresh: opts[:refresh])
+        {:ok, checkout_data(row, opts), &render_checkout_status/1}
+
+      {:checkout, checkout} ->
+        row = Inventory.checkout_status(config, checkout, refresh: opts[:refresh])
+        {:ok, checkout_data(row, opts), &render_checkout_status/1}
+
+      {:project, project} ->
+        {:ok,
+         %{
+           project: project,
+           checkouts: Inventory.ls(config, project: project.name)
+         }, &render_project_status/1}
+
+      {:repo, repo} ->
+        {:ok, %{repo: repo.slug, checkouts: Inventory.ls(config, repo: repo.slug)},
+         &render_repo_status/1}
+    end
+  end
+
+  defp checkout_data(row, opts) do
+    data = %{checkout: row, refreshed: !!opts[:refresh]}
+
+    if detail?(opts) do
+      Map.merge(data, details(row.path, opts))
+    else
+      data
+    end
+  end
+
+  defp details(path, opts) do
+    details =
+      case Changes.entries(path) do
+        {:ok, entries} -> %{changes: entries}
+        {:error, reason} -> %{changes_error: error_text(reason)}
+      end
+
+    if opts[:diff] do
+      case Changes.diff(path, max_lines: opts[:diff_lines] || 200) do
+        {:ok, diff} -> Map.put(details, :diff, diff)
+        {:error, reason} -> Map.put(details, :diff_error, error_text(reason))
+      end
+    else
+      details
+    end
+  end
+
+  defp error_text(%{stderr: stderr}) when is_binary(stderr) and stderr != "",
+    do: String.trim(stderr)
+
+  defp error_text(other), do: inspect(other)
 
   defp ls_strict do
     [
@@ -153,7 +206,10 @@ defmodule Gitspace.CLI.Inventory do
     ] ++ Helpers.global_strict()
   end
 
-  defp status_strict, do: [refresh: :boolean] ++ Helpers.global_strict()
+  defp status_strict do
+    [refresh: :boolean, long: :boolean, diff: :boolean, diff_lines: :integer] ++
+      Helpers.global_strict()
+  end
 
   defp one_arg([arg], _usage), do: {:ok, arg}
   defp one_arg(_rest, usage), do: {:error, Error.new(:usage, "usage: #{usage}")}
@@ -304,7 +360,7 @@ defmodule Gitspace.CLI.Inventory do
     end
   end
 
-  defp render_checkout_status(%{checkout: checkout}) do
+  defp render_checkout_status(%{checkout: checkout} = data) do
     IO.puts("#{checkout.repo} · #{checkout.path}")
     IO.puts("  workspace: #{checkout.workspace || "-"}")
     IO.puts("  branch:    #{checkout.branch || "(detached)"}")
@@ -319,6 +375,52 @@ defmodule Gitspace.CLI.Inventory do
     if checkout.risk.reasons != [] do
       IO.puts("  risk:      #{Enum.join(checkout.risk.reasons, ", ")}")
     end
+
+    render_changes(Map.get(data, :changes), Map.get(data, :changes_error))
+    render_diff(Map.get(data, :diff), Map.get(data, :diff_error))
+  end
+
+  defp render_changes(nil, nil), do: :ok
+
+  defp render_changes(_changes, error) when is_binary(error),
+    do: IO.puts("  files:     ! #{error}")
+
+  defp render_changes([], _error), do: IO.puts("  files:     (clean)")
+
+  defp render_changes(entries, _error) do
+    IO.puts("  files:")
+
+    Enum.each(entries, fn entry ->
+      origin = if entry.orig_path, do: " (from #{entry.orig_path})", else: ""
+      IO.puts("    #{entry.status}  #{entry.path}#{origin}")
+    end)
+  end
+
+  defp render_diff(nil, nil), do: :ok
+  defp render_diff(_diff, error) when is_binary(error), do: IO.puts("  diff:      ! #{error}")
+
+  defp render_diff(diff, _error) do
+    if diff.unstaged == "" and diff.staged == "" do
+      IO.puts("  diff:      (clean)")
+    else
+      render_patch("unstaged", diff.unstaged)
+      render_patch("staged", diff.staged)
+
+      if diff.truncated do
+        IO.puts("  (diff truncated; use --diff-lines)")
+      end
+    end
+  end
+
+  defp render_patch(_label, ""), do: :ok
+
+  defp render_patch(label, patch) do
+    IO.puts("  diff (#{label}):")
+
+    patch
+    |> String.trim_trailing()
+    |> String.split("\n")
+    |> Enum.each(&IO.puts("    " <> &1))
   end
 
   defp render_repo_status(%{repo: repo, checkouts: rows}) do

@@ -4,7 +4,7 @@ defmodule Gitspace.CLI.Config do
   alias Gitspace.{Config, Error, Layout}
   alias Gitspace.CLI.{Helpers, Output}
 
-  @keys ~w(paths.data projects.root branch.template git.minimum_version status.max_age_seconds)
+  @keys ~w(paths.data projects.root branch.template git.minimum_version status.max_age_seconds log.max_commits)
 
   def run(_global, args) do
     case args do
@@ -144,6 +144,16 @@ defmodule Gitspace.CLI.Config do
     end
   end
 
+  defp apply_setting(%Config{} = config, "log.max_commits", value, _opts) do
+    case Integer.parse(value) do
+      {count, ""} when count > 0 ->
+        {:ok, %Config{config | log_max_commits: count}, nil}
+
+      _ ->
+        {:error, Error.new(:usage, "log.max_commits must be a positive integer")}
+    end
+  end
+
   defp apply_setting(_config, key, _value, _opts) do
     {:error,
      Error.new(:usage, "unknown configuration key: #{key}",
@@ -168,7 +178,8 @@ defmodule Gitspace.CLI.Config do
       "projects.root" => config.projects_root,
       "branch.template" => config.branch_template,
       "git.minimum_version" => config.git_minimum,
-      "status.max_age_seconds" => config.status_max_age
+      "status.max_age_seconds" => config.status_max_age,
+      "log.max_commits" => config.log_max_commits
     }
   end
 
@@ -275,6 +286,7 @@ defmodule Gitspace.CLI.Config do
       branch.template
       git.minimum_version
       status.max_age_seconds
+      log.max_commits
     """
   end
 end

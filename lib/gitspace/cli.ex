@@ -9,6 +9,7 @@ defmodule Gitspace.CLI do
     Co,
     Doctor,
     Inventory,
+    Log,
     Output,
     Project,
     Reindex,
@@ -68,7 +69,7 @@ defmodule Gitspace.CLI do
       nil ->
         true
 
-      command when command in ~w(ls status show path help completion __complete version) ->
+      command when command in ~w(ls log status show path help completion __complete version) ->
         true
 
       "config" ->
@@ -132,6 +133,9 @@ defmodule Gitspace.CLI do
       case command do
         "ls" ->
           Inventory.ls(global, command_args)
+
+        "log" ->
+          Log.run(global, command_args)
 
         "co" ->
           Co.run(global, command_args)
@@ -244,6 +248,7 @@ defmodule Gitspace.CLI do
 
     COMMANDS
       ls                           all indexed checkouts
+      log <target>                 outgoing and incoming commits
       co <project>[@<ref>]         check out a project topic
       workspace new|ls|status|rm   explicit workspace creation, inspection and removal
       project new|ls|show|add|remove|rm  project definitions
@@ -281,6 +286,27 @@ defmodule Gitspace.CLI do
         USAGE
           gitspace status [target] [--refresh]
           gitspace status workspace:member
+          gitspace status <workspace:member|checkout> --long [--diff] [--diff-lines N]
+
+        --long lists the changed and untracked paths. --diff adds the staged and
+        unstaged patch and implies --long. -l and -v are short for --long and
+        --diff. Both need a single member or checkout target.
+        """
+
+      "log" ->
+        """
+        USAGE
+          gitspace log <workspace|workspace:member|checkout|repo>
+                      [--outgoing|--incoming|--both] [--limit N|--all] [--fetch]
+
+        Shows commits between the checkout and its upstream. outgoing is what a
+        push would send; incoming is what a rebase or pull would integrate.
+        Without an upstream, outgoing means "not on any remote or tag" and
+        incoming compares with origin/<default> when that ref exists.
+
+        The default limit is log.max_commits (10) per direction and member;
+        --limit overrides it and --all shows everything. --fetch updates the
+        mirror first, so incoming reflects the current upstream.
         """
 
       "co" ->
@@ -381,6 +407,7 @@ defmodule Gitspace.CLI do
           branch.template
           git.minimum_version
           status.max_age_seconds
+          log.max_commits
         """
 
       "completion" ->

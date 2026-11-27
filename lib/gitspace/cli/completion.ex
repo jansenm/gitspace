@@ -17,7 +17,7 @@ defmodule Gitspace.CLI.Completion do
 
   @cache_version 3
 
-  @commands ~w(ls co workspace project status show path repo scan link unlink doctor setup reindex config completion help)
+  @commands ~w(ls log co workspace project status show path repo scan link unlink doctor setup reindex config completion help)
 
   @subcommands %{
     "workspace" => ~w(new ls status rm help),
@@ -46,7 +46,8 @@ defmodule Gitspace.CLI.Completion do
     "workspace:ls" => ~w(--project --label --all),
     "workspace:status" => ~w(--refresh),
     "workspace:rm" => ~w(--force --dry-run),
-    "status" => ~w(--refresh),
+    "status" => ~w(--refresh --long --diff --diff-lines),
+    "log" => ~w(--outgoing --incoming --both --limit --all --fetch),
     "config:set" => ~w(--force),
     "setup" => ~w(--data --projects --checkouts --force),
     "doctor" => ~w(--fix --reindex),
@@ -54,9 +55,9 @@ defmodule Gitspace.CLI.Completion do
     "link" => ~w(--repo)
   }
 
-  @value_flags ~w(--repo --project --topic --workspace --label --state --kind --source --only --exclude --as --branch --at --description --branch-template --default-ref --name --remote --own --borrow --data --projects --checkouts --max-depth --ide --shell)
+  @value_flags ~w(--repo --project --topic --workspace --label --state --kind --source --only --exclude --as --branch --at --description --branch-template --default-ref --name --remote --own --borrow --data --projects --checkouts --max-depth --ide --shell --limit --diff-lines)
 
-  @config_keys ~w(paths.data projects.root branch.template git.minimum_version status.max_age_seconds)
+  @config_keys ~w(paths.data projects.root branch.template git.minimum_version status.max_age_seconds log.max_commits)
 
   @spec run(map(), [String.t()]) :: {:ok, map(), fun()} | {:error, Gitspace.Error.t()}
   def run(_global, args) do
@@ -245,6 +246,8 @@ defmodule Gitspace.CLI.Completion do
   end
 
   defp positional_values("co", nil, []), do: {:data, [:projects]}
+
+  defp positional_values("log", nil, []), do: {:data, [:targets]}
 
   defp positional_values(command, nil, []) when command in ~w(status show path),
     do: {:data, [:targets]}

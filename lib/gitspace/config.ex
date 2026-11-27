@@ -18,7 +18,8 @@ defmodule Gitspace.Config do
             projects_root: nil,
             branch_template: "feature/{topic}",
             git_minimum: "2.42",
-            status_max_age: 3600
+            status_max_age: 3600,
+            log_max_commits: 10
 
   @type t :: %__MODULE__{
           path: Path.t() | nil,
@@ -26,7 +27,8 @@ defmodule Gitspace.Config do
           projects_root: Path.t() | nil,
           branch_template: String.t(),
           git_minimum: String.t(),
-          status_max_age: pos_integer()
+          status_max_age: pos_integer(),
+          log_max_commits: pos_integer()
         }
 
   @spec load() :: {:ok, t()} | {:error, term()}
@@ -209,7 +211,8 @@ defmodule Gitspace.Config do
            ),
          branch_template: get_in_map(data, ["branch", "template"], "feature/{topic}"),
          git_minimum: get_in_map(data, ["git", "minimum_version"], "2.42"),
-         status_max_age: get_in_map(data, ["status", "max_age_seconds"], 3600)
+         status_max_age: get_in_map(data, ["status", "max_age_seconds"], 3600),
+         log_max_commits: get_in_map(data, ["log", "max_commits"], 10)
        }}
     end
   end
@@ -245,6 +248,9 @@ defmodule Gitspace.Config do
       not is_integer(config.status_max_age) or config.status_max_age <= 0 ->
         {:error, :invalid_status_max_age}
 
+      not is_integer(config.log_max_commits) or config.log_max_commits <= 0 ->
+        {:error, :invalid_log_max_commits}
+
       true ->
         {:ok, config}
     end
@@ -257,7 +263,8 @@ defmodule Gitspace.Config do
       "projects" => %{"root" => config.projects_root},
       "branch" => %{"template" => config.branch_template},
       "git" => %{"minimum_version" => config.git_minimum},
-      "status" => %{"max_age_seconds" => config.status_max_age}
+      "status" => %{"max_age_seconds" => config.status_max_age},
+      "log" => %{"max_commits" => config.log_max_commits}
     }
   end
 

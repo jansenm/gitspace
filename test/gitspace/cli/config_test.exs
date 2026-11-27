@@ -34,6 +34,7 @@ defmodule Gitspace.CLI.ConfigTest do
     assert data["values"]["paths.data"] == config.data_dir
     assert data["values"]["projects.root"] == config.projects_root
     assert data["values"]["branch.template"] == "feature/{topic}"
+    assert data["values"]["log.max_commits"] == 10
     assert data["sources"]["paths.data"] == "file"
   end
 
@@ -69,6 +70,27 @@ defmodule Gitspace.CLI.ConfigTest do
     assert reloaded.status_max_age == 3600
     assert reloaded.branch_template == "feature/{topic}"
     assert reloaded.projects_root == config.projects_root
+    assert reloaded.log_max_commits == 10
+  end
+
+  test "config set stores the commit limit", %{config: config} do
+    {output, 0} = cli(["config", "set", "log.max_commits", "25", "--json"])
+    data = Jason.decode!(output)["data"]
+
+    assert data["key"] == "log.max_commits"
+    assert data["value"] == 25
+
+    assert {:ok, reloaded} = Config.load_file()
+    assert reloaded.log_max_commits == 25
+    assert reloaded.status_max_age == config.status_max_age
+  end
+
+  test "config set rejects a non-positive commit limit", _context do
+    {output, 2} = cli(["config", "set", "log.max_commits", "0", "--json"])
+    assert Jason.decode!(output)["error"]["code"] == "usage"
+
+    assert {:ok, reloaded} = Config.load_file()
+    assert reloaded.log_max_commits == 10
   end
 
   test "unknown configuration keys are usage errors" do
@@ -139,6 +161,7 @@ defmodule Gitspace.CLI.ConfigTest do
     {output, 0} = cli(["config", "--help"])
     assert output =~ "gitspace config set <key> <value>"
     assert output =~ "status.max_age_seconds"
+    assert output =~ "log.max_commits"
   end
 
   test "top-level help lists config", _context do

@@ -210,6 +210,111 @@ defmodule Gitspace.CLITest do
     assert Enum.any?(data["checks"], &(&1["name"] == "index" and &1["status"] == "ok"))
   end
 
+  test "log reports outgoing and incoming commits", %{
+    config: config,
+    path: path,
+    repo: repo,
+    source: source
+  } do
+    Fixtures.configure_user(path)
+    Fixtures.write(path, "outgoing.txt", "out\n")
+    Fixtures.commit!(path, "outgoing work")
+
+    {output, 0} = cli(["log", "demo@JENKINS-123:demo", "--json"])
+    data = Jason.decode!(output)["data"]
+
+    assert data["limit"] == 10
+    assert data["directions"] == ["outgoing", "incoming"]
+    assert [entry] = data["entries"]
+    assert entry["handle"] == "demo@JENKINS-123:demo"
+    assert entry["upstream"] == "origin/main"
+    assert entry["outgoing"]["total"] == 1
+    assert [commit] = entry["outgoing"]["commits"]
+    assert commit["subject"] == "outgoing work"
+    assert entry["incoming"]["total"] == 0
+
+    Fixtures.write(source, "upstream.txt", "up\n")
+    Fixtures.commit!(source, "upstream work")
+    Gitspace.Git.Mirror.fetch!(repo.bare_path)
+
+    {incoming, 0} = cli(["log", "demo@JENKINS-123:demo", "--json"])
+    entry = Jason.decode!(incoming)["data"]["entries"] |> hd()
+
+    assert entry["incoming"]["total"] == 1
+    assert [%{"subject" => "upstream work"}] = entry["incoming"]["commits"]
+    assert entry["outgoing"]["total"] == 1
+
+    :ok = Config.save(%{config | log_max_commits: 1})
+    {limited, 0} = cli(["log", "demo@JENKINS-123:demo", "--json"])
+    limited_data = Jason.decode!(limited)["data"]
+
+    assert limited_data["limit"] == 1
+    assert hd(limited_data["entries"])["incoming"]["truncated"] == false
+
+    {all, 0} = cli(["log", "demo@JENKINS-123:demo", "--all", "--json"])
+    assert Jason.decode!(all)["data"]["limit"] == nil
+
+    {fetched, 0} = cli(["log", "demo@JENKINS-123:demo", "--fetch", "--json"])
+    assert Jason.decode!(fetched)["ok"]
+
+    {conflict, 2} = cli(["log", "demo@JENKINS-123:demo", "--limit", "1", "--all", "--json"])
+    assert Jason.decode!(conflict)["error"]["code"] == "usage"
+
+    {text, 0} = cli(["log", "demo@JENKINS-123:demo"])
+    assert text =~ "outgoing work"
+    assert text =~ "upstream work"
+  end
+
+  test "log can target a repository and rejects projects", %{} do
+    {output, 0} = cli(["log", "repo:demo", "--json"])
+    assert [entry] = Jason.decode!(output)["data"]["entries"]
+    assert entry["repo"] == "demo"
+
+    {output, 2} = cli(["log", "demo", "--json"])
+    assert Jason.decode!(output)["error"]["code"] == "usage"
+
+    {output, 2} = cli(["log", "repo:demo", "--limit", "0", "--json"])
+    assert Jason.decode!(output)["error"]["code"] == "usage"
+  end
+
+  test "status --long lists files and --diff shows the capped patch", %{path: path} do
+    File.write!(Path.join(path, "README.md"), "# changed\n")
+    File.write!(Path.join(path, "untracked.txt"), "new\n")
+
+    {output, 0} = cli(["status", "demo@JENKINS-123:demo", "--long", "--json"])
+    changes = Jason.decode!(output)["data"]["changes"]
+
+    assert Enum.any?(changes, &(&1["path"] == "README.md" and &1["status"] == ".M"))
+    assert Enum.any?(changes, &(&1["path"] == "untracked.txt" and &1["status"] == "??"))
+
+    {diff, 0} = cli(["status", "demo@JENKINS-123:demo", "-v", "--json"])
+    patch = Jason.decode!(diff)["data"]["diff"]
+
+    assert patch["unstaged"] =~ "README.md"
+    assert patch["unstaged"] =~ "+# changed"
+    assert patch["truncated"] == false
+
+    {truncated, 0} =
+      cli(["status", "demo@JENKINS-123:demo", "-v", "--diff-lines", "1", "--json"])
+
+    capped = Jason.decode!(truncated)["data"]["diff"]
+    assert capped["truncated"] == true
+    assert capped["unstaged"] =~ "truncated"
+
+    {text, 0} = cli(["status", "demo@JENKINS-123:demo", "-l"])
+    assert text =~ "files:"
+    assert text =~ "README.md"
+    assert text =~ "untracked.txt"
+  end
+
+  test "status detail flags need one checkout target" do
+    {output, 2} = cli(["status", "--long", "--json"])
+    assert Jason.decode!(output)["error"]["code"] == "usage"
+
+    {output, 2} = cli(["status", "demo@JENKINS-123", "--long", "--json"])
+    assert Jason.decode!(output)["error"]["code"] == "usage"
+  end
+
   test "repo shows help and repo ls includes the remote URI", %{source: source, repo: repo} do
     {help, 0} = cli(["repo"])
     assert help =~ "gitspace repo add"

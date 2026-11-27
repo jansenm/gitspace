@@ -151,27 +151,45 @@ defmodule Gitspace.Git.Refs do
     end
   end
 
-  @doc """
-  Number of commits that would be lost if this checkout were removed.
+  @doc "The configured upstream of a checkout, or nil."
+  @spec upstream_ref(Path.t(), %Status{}) :: String.t() | nil
+  def upstream_ref(worktree, %Status{} = status) do
+    status.upstream || upstream_name(worktree)
+  end
 
-  - with an upstream: commits ahead of the upstream
+  @doc """
+  Revision arguments for commits that exist only here.
+
+  - with an upstream: ahead of the upstream
   - a local branch without upstream: commits not on any remote or tag
   - detached HEAD: commits not reachable from any branch, remote or tag
   """
-  @spec unpushed(Path.t(), %Status{}, keyword()) :: non_neg_integer()
-  def unpushed(worktree, %Status{} = status, opts \\ []) do
+  @spec unpushed_range(Path.t(), %Status{}) :: [String.t()]
+  def unpushed_range(worktree, %Status{} = status) do
     cond do
-      Keyword.get(opts, :remote, true) == false ->
-        0
-
       status.detached ->
-        count(["HEAD", "--not", "--branches", "--remotes", "--tags"], worktree)
+        ["HEAD", "--not", "--branches", "--remotes", "--tags"]
 
-      upstream = status.upstream || upstream_name(worktree) ->
-        count(["#{upstream}..HEAD"], worktree)
+      upstream = upstream_ref(worktree, status) ->
+        ["#{upstream}..HEAD"]
 
       true ->
-        count(["HEAD", "--not", "--remotes", "--tags"], worktree)
+        ["HEAD", "--not", "--remotes", "--tags"]
+    end
+  end
+
+  @doc """
+  Number of commits that would be lost if this checkout were removed.
+
+  Uses `unpushed_range/2`, so the count and the displayed commit list always
+  agree.
+  """
+  @spec unpushed(Path.t(), %Status{}, keyword()) :: non_neg_integer()
+  def unpushed(worktree, %Status{} = status, opts \\ []) do
+    if Keyword.get(opts, :remote, true) == false do
+      0
+    else
+      count(unpushed_range(worktree, status), worktree)
     end
   end
 

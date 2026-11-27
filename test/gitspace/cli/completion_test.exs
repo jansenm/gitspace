@@ -145,6 +145,20 @@ defmodule Gitspace.CLI.CompletionTest do
     assert lines(new_projects) == ["vemags"]
   end
 
+  test "completes log targets, detail flags and the commit limit key" do
+    {targets, 0} = cli(["__complete", "1", "log", ""])
+    assert "vemags@dev" in lines(targets)
+
+    {outgoing, 0} = cli(["__complete", "1", "log", "--o"])
+    assert lines(outgoing) == ["--outgoing"]
+
+    {long, 0} = cli(["__complete", "1", "status", "--l"])
+    assert lines(long) == ["--long"]
+
+    {keys, 0} = cli(["__complete", "2", "config", "get", ""])
+    assert "log.max_commits" in lines(keys)
+  end
+
   test "completes config keys and shell names" do
     {keys, 0} = cli(["__complete", "2", "config", "get", ""])
     assert "projects.root" in lines(keys)

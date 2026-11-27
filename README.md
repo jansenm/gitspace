@@ -26,11 +26,11 @@ Product scope, CLI contract and acceptance plan live in the planning repository:
 | Completion | `completion bash|zsh|fish` |
 | Mirrors | `repo init`, `repo import`, `repo add`, `repo ls`, `repo fetch`, `repo alias`, `repo set-url`, `repo rm` |
 | Discovery | `scan` (read-only), `link`, `unlink` |
-| Inventory | `gitspace`, `ls`, `status`, `show`, `path` |
+| Inventory | `gitspace`, `ls`, `log`, `status`, `show`, `path` |
 | Recovery | `reindex` — rediscover mirrors from disk, rebuild workspaces from markers |
 | Machine surface | `--json` on every command, exit codes 0–7, `--verbose` prints git argv |
 
-169 checks (165 tests, 3 properties, 1 doctest) in ~45 s.
+240 checks (236 tests, 3 properties, 1 doctest) in ~45 s.
 
 ## Commands
 
@@ -339,6 +339,35 @@ gitspace ls --json         # full rows, including path and mirror metadata
 
 Use `gitspace path <target>` or `gitspace show <target>` when the checkout path is what you
 need.
+
+## History and diffs
+
+`gitspace log <target>` shows both sides of a checkout's divergence:
+
+```sh
+gitspace log vemags@JENKINS-123:api            # outgoing and incoming
+gitspace log vemags@JENKINS-123:api --outgoing # what a push would send
+gitspace log vemags@JENKINS-123:api --incoming # what a rebase would integrate
+gitspace log repo:api --fetch --json           # refresh the mirror first
+```
+
+Outgoing commits use the same range as `unpushed`: `@{u}..HEAD`, or "not on any remote or
+tag" when no upstream exists. Incoming uses `HEAD..@{u}`; without an upstream it falls back
+to `origin/<default>` and labels that base. The default limit is `log.max_commits` (10) per
+direction and member; `--limit N` overrides it and `--all` shows everything. Counts remain
+visible when a list is truncated.
+
+For a single member or checkout, `status` can show the working tree:
+
+```sh
+gitspace status vemags@JENKINS-123:api --long   # changed and untracked paths
+gitspace status vemags@JENKINS-123:api -v       # staged and unstaged patches
+gitspace status vemags@JENKINS-123:api -v --diff-lines 0
+```
+
+`--long`/`-l` lists file entries; `--diff`/`-v` adds the patch and implies `--long`. Diffs
+are capped at 200 lines per side by default, and `--diff-lines 0` removes the cap. Both need
+a single member or checkout target.
 
 ## Decisions
 
