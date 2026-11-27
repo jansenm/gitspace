@@ -318,9 +318,12 @@ defmodule Gitspace.CLI do
         is rebased onto its upstream independently; a conflict is reported and
         left in place while the remaining worktrees are still attempted.
         --continue and --abort operate on one target, or on every worktree with
-        a rebase in progress when no target is given. --fetch updates the
-        mirrors before starting. Rebases require a clean tree, an attached
-        branch and an upstream that exists (push the branch first).
+        a rebase in progress when no target is given. --abort also rolls back
+        completed rebases from the last batch (recorded in <data>/rebase.json),
+        but only while HEAD still matches the rebased head and the working tree
+        is clean. --fetch updates the mirrors before starting. Rebases require a
+        clean tree, an attached branch and an upstream that exists (push the
+        branch first).
         """
 
       "push" ->

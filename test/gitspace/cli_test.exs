@@ -466,6 +466,106 @@ defmodule Gitspace.CLITest do
     assert Gitspace.Git.Operation.read(path) == nil
   end
 
+  test "batch abort rolls back completed rebases", %{path: path, repo: repo, source: source} do
+    Fixtures.configure_user(path)
+
+    Fixtures.write(source, "upstream.txt", "up\n")
+    Fixtures.commit!(source, "upstream work")
+    Gitspace.Git.Mirror.fetch!(repo.bare_path)
+
+    Fixtures.write(path, "local.txt", "local\n")
+    Fixtures.commit!(path, "local work")
+    original = head(path)
+
+    {_, 0} = cli(["rebase", "--json"])
+    refute head(path) == original
+
+    {output, 0} = cli(["rebase", "--abort", "--yes", "--json"])
+    entry = Jason.decode!(output)["data"]["entries"] |> hd()
+
+    assert entry["status"] == "rolled_back"
+    assert entry["new_head"] == original
+    assert head(path) == original
+
+    assert Gitspace.Git.run!(["log", "-1", "--format=%s"], cd: path) |> String.trim() ==
+             "local work"
+  end
+
+  test "rollback skips a worktree whose head moved", %{path: path, repo: repo, source: source} do
+    Fixtures.configure_user(path)
+
+    Fixtures.write(source, "upstream.txt", "up\n")
+    Fixtures.commit!(source, "upstream work")
+    Gitspace.Git.Mirror.fetch!(repo.bare_path)
+    Fixtures.write(path, "local.txt", "local\n")
+    Fixtures.commit!(path, "local work")
+
+    {_, 0} = cli(["rebase", "--json"])
+
+    Fixtures.write(path, "later.txt", "later\n")
+    Fixtures.commit!(path, "later work")
+    later = head(path)
+
+    {output, 0} = cli(["rebase", "--abort", "--yes", "--json"])
+    entry = Jason.decode!(output)["data"]["entries"] |> hd()
+
+    assert entry["status"] == "skipped"
+    assert entry["reason"] =~ "HEAD moved"
+    assert head(path) == later
+  end
+
+  test "abort rolls back a rebase that was continued earlier", %{
+    path: path,
+    repo: repo,
+    source: source
+  } do
+    Fixtures.configure_user(path)
+
+    Fixtures.write(source, "README.md", "# remote\n")
+    Fixtures.commit!(source, "remote change")
+    Gitspace.Git.Mirror.fetch!(repo.bare_path)
+
+    Fixtures.write(path, "README.md", "# local\n")
+    Fixtures.commit!(path, "local change")
+    original = head(path)
+
+    {_, 4} = cli(["rebase", "--json"])
+
+    File.write!(Path.join(path, "README.md"), "# resolved\n")
+    Gitspace.Git.run!(["add", "README.md"], cd: path)
+    {_, 0} = cli(["rebase", "--continue", "demo@JENKINS-123:demo", "--json"])
+    refute head(path) == original
+
+    {output, 0} = cli(["rebase", "--abort", "--yes", "--json"])
+    entry = Jason.decode!(output)["data"]["entries"] |> hd()
+
+    assert entry["status"] == "rolled_back"
+    assert head(path) == original
+
+    assert Gitspace.Git.run!(["log", "-1", "--format=%s"], cd: path) |> String.trim() ==
+             "local change"
+  end
+
+  test "targeted abort rolls back without confirmation", %{path: path, repo: repo, source: source} do
+    Fixtures.configure_user(path)
+
+    Fixtures.write(source, "upstream.txt", "up\n")
+    Fixtures.commit!(source, "upstream work")
+    Gitspace.Git.Mirror.fetch!(repo.bare_path)
+    Fixtures.write(path, "local.txt", "local\n")
+    Fixtures.commit!(path, "local work")
+    original = head(path)
+
+    {_, 0} = cli(["rebase", "--json"])
+    refute head(path) == original
+
+    {output, 0} = cli(["rebase", "--abort", "demo@JENKINS-123:demo", "--json"])
+    entry = Jason.decode!(output)["data"]["entries"] |> hd()
+
+    assert entry["status"] == "rolled_back"
+    assert head(path) == original
+  end
+
   test "rebase refuses a dirty worktree per entry", %{path: path} do
     File.write!(Path.join(path, "dirty.txt"), "dirty\n")
 
@@ -621,6 +721,10 @@ defmodule Gitspace.CLITest do
     {again, 0} = cli(["doctor", "--json"])
     again_data = Jason.decode!(again)["data"]
     assert Enum.find(again_data["checks"], &(&1["name"] == "mirrors"))["status"] == "ok"
+  end
+
+  defp head(path) do
+    Gitspace.Git.run!(["rev-parse", "HEAD"], cd: path) |> String.trim()
   end
 
   defp cli(args) do

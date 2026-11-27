@@ -1,9 +1,10 @@
 defmodule Gitspace.CLI.Rebase do
   @moduledoc false
 
-  alias Gitspace.{Checkouts, Error, Repos, Targets}
+  alias Gitspace.{Checkouts, Error, RebaseJournal, Repos, Targets}
   alias Gitspace.CLI.Helpers
-  alias Gitspace.Git.{Operation, Rebase}
+  alias Gitspace.Git
+  alias Gitspace.Git.{Operation, Rebase, Status}
   alias Gitspace.Index.Repository
 
   def run(global, args) do
@@ -13,12 +14,15 @@ defmodule Gitspace.CLI.Rebase do
          :ok <- confirm_batch_abort(global, opts, mode, rest),
          {:ok, config} <- Helpers.load_config(),
          :ok <- Helpers.start_index(config),
-         {:ok, entries} <- entries(config, rest, mode),
+         journal = journal(mode, config),
+         {:ok, entries} <- entries(config, rest, mode, journal),
          {:ok, fetch_errors} <- fetch(config, entries, opts) do
       results =
         entries
-        |> Enum.map(&execute(&1, mode, fetch_errors))
+        |> Enum.map(&execute(&1, mode, fetch_errors, journal))
         |> Enum.map(&refresh(&1, config))
+
+      write_journal(config, mode, results)
 
       data = %{
         mode: mode,
@@ -29,6 +33,9 @@ defmodule Gitspace.CLI.Rebase do
       respond(data)
     end
   end
+
+  defp journal(mode, config) when mode in [:abort, :continue], do: RebaseJournal.load(config)
+  defp journal(_mode, _config), do: nil
 
   defp strict do
     [continue: :boolean, abort: :boolean, fetch: :boolean] ++ Helpers.global_strict()
@@ -61,27 +68,36 @@ defmodule Gitspace.CLI.Rebase do
 
   defp confirm_batch_abort(_global, _opts, _mode, _rest), do: :ok
 
-  defp entries(config, [], mode) do
+  defp entries(config, [], mode, journal) do
     checkouts = Checkouts.list(config, kind: "worktree", source: "managed")
-    entries = Enum.map(checkouts, &entry_for_checkout/1)
 
-    entries =
-      if mode in [:continue, :abort] do
-        Enum.filter(entries, &rebase_in_progress?/1)
-      else
-        entries
+    checkouts =
+      cond do
+        mode == :continue ->
+          Enum.filter(checkouts, &Operation.rebase?(Operation.read(&1.path)))
+
+        mode == :abort ->
+          paths = journal_paths(journal)
+
+          Enum.filter(
+            checkouts,
+            &(Operation.rebase?(Operation.read(&1.path)) or MapSet.member?(paths, &1.path))
+          )
+
+        true ->
+          checkouts
       end
 
-    {:ok, entries}
+    {:ok, Enum.map(checkouts, &entry_for_checkout/1)}
   end
 
-  defp entries(config, [target], mode) do
+  defp entries(config, [target], mode, _journal) do
     with {:ok, resolved} <- Targets.resolve(config, target) do
       resolved_entries(resolved, mode)
     end
   end
 
-  defp entries(_config, _rest, _mode) do
+  defp entries(_config, _rest, _mode, _journal) do
     {:error,
      Error.new(:usage, "usage: gitspace rebase [<target>] [--continue|--abort] [--fetch]")}
   end
@@ -206,7 +222,31 @@ defmodule Gitspace.CLI.Rebase do
     |> then(&{:ok, &1})
   end
 
-  defp execute(entry, mode, fetch_errors) do
+  defp execute(entry, :abort, _fetch_errors, journal) do
+    operation = Operation.read(entry.path)
+
+    cond do
+      entry.ownership == "borrowed" ->
+        skipped(entry, "borrowed")
+
+      not File.dir?(entry.path) ->
+        failed(entry, :error, "checkout directory is missing", nil)
+
+      operation && Operation.rebase?(operation) ->
+        execute_rebase(entry, :abort)
+
+      operation ->
+        skipped(entry, Operation.describe(operation))
+
+      true ->
+        case RebaseJournal.entry(journal, entry.path) do
+          nil -> skipped(entry, "no rebase in progress and no recorded rebase")
+          record -> rollback(entry, record)
+        end
+    end
+  end
+
+  defp execute(entry, mode, fetch_errors, _journal) do
     operation = Operation.read(entry.path)
 
     cond do
@@ -230,18 +270,88 @@ defmodule Gitspace.CLI.Rebase do
     end
   end
 
+  defp rollback(entry, record) do
+    old = record["old_head"]
+    new = record["new_head"]
+    branch = record["branch"]
+
+    cond do
+      is_nil(old) ->
+        skipped(entry, "no recorded pre-rebase head")
+
+      is_nil(new) ->
+        skipped(entry, "the recorded rebase did not complete")
+
+      old == new ->
+        skipped(entry, "nothing to roll back")
+
+      true ->
+        rollback_clean(entry, old, new, branch)
+    end
+  end
+
+  defp rollback_clean(entry, old, new, branch) do
+    case Status.read(entry.path) do
+      {:error, reason} ->
+        failed(entry, :error, error_text(reason), nil)
+
+      {:ok, status} ->
+        cond do
+          status.head != new ->
+            skipped(entry, "HEAD moved since the rebase; not rolling back")
+
+          status.dirty > 0 or status.untracked > 0 ->
+            skipped(entry, "working tree has changes; not rolling back")
+
+          true ->
+            reset(entry, old, new, branch)
+        end
+    end
+  end
+
+  defp reset(entry, old, new, branch) do
+    anchor(entry.path, old)
+
+    case Git.run(["reset", "--hard", old], cd: entry.path) do
+      {:ok, _} ->
+        Map.merge(base(entry), %{
+          status: :rolled_back,
+          branch: branch,
+          old_head: new,
+          new_head: old,
+          commits: nil,
+          step: nil,
+          total: nil,
+          files: [],
+          hint: nil
+        })
+
+      {:error, result} ->
+        failed(
+          entry,
+          :error,
+          last_line(result.stdout <> result.stderr),
+          "git reset --hard failed"
+        )
+    end
+  end
+
+  defp anchor(path, head) do
+    ref =
+      "refs/gitspace/keep/rebase/" <>
+        Integer.to_string(System.system_time(:second)) <>
+        "-" <>
+        Integer.to_string(System.unique_integer([:positive])) <>
+        "-" <> String.slice(head, 0, 12)
+
+    _ = Git.run(["update-ref", ref, head], cd: path)
+    :ok
+  end
+
   defp repo_id(%{repo_struct: %Repository{id: id}}), do: id
   defp repo_id(_entry), do: nil
 
   defp execute_rebase(entry, mode) do
-    base = %{
-      handle: entry.handle,
-      path: entry.path,
-      repo: entry.repo,
-      ownership: entry.ownership,
-      checkout: entry.checkout
-    }
-
     result =
       case mode do
         :start -> Rebase.start(entry.path)
@@ -251,10 +361,10 @@ defmodule Gitspace.CLI.Rebase do
 
     case result do
       {:ok, result} ->
-        Map.merge(base, Map.drop(result, [:output]))
+        Map.merge(base(entry), Map.drop(result, [:output]))
 
       {:error, failure} ->
-        Map.merge(base, %{
+        Map.merge(base(entry), %{
           status: :failed,
           kind: failure.kind,
           error: failure.message,
@@ -372,6 +482,7 @@ defmodule Gitspace.CLI.Rebase do
   end
 
   defp result_text(%{status: :aborted} = entry), do: "aborted" <> heads_text(entry)
+  defp result_text(%{status: :rolled_back} = entry), do: "rolled back" <> heads_text(entry)
   defp result_text(%{status: :skipped, reason: reason}), do: "skipped (#{reason})"
   defp result_text(%{status: :failed, error: error}), do: "failed — #{error}"
   defp result_text(entry), do: inspect(entry.status)
@@ -390,4 +501,87 @@ defmodule Gitspace.CLI.Rebase do
   defp heads_text(_entry), do: ""
 
   defp short(sha), do: String.slice(sha, 0, 7)
+
+  defp base(entry) do
+    %{
+      handle: entry.handle,
+      path: entry.path,
+      repo: entry.repo,
+      ownership: entry.ownership,
+      checkout: entry.checkout
+    }
+  end
+
+  defp last_line(output) do
+    output
+    |> String.split("\n", trim: true)
+    |> Enum.reject(&String.starts_with?(&1, ["warning:", "hint:"]))
+    |> List.last()
+    |> case do
+      nil -> "git reset --hard failed"
+      line -> line |> String.replace_prefix("error: ", "") |> String.replace_prefix("fatal: ", "")
+    end
+  end
+
+  defp journal_paths(nil), do: MapSet.new()
+
+  defp journal_paths(journal) do
+    journal
+    |> Map.get("entries", [])
+    |> Enum.map(& &1["path"])
+    |> MapSet.new()
+  end
+
+  defp write_journal(config, :start, results) do
+    entries =
+      results
+      |> Enum.flat_map(fn result ->
+        case Map.get(result, :old_head) do
+          head when is_binary(head) ->
+            [
+              %{
+                "path" => result.path,
+                "repo" => result[:repo],
+                "branch" => result[:branch],
+                "old_head" => head,
+                "new_head" => result[:new_head],
+                "status" => Atom.to_string(result.status)
+              }
+            ]
+
+          _ ->
+            []
+        end
+      end)
+
+    RebaseJournal.save(config, %{
+      "started_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
+      "entries" => entries
+    })
+  end
+
+  defp write_journal(config, :continue, results) do
+    Enum.each(results, &record_continue(config, &1))
+  end
+
+  defp write_journal(_config, _mode, _results), do: :ok
+
+  defp record_continue(config, %{status: :rebased} = result) do
+    RebaseJournal.record(config, result.path, %{
+      "branch" => result[:branch],
+      "new_head" => result[:new_head],
+      "status" => "rebased"
+    })
+  end
+
+  defp record_continue(config, %{status: :conflict} = result) do
+    RebaseJournal.record(config, result.path, %{"status" => "conflict"})
+  end
+
+  defp record_continue(_config, _result), do: :ok
+
+  defp error_text(%{stderr: stderr}) when is_binary(stderr) and stderr != "",
+    do: String.trim(stderr)
+
+  defp error_text(other), do: inspect(other)
 end
