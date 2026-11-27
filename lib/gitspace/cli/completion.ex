@@ -17,14 +17,13 @@ defmodule Gitspace.CLI.Completion do
 
   @cache_version 3
 
-  @commands ~w(ls log push rebase base keep co workspace project label status show path repo scan link unlink doctor setup reindex config completion help)
+  @commands ~w(ls log push rebase base checkout co workspace project status show path repo scan link unlink doctor setup config completion help)
 
   @subcommands %{
-    "workspace" => ~w(new add ls status rm help),
-    "project" => ~w(new ls show add remove edit rm help),
-    "label" => ~w(add rm set ls help),
+    "doctor" => ~w(check fix reindex keep help),
+    "workspace" => ~w(new add label ls edit rm help),
+    "project" => ~w(new ls add remove edit rm help),
     "repo" => ~w(init import branches add ls fetch rm alias set-url help),
-    "keep" => ~w(ls prune help),
     "config" => ~w(list get set export import help),
     "completion" => ~w(bash zsh fish)
   }
@@ -33,7 +32,7 @@ defmodule Gitspace.CLI.Completion do
 
   @command_flags %{
     "ls" =>
-      ~w(--repo --project --topic --workspace --label --state --kind --source --verbose --wide --refresh),
+      ~w(--repo --project --topic --workspace --label --state --kind --source --verbose --refresh),
     "co" => ~w(--topic --only --exclude --as --as-is --branch --detach --label --fetch),
     "project:new" => ~w(--repo --at --description --branch-template --default-ref),
     "project:edit" => ~w(--description --clear-description),
@@ -42,29 +41,24 @@ defmodule Gitspace.CLI.Completion do
     "repo:import" => ~w(--name --no-link),
     "repo:branches" => ~w(--match --regex --tags),
     "repo:add" => ~w(--name --remote --project --no-fetch),
-    "repo:fetch" => ~w(--all --prune),
+    "repo:fetch" => ~w(--all),
     "repo:rm" => ~w(--force --dry-run),
     "repo:set-url" => ~w(--push),
     "workspace:new" =>
       ~w(--own --borrow --as --branch --as-is --label --description --fetch --dry-run),
-    "workspace:add" =>
-      ~w(--own --borrow --as --branch --as-is --label --description --fetch --dry-run),
+    "workspace:add" => ~w(--own --borrow --as --branch --as-is --fetch --dry-run),
     "workspace:ls" => ~w(--project --label --all),
-    "workspace:status" => ~w(--refresh),
-    "workspace:edit" =>
-      ~w(--label --remove-label --clear-labels --description --clear-description),
+    "workspace:edit" => ~w(--description --clear-description),
     "workspace:rm" => ~w(--force --delete-branch --dry-run),
     "status" => ~w(--refresh --long --diff --diff-lines),
     "log" => ~w(--outgoing --incoming --both --limit --all --fetch),
     "push" => ~w(--dry-run --remote --force --force-with-lease),
     "rebase" => ~w(--continue --abort --fetch),
     "base" => ~w(--clear),
-    "keep:prune" => ~w(--older-than --dry-run --gc),
     "config:set" => ~w(--force),
     "config:export" => ~w(--output),
     "config:import" => ~w(--dry-run --no-fetch),
     "setup" => ~w(--data --projects --checkouts --force),
-    "doctor" => ~w(--fix --reindex),
     "scan" => ~w(--max-depth --exclude),
     "link" => ~w(--repo)
   }
@@ -275,7 +269,6 @@ defmodule Gitspace.CLI.Completion do
 
   defp positional_values("project", sub, args) do
     case {sub, length(args)} do
-      {"show", 0} -> {:data, [:projects]}
       {"add", 0} -> {:data, [:projects]}
       {"remove", 0} -> {:data, [:projects]}
       {"rm", 0} -> {:data, [:projects]}
@@ -298,9 +291,8 @@ defmodule Gitspace.CLI.Completion do
   defp positional_values("workspace", sub, []) when sub in ["new", "add"],
     do: {:data, [:projects]}
 
-  defp positional_values("workspace", sub, []) when sub in ["status", "rm"] do
-    {:data, [:workspaces]}
-  end
+  defp positional_values("workspace", sub, []) when sub in ["rm", "add"],
+    do: {:data, [:workspaces]}
 
   defp positional_values("config", sub, []) when sub in ["get", "set"] do
     {:static, @config_keys}

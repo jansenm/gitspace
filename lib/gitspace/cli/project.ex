@@ -310,8 +310,7 @@ defmodule Gitspace.CLI.Project do
                                 [--description D] [--branch-template T]
                                 [--default-ref REF] [--json]
       gitspace project ls [--json]
-      gitspace project show <name> [--json]
-      gitspace project edit <name> [--description D] [--clear-description] [--json]
+          gitspace project edit <name> [--description D] [--clear-description] [--json]
       gitspace project add <name> <repo>...
       gitspace project remove <name> <repo>...
       gitspace project rm <name> [--force] [--json]

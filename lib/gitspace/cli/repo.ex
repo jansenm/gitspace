@@ -19,7 +19,7 @@ defmodule Gitspace.CLI.Repo do
     do: [tags: :boolean, match: :string, regex: :string] ++ Helpers.global_strict()
 
   defp list_strict, do: Helpers.global_strict()
-  defp fetch_strict, do: [all: :boolean, prune: :boolean] ++ Helpers.global_strict()
+  defp fetch_strict, do: [all: :boolean] ++ Helpers.global_strict()
   defp rm_strict, do: [force: :boolean, dry_run: :boolean] ++ Helpers.global_strict()
 
   def run(global, args) do
@@ -223,12 +223,22 @@ defmodule Gitspace.CLI.Repo do
     end
   end
 
-  defp selector(_opts, []), do: {:ok, :all}
+  defp selector(opts, []) do
+    if opts[:all],
+      do: {:ok, :all},
+      else: {:error, Error.new(:usage, "usage: gitspace repo fetch <repo>|--all")}
+  end
 
-  defp selector(_opts, [selector]), do: {:ok, selector}
+  defp selector(opts, [selector]) do
+    if opts[:all] do
+      {:error, Error.new(:usage, "--all does not take a repository")}
+    else
+      {:ok, selector}
+    end
+  end
 
   defp selector(_opts, _rest) do
-    {:error, Error.new(:usage, "usage: gitspace repo fetch [<repo>|--all]")}
+    {:error, Error.new(:usage, "usage: gitspace repo fetch <repo>|--all")}
   end
 
   defp one_arg([arg], _usage), do: {:ok, arg}

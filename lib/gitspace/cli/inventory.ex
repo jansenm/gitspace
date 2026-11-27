@@ -1,7 +1,8 @@
 defmodule Gitspace.CLI.Inventory do
   @moduledoc false
 
-  alias Gitspace.{Error, Inventory, Targets, Workspaces}
+  alias Gitspace.{Error, Inventory, Repo, Targets, Workspaces}
+  alias Gitspace.Index.Repository
   alias Gitspace.CLI.{Helpers, Output}
   alias Gitspace.Git.{Changes, Operation}
 
@@ -32,7 +33,7 @@ defmodule Gitspace.CLI.Inventory do
           source: opts[:source]
         )
 
-      verbose = !!global.verbose or !!opts[:wide]
+      verbose = !!global.verbose
 
       {:ok, %{checkouts: rows, verbose: verbose}, &render_ls/1}
     end
@@ -75,26 +76,39 @@ defmodule Gitspace.CLI.Inventory do
       case resolved do
         {:workspace, workspace} ->
           case Inventory.show_workspace(config, workspace.name) do
-            {:ok, row} -> {:ok, %{workspace: row}, &render_show_workspace/1}
+            {:ok, row} -> {:ok, %{workspace: static_workspace(row)}, &render_show_workspace/1}
             {:error, error} -> {:error, error}
           end
 
         {:member, _workspace, member} ->
-          {:ok, %{checkout: Inventory.show_checkout(config, member.checkout)},
+          {:ok, %{checkout: static_checkout(Inventory.show_checkout(config, member.checkout))},
            &render_show_checkout/1}
 
         {:checkout, checkout} ->
-          {:ok, %{checkout: Inventory.show_checkout(config, checkout)}, &render_show_checkout/1}
+          {:ok, %{checkout: static_checkout(Inventory.show_checkout(config, checkout))},
+           &render_show_checkout/1}
 
         {:project, project} ->
-          {:ok, %{project: project, workspaces: project_workspaces(config, project)},
-           &render_show_project/1}
+          members =
+            Enum.map(project.members, fn key ->
+              case Repo.get_by(Repository, remote_key: key) do
+                %Repository{slug: slug} -> slug
+                nil -> key
+              end
+            end)
+
+          {:ok,
+           %{
+             project: project,
+             members: members,
+             workspaces: project_workspaces(config, project)
+           }, &render_show_project/1}
 
         {:repo, repo} ->
           {:ok,
            %{
              repo: repo_map(repo),
-             checkouts: Inventory.ls(config, repo: repo.slug)
+             checkouts: Enum.map(Inventory.ls(config, repo: repo.slug), &static_checkout/1)
            }, &render_show_repo/1}
       end
     end
@@ -202,7 +216,6 @@ defmodule Gitspace.CLI.Inventory do
       kind: :string,
       source: :string,
       all: :boolean,
-      wide: :boolean,
       refresh: :boolean
     ] ++ Helpers.global_strict()
   end
@@ -435,13 +448,60 @@ defmodule Gitspace.CLI.Inventory do
     render_ls(%{checkouts: rows, verbose: false})
   end
 
+  defp static_checkout(row) do
+    Map.drop(row, [
+      :state,
+      :dirty,
+      :ahead,
+      :behind,
+      :unpushed,
+      :untracked,
+      :stale,
+      :operation,
+      :risk,
+      :age,
+      :last_status_at,
+      :last_seen_at
+    ])
+  end
+
+  defp static_workspace(row) do
+    row
+    |> Map.drop([:unpushed, :dirty, :missing, :at_risk, :reasons, :last_activity])
+    |> Map.update(:members, [], fn members -> Enum.map(members, &static_checkout/1) end)
+  end
+
   defp render_show_workspace(%{workspace: workspace}) do
-    render_workspace_status(%{workspace: workspace})
-    IO.puts("  marker:    #{workspace.marker_path || "-"}")
+    labels = if workspace.labels == [], do: "-", else: Enum.join(workspace.labels, ", ")
+    IO.puts("#{workspace.name}")
+    IO.puts("  project:   #{workspace.project || "-"}")
+    IO.puts("  topic:     #{workspace.topic || "-"}")
+    IO.puts("  path:      #{workspace.marker_path |> Path.dirname()}")
+    IO.puts("  labels:    #{labels}")
+    IO.puts("  describe:  #{workspace.description || "-"}")
+    IO.puts("  marker:    #{workspace.marker_path}")
+    IO.puts("")
+
+    Output.table(
+      ["MEMBER", "OWN", "REPO", "BRANCH", "PATH"],
+      Enum.map(workspace.members, fn member ->
+        [member.name, member.ownership, member.repo, member.branch || "(detached)", member.path]
+      end)
+    )
   end
 
   defp render_show_checkout(%{checkout: checkout}) do
-    render_checkout_status(%{checkout: checkout})
+    IO.puts("#{checkout.repo} · #{checkout.path}")
+    IO.puts("  project:   #{checkout.project || "-"}")
+    IO.puts("  workspace: #{checkout.workspace || "-"}")
+    IO.puts("  repo:      #{checkout.repo}")
+    IO.puts("  branch:    #{checkout.branch || "(detached)"}")
+    IO.puts("  head:      #{short_sha(checkout.head)}")
+    IO.puts("  source:    #{checkout.source} (#{checkout.kind_name})")
+
+    if checkout.created_by do
+      IO.puts("  created:   #{checkout.created_by}")
+    end
 
     if checkout.workspaces != [] do
       IO.puts(
@@ -458,11 +518,19 @@ defmodule Gitspace.CLI.Inventory do
     end)
   end
 
-  defp render_show_project(%{project: project, workspaces: workspaces}) do
+  defp render_show_project(%{project: project, members: members, workspaces: workspaces}) do
     IO.puts("#{project.name}")
-    IO.puts("  path:    #{project.path}")
-    IO.puts("  members: #{length(project.members)}")
-    IO.puts("  source:  #{project.source}")
+    IO.puts("  path:     #{project.path}")
+    IO.puts("  source:   #{project.source}")
+    IO.puts("  members:  #{Enum.join(members, ", ")}")
+
+    if project.branch_template do
+      IO.puts("  branch:   #{project.branch_template}")
+    end
+
+    if project.default_ref do
+      IO.puts("  default:  #{project.default_ref}")
+    end
 
     if project.description do
       IO.puts("  describe: #{project.description}")
@@ -488,15 +556,26 @@ defmodule Gitspace.CLI.Inventory do
   defp render_show_repo(%{repo: repo, checkouts: rows}) do
     remote = if repo.origin_kind == "local", do: "LOCAL (no upstream)", else: repo.remote_url
     IO.puts("#{repo.slug} · #{remote}")
+    IO.puts("  identity:  #{repo.remote_key || "-"}")
+    IO.puts("  alias:     #{repo.slug} (#{repo.alias_source})")
     IO.puts("  mirror:    #{repo.bare_path || "(external)"}")
     IO.puts("  default:   #{repo.default_branch || "?"}")
     IO.puts("")
-    render_ls(%{checkouts: rows, verbose: true})
+
+    Output.table(
+      ["PATH", "BRANCH", "WORKSPACE", "OWN"],
+      Enum.map(rows, fn row ->
+        [row.path, row.branch || "(detached)", row.workspace || "-", row.ownership || "-"]
+      end)
+    )
   end
 
   defp render_path(data) do
     IO.puts(data.path)
   end
+
+  defp short_sha(nil), do: "-"
+  defp short_sha(sha) when is_binary(sha), do: String.slice(sha, 0, 7)
 
   defp number(nil, _stale), do: "?"
   defp number(_value, true), do: "?"

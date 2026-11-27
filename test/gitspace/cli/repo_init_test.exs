@@ -272,7 +272,7 @@ defmodule Gitspace.CLI.RepoInitTest do
     assert {:ok, _} =
              Git.run(["config", "--unset", "gitspace.alias-source"], cd: repo.bare_path)
 
-    {_, 0} = cli(["reindex", "--json"])
+    {_, 0} = cli(["doctor", "reindex", "--json"])
 
     assert {:ok, repo} = Repos.get(config, name)
     assert repo.slug == name
@@ -296,7 +296,7 @@ defmodule Gitspace.CLI.RepoInitTest do
              |> Ecto.Changeset.change(slug: "local", alias_source: "auto")
              |> Repo.update()
 
-    {_, 0} = cli(["reindex", "--json"])
+    {_, 0} = cli(["doctor", "reindex", "--json"])
 
     assert {:ok, recovered} = Repos.get(config, name)
     assert recovered.id == renamed.id

@@ -93,7 +93,7 @@ defmodule Gitspace.CLI.Rebase do
 
   defp entries(config, [target], mode, _journal) do
     with {:ok, resolved} <- Targets.resolve(config, target) do
-      resolved_entries(resolved, mode)
+      resolved_entries(config, resolved, mode)
     end
   end
 
@@ -102,7 +102,7 @@ defmodule Gitspace.CLI.Rebase do
      Error.new(:usage, "usage: gitspace rebase [<target>] [--continue|--abort] [--fetch]")}
   end
 
-  defp resolved_entries({:workspace, workspace}, mode) do
+  defp resolved_entries(_config, {:workspace, workspace}, mode) do
     entries =
       Enum.map(workspace.members, fn member ->
         entry_for_member(workspace, member)
@@ -118,7 +118,7 @@ defmodule Gitspace.CLI.Rebase do
     {:ok, entries}
   end
 
-  defp resolved_entries({:member, workspace, member}, mode) do
+  defp resolved_entries(_config, {:member, workspace, member}, mode) do
     if member.ownership == "borrowed" do
       {:error,
        Error.new(:refused, "#{workspace.name}:#{member_name(member)} is borrowed",
@@ -130,12 +130,35 @@ defmodule Gitspace.CLI.Rebase do
     end
   end
 
-  defp resolved_entries({:checkout, checkout}, mode) do
+  defp resolved_entries(_config, {:checkout, checkout}, mode) do
     {:ok, [maybe_skip(entry_for_checkout(checkout), mode)]}
   end
 
-  defp resolved_entries(_resolved, _mode) do
-    {:error, Error.new(:usage, "rebase needs a workspace, workspace:member or checkout target")}
+  defp resolved_entries(config, {:repo, repo}, mode) do
+    case Checkouts.list(config, repo: repo.slug) do
+      [checkout] ->
+        {:ok, [maybe_skip(entry_for_checkout(checkout), mode)]}
+
+      [] ->
+        {:error,
+         Error.new(:not_found, "no indexed checkouts for #{repo.slug}",
+           hint: "create one with `gitspace checkout #{repo.slug} --topic ...`"
+         )}
+
+      many ->
+        {:error,
+         Error.new(:ambiguous, "#{repo.slug} has #{length(many)} checkouts",
+           hint: "use a workspace, workspace:member or checkout to rebase"
+         )}
+    end
+  end
+
+  defp resolved_entries(_config, _resolved, _mode) do
+    {:error,
+     Error.new(
+       :usage,
+       "rebase needs a workspace, workspace:member, checkout or unambiguous repo target"
+     )}
   end
 
   defp entry_for_member(workspace, member) do

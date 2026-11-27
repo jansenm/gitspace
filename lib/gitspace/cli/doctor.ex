@@ -3,18 +3,32 @@ defmodule Gitspace.CLI.Doctor do
 
   import Ecto.Query
 
-  alias Gitspace.{Config, Git, Index, Keep, Marker, Projects, Repo, Repos, Safety}
+  alias Gitspace.{Config, Error, Git, Index, Keep, Marker, Projects, Repo, Repos, Safety}
   alias Gitspace.Git.Worktree
   alias Gitspace.Index.{Checkout, Workspace}
   alias Gitspace.CLI.Helpers
 
-  def run(_global, args) do
-    with {:ok, opts, rest} <- Helpers.parse(args, strict()),
+  def run(global, args) do
+    {before, rest} = Enum.split_while(args, &String.starts_with?(&1, "-"))
+
+    case rest do
+      [] -> check_mode(global, before, :check)
+      ["check" | sub] -> check_mode(global, before ++ sub, :check)
+      ["fix" | sub] -> check_mode(global, before ++ sub, :fix)
+      ["reindex" | sub] -> check_mode(global, before ++ sub, :reindex)
+      ["keep" | sub] -> Gitspace.CLI.Keep.run(global, before ++ sub)
+      ["help"] -> {:ok, %{help: help()}, &IO.puts/1}
+      [other | _] -> {:error, Error.new(:usage, "unknown doctor command: #{other}")}
+    end
+  end
+
+  defp check_mode(_global, args, mode) do
+    with {:ok, _opts, rest} <- Helpers.parse(args, Helpers.global_strict()),
          :ok <- Helpers.no_extra_args(rest),
          {:ok, config} <- Helpers.load_config(),
          :ok <- Helpers.start_index(config) do
-      fixes = if opts[:fix], do: fix(config), else: []
-      reindex = if opts[:reindex], do: reindex(config), else: nil
+      fixes = if mode == :fix, do: fix(config), else: []
+      reindex = if mode == :reindex, do: reindex(config), else: nil
       checks = checks(config)
       summary = summarize(checks)
 
@@ -29,7 +43,17 @@ defmodule Gitspace.CLI.Doctor do
     end
   end
 
-  defp strict, do: [fix: :boolean, reindex: :boolean] ++ Helpers.global_strict()
+  def help do
+    """
+    USAGE
+      gitspace doctor                 check health
+      gitspace doctor check           same as doctor
+      gitspace doctor fix             repair mirrors, paths and keep refs
+      gitspace doctor reindex         rebuild the index from git and markers
+      gitspace doctor keep ls         list keep refs
+      gitspace doctor keep prune      prune keep refs
+    """
+  end
 
   defp checks(config) do
     [

@@ -28,7 +28,7 @@ defmodule Gitspace.CLI.Label do
 
   defp list(args) do
     with {:ok, _opts, rest} <- Helpers.parse(args, Helpers.global_strict()),
-         {:ok, workspace} <- one_arg(rest, "gitspace label ls <workspace>"),
+         {:ok, workspace} <- one_arg(rest, "gitspace workspace label ls <workspace>"),
          {:ok, config} <- Helpers.load_config(),
          :ok <- Helpers.start_index(config),
          {:ok, workspace} <- Workspaces.get(config, workspace) do
@@ -63,7 +63,9 @@ defmodule Gitspace.CLI.Label do
 
   defp target_and_labels(_rest, _action) do
     {:error,
-     Error.new(:usage, "usage: gitspace label add|rm <workspace> <label>...", details: %{})}
+     Error.new(:usage, "usage: gitspace workspace label add|rm <workspace> <label>...",
+       details: %{}
+     )}
   end
 
   defp one_arg([arg], _usage) when arg != "", do: {:ok, arg}
@@ -85,20 +87,20 @@ defmodule Gitspace.CLI.Label do
   def help do
     """
     USAGE
-      gitspace label add <workspace> <label>...
-      gitspace label rm <workspace> <label>...
-      gitspace label set <workspace> [<label>...]
-      gitspace label ls <workspace>
+      gitspace workspace label add <workspace> <label>...
+      gitspace workspace label rm <workspace> <label>...
+      gitspace workspace label set <workspace> [<label>...]
+      gitspace workspace label ls <workspace>
 
     Labels belong to workspaces. `add` is a union, `rm` removes individual
     labels, `set` replaces the whole set (without labels it clears them).
     The workspace marker is written first, so labels survive an index rebuild.
 
     EXAMPLES
-      gitspace label add vemags@4711 jira-123 review
-      gitspace label rm vemags@4711 review
-      gitspace label set vemags@4711 jira-123
-      gitspace label set vemags@4711
+      gitspace workspace label add vemags@4711 jira-123 review
+      gitspace workspace label rm vemags@4711 review
+      gitspace workspace label set vemags@4711 jira-123
+      gitspace workspace label set vemags@4711
     """
   end
 end

@@ -110,14 +110,14 @@ defmodule Gitspace.KeepTest do
 
     assert :ok = Safety.anchor!(repo.bare_path, "refs/gitspace/keep/demo-main/#{old}", orphan)
 
-    {list, 0} = cli(["keep", "ls", "--json"])
+    {list, 0} = cli(["doctor", "keep", "ls", "--json"])
     entries = Jason.decode!(list)["data"]["entries"]
     assert length(entries) == 2
 
-    {refused, 6} = cli(["keep", "prune", "--older-than", "5", "--json"])
+    {refused, 6} = cli(["doctor", "keep", "prune", "--older-than", "5", "--json"])
     assert Jason.decode!(refused)["error"]["code"] == "confirmation_required"
 
-    {pruned, 0} = cli(["keep", "prune", "--older-than", "5", "--yes", "--json"])
+    {pruned, 0} = cli(["doctor", "keep", "prune", "--older-than", "5", "--yes", "--json"])
     assert length(Jason.decode!(pruned)["data"]["pruned"]) == 2
     assert ref_names(repo) == []
   end
@@ -131,7 +131,7 @@ defmodule Gitspace.KeepTest do
     check = Enum.find(Jason.decode!(output)["data"]["checks"], &(&1["name"] == "keep"))
     assert check["status"] == "warn"
 
-    {fixed, 0} = cli(["doctor", "--fix", "--json"])
+    {fixed, 0} = cli(["doctor", "fix", "--json"])
     keep_fix = Enum.find(Jason.decode!(fixed)["data"]["fixes"], &(&1["kind"] == "keep"))
     assert keep_fix["pruned"] == 1
     assert ref_names(repo) == []

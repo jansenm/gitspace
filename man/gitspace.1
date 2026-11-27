@@ -1,0 +1,454 @@
+.TH GITSPACE 1 "2026-11-27" "gitspace 0.8.0" "User Commands"
+.SH NAME
+gitspace \- workspaces for git checkouts
+.SH SYNOPSIS
+.B gitspace
+.RI [ command ]
+.RI [ options ]
+.SH DESCRIPTION
+.B gitspace
+manages a set of bare mirrors, project definitions and on-disk workspaces.
+A project is a named set of repositories. A topic is the piece of work. Their
+combination is a workspace named
+.IR project@topic .
+Every owned member of a workspace is a git worktree of the repository mirror;
+borrowed members are symlinks to existing checkouts.
+.PP
+With no arguments
+.B gitspace
+prints the inbox: workspaces and checkouts that need a decision.
+.SH GLOSSARY
+.TP
+.B project
+A named set of registered repositories, a branch template and a default ref.
+Projects live in
+.IR <data>/projects.toml .
+.TP
+.B repo
+A registered repository identity and its bare mirror under
+.IR <data>/repos/<sha256>.git .
+The identity is immutable; the fetch and push URLs are not.
+.TP
+.B checkout
+A working tree or clone. Owned checkouts are worktrees of a mirror; external
+checkouts are indexed in place.
+.TP
+.B workspace
+An instance of a project at one topic, stored under
+.IR <projects.root>/<project>/<topic> .
+.TP
+.B member
+A repository's role in a workspace. A member is owned or borrowed.
+.SH TARGETS
+Most commands accept one of the following targets. Ambiguous or missing
+targets are errors, never guesses.
+.TP
+.B workspace
+.IR project@topic ,
+for example
+.BR vemags@4711 .
+.TP
+.B workspace:member
+One member, for example
+.BR vemags@4711:api .
+.TP
+.B checkout
+An absolute or relative path to an indexed checkout. A path inside a checkout
+resolves to that checkout.
+.TP
+.B repo:<alias>
+A repository by alias, for example
+.BR repo:vemags .
+.TP
+.B project:<name>
+A project by name, for example
+.BR project:vemags .
+.TP
+.B project/topic[/member]
+A layout-shaped target, for example
+.BR vemags/4711/api .
+.PP
+Repository aliases and unique substrings are accepted where a repository is
+expected. An ambiguous substring is an error.
+.SH COMMANDS
+.SS Inspect
+.TP
+.B gitspace ls
+List indexed checkouts. Filters:
+.BR \-\-repo ,
+.BR \-\-project ,
+.BR \-\-topic ,
+.BR \-\-workspace ,
+.BR \-\-label ,
+.BR \-\-state ,
+.BR \-\-kind ,
+.BR \-\-source .
+.B \-\-refresh
+recomputes the cached git status without fetching.
+.B \-\-verbose
+adds the mirror hash and path.
+.TP
+.B gitspace show TARGET
+Print the identity and definition of a workspace, checkout, project or
+repository. No live git state is included; use
+.B status
+for that.
+.TP
+.B gitspace status TARGET
+Print the live state: dirty and untracked files, ahead/behind, unpushed
+commits, an operation in progress and risk reasons.
+.B \-\-long
+lists changed and untracked paths;
+.B \-\-diff
+adds the staged and unstaged patch and implies
+.BR \-\-long .
+.B \-\-diff\-lines
+limits the patch. These options need a single checkout or member target.
+.TP
+.B gitspace path TARGET
+Print the target's path and nothing else. A repository target needs exactly
+one checkout.
+.TP
+.B gitspace log TARGET
+Show outgoing and incoming commits. Outgoing is what a push would send;
+incoming is what a rebase would integrate.
+.BR \-\-outgoing ,
+.BR \-\-incoming ,
+.BR \-\-both ,
+.BR \-\-limit ,
+.B \-\-all
+and
+.B \-\-fetch
+control the view.
+.SS Create and change
+.TP
+.B gitspace checkout PROJECT[@REF] [\-\-topic T]
+Check out a project topic. Without an explicit topic the ref is checked out
+as-is. A topic derives an owned branch from the branch template (default
+.IR feature/{topic} ).
+The topic is used verbatim in the branch, including
+.BR / ;
+only the workspace directory is slugged. Without a ref the branch starts at
+each repository's default ref.
+.B \-\-as\-is
+checks the ref out unchanged;
+.B \-\-branch
+overrides the derived name;
+.B \-\-detach
+creates a detached checkout.
+.B co
+is an alias for
+.BR checkout .
+.TP
+.B gitspace workspace new [PROJECT@]TOPIC [\-\-own REPO[@REF]]...
+Create a workspace with explicit owned and borrowed members.
+.B \-\-borrow
+symlinks an existing checkout instead of creating a worktree.
+.B \-\-as
+chooses a member directory.
+.B \-\-label
+and
+.B \-\-description
+set workspace metadata.
+.B \-\-fetch
+updates the mirrors first. Re-running is ensure-only: existing members are
+kept and missing members are added.
+.TP
+.B gitspace workspace add WORKSPACE [\-\-own REPO[@REF]]...
+Add missing members to an existing workspace. The workspace must already
+exist; a typo fails instead of creating a second workspace. Nothing existing
+is changed.
+.TP
+.B gitspace workspace label add|rm|set|ls WORKSPACE ...
+Manage workspace labels. Labels are free-form, trimmed and unique. Adding is a
+union; removing removes individual labels; setting replaces the whole set.
+Labels live in the workspace marker and survive a reindex.
+.TP
+.B gitspace workspace edit WORKSPACE [\-\-description D|--clear-description]
+Change the workspace description.
+.TP
+.B gitspace workspace ls
+List workspaces.
+.B \-\-project
+and
+.B \-\-label
+filter;
+.B \-\-all
+includes torn-down workspaces.
+.TP
+.B gitspace workspace rm WORKSPACE[:MEMBER] [\-\-force] [\-\-delete-branch]
+Remove a workspace or one member. Owned members are removed as worktrees;
+borrowed members are unlinked, never deleted. Risky members are refused unless
+.B \-\-force
+archives their work under
+.IR <data>/trash .
+.B \-\-delete-branch
+also deletes owned local branches whose tip is already reachable from a
+remote, a tag or another local branch. The default branch and branches checked
+out elsewhere are never deleted. With
+.BR \-\-force ,
+a branch with local-only commits is anchored under
+.IR refs/gitspace/keep/branch/ ... 
+first.
+.TP
+.B gitspace project new NAME [\-\-repo ALIAS]...
+Create a project definition.
+.B \-\-at
+chooses the project directory;
+.B \-\-branch-template
+and
+.B \-\-default-ref
+set the derivation defaults.
+.TP
+.B gitspace project ls
+List projects.
+.TP
+.B gitspace project edit NAME [\-\-description D|--clear-description]
+Change the project description.
+.TP
+.B gitspace project add|remove NAME REPO...
+Change future project membership. Existing workspaces are never moved.
+.TP
+.B gitspace project rm NAME [\-\-force]
+Remove the project definition. Refuses while workspaces exist;
+.B \-\-force
+keeps every checkout directory in place.
+.TP
+.B gitspace repo init NAME
+Create an empty local repository, its implicit project and the first
+checkout.
+.TP
+.B gitspace repo import PATH [\-\-name NAME]
+Adopt a local clone without a remote as a local repository, copying its
+history into a bare mirror.
+.TP
+.B gitspace repo add URL|PATH [\-\-name NAME] [\-\-remote NAME]
+Register a remote-backed repository and create its mirror. A path uses one of
+the checkout's remotes as the URL; the checkout itself is not indexed.
+.TP
+.B gitspace repo ls
+List registered repositories and their checkouts.
+.TP
+.B gitspace repo branches REPO
+List the repository's local and remote branches and, with
+.BR \-\-tags ,
+tags. The default and checked-out branches are marked.
+.B \-\-match
+takes a glob;
+.B \-\-regex
+an Elixir regular expression.
+.TP
+.B gitspace repo fetch REPO|--all
+Fetch one repository or every repository. One progress line is printed per
+repository as it completes. Without a target and without
+.BR \-\-all ,
+the command is a usage error.
+.TP
+.B gitspace repo rm REPO [\-\-force] [\-\-dry-run]
+Remove a mirror. A local repository is bundled under
+.IR <data>/trash/repos/
+first.
+.TP
+.B gitspace repo alias REPO NAME
+Change the repository alias.
+.TP
+.B gitspace repo set-url REPO URL [\-\-push]
+Change the fetch URL, or the push URL with
+.BR \-\-push .
+The identity and mirror directory never change.
+.SS Work
+.TP
+.B gitspace push TARGET [\-\-dry-run] [\-\-remote NAME] [\-\-force|--force-with-lease]
+Push the checked-out branch to the same-named remote branch.
+.B \-\-force-with-lease
+is the recommended choice after a rebase: the push is rejected when the local
+remote-tracking ref no longer matches the remote. Fetch first for a current
+lease.
+.B \-\-force
+skips that check and can overwrite remote work. The flags are mutually
+exclusive.
+.TP
+.B gitspace rebase [TARGET] [\-\-fetch|--continue|--abort]
+Rebase each worktree onto the ref it was derived from, falling back to its
+configured upstream for plain checkouts. A branch whose push target does not
+exist yet is reported up to date. Conflicts are left in place and the
+remaining worktrees are still attempted.
+.TP
+.B gitspace base TARGET [REF|--clear]
+Show or change the ref a checkout rebases onto. The base is recorded in
+.IR branch.<name>.gitspace\-base ;
+it does not change the push target. Nothing is fetched or rebased.
+.SS Maintain
+.TP
+.B gitspace doctor [check]
+Check git, paths, the index, repositories, mirrors, checkouts, workspaces,
+keep refs and sync roots.
+.TP
+.B gitspace doctor fix
+Repair mirrors and paths, prune redundant keep anchors and fix other
+recoverable problems.
+.TP
+.B gitspace doctor reindex
+Rebuild the index from mirrors and workspace markers.
+.TP
+.B gitspace doctor keep ls|prune
+Inspect or prune
+.IR refs/gitspace/keep/
+anchors.
+.TP
+.B gitspace setup [\-\-data DIR] [\-\-projects DIR]
+Write the initial configuration.
+.TP
+.B gitspace config list|get|set
+Show or change the effective configuration.
+.TP
+.B gitspace config export [\-\-output FILE]
+Write a versioned JSON bundle of projects and remote-backed repositories.
+Workspaces, checkouts, labels, absolute paths and credentials are excluded;
+local repositories are skipped. The bundle is written to stdout unless
+.B \-\-output
+is given.
+.TP
+.B gitspace config import FILE|-
+Create missing repositories and projects from a bundle. Existing entries are
+left untouched, even when their members or metadata differ. A project whose
+member was skipped or missing is created without that member and the import is
+partial.
+.B \-\-dry-run
+only prints the plan;
+.B \-\-no-fetch
+registers repositories without fetching; without a terminal
+.B \-\-yes
+is required.
+.TP
+.B gitspace scan [PATH...] [\-\-max-depth N] [\-\-exclude GLOB]
+Report existing clones and worktrees without changing anything.
+.TP
+.B gitspace link PATH [\-\-repo NAME]
+Index an existing checkout as an external checkout.
+.TP
+.B gitspace unlink PATH
+Forget an indexed external checkout.
+.TP
+.B gitspace completion bash|zsh|fish
+Print a shell completion script.
+.SH OPTIONS
+.TP
+.B \-\-json
+Emit the machine-readable envelope. Stable fields are documented per command.
+.TP
+.B \-\-no-color
+Disable colored human output.
+.TP
+.B \-\-verbose
+Print git argv and add extra metadata where supported.
+.TP
+.B \-\-yes
+Answer confirmation prompts. Required for destructive or partial operations
+without a terminal.
+.TP
+.B \-\-refresh
+Recompute cached local git status. Never fetches.
+.TP
+.B \-\-fetch
+Update mirrors from their remotes. Requires network access.
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 1
+Unclassified error.
+.TP
+.B 2
+Usage error.
+.TP
+.B 3
+Target not found, or ambiguous.
+.TP
+.B 4
+Conflict, including an occupied branch or an occupied path.
+.TP
+.B 5
+Refused for safety.
+.TP
+.B 6
+Confirmation required.
+.TP
+.B 7
+Partial success or invalid configuration.
+.SH FILES
+.TP
+.I <config>
+TOML configuration at
+.IR $XDG_CONFIG_HOME/gitspace/config.toml ,
+or
+.IR $GITSPACE_CONFIG .
+.TP
+.I <data>/projects.toml
+Project definitions.
+.TP
+.I <data>/index.sqlite3
+The SQLite index.
+.TP
+.I <data>/repos/
+Bare mirrors named by the SHA-256 of the repository identity, plus
+.IR remotes.txt .
+.TP
+.I <projects.root>/<project>/<topic>/
+Workspace directory and
+.IR .gitspace.json .
+.TP
+.I <data>/trash/
+Archived worktrees, untracked files and local-repository bundles.
+.TP
+.I <data>/rebase.json
+Journal for rolling back completed rebases.
+.SH ENVIRONMENT
+.TP
+.B GITSPACE_CONFIG
+Alternative configuration file.
+.TP
+.B GITSPACE_DATA
+Override the data directory.
+.TP
+.B GITSPACE_PROJECTS_ROOT
+Override the projects root.
+.TP
+.B GITSPACE_NO_PROMPT
+Disable interactive confirmation even on a terminal.
+.SH EXAMPLES
+Start a topic from main:
+.nf
+gitspace checkout vemags@main \-\-topic MT4711
+.fi
+.PP
+Work on the current checkout:
+.nf
+gitspace show .
+gitspace status . \-\-long
+gitspace log . \-\-incoming
+.fi
+.PP
+Finish after a rebase:
+.nf
+gitspace rebase vemags@MT4711 \-\-fetch
+gitspace push vemags@MT4711:api \-\-force-with-lease
+.fi
+.PP
+Share projects and repositories:
+.nf
+gitspace config export \-\-output gitspace-bundle.json
+gitspace config import gitspace-bundle.json \-\-yes
+.fi
+.PP
+Repair an installation:
+.nf
+gitspace doctor
+gitspace doctor fix
+gitspace doctor reindex
+.fi
+.SH SEE ALSO
+.BR git (1),
+.BR git-worktree (1),
+.BR git-rebase (1)

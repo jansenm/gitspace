@@ -21,15 +21,15 @@ Product scope, CLI contract and acceptance plan live in the planning repository:
 
 | Area | Commands |
 |---|---|
-| Creation | `project new|ls|show|add|remove|rm`, `co`, `workspace new|ls|status|rm` |
-| Setup, config and health | `setup`, `config list|get|set|export|import`, `doctor`, `doctor --fix`, `doctor --reindex` |
+| Creation | `checkout` (`co`), `workspace new|add`, `project new|add|remove`, `repo init|import|add` |
+| Setup, config and health | `setup`, `config list|get|set|export|import`, `doctor check|fix|reindex|keep` |
 | Completion | `completion bash|zsh|fish` |
-| Mirrors | `repo init`, `repo import`, `repo add`, `repo ls`, `repo branches`, `repo fetch`, `repo alias`, `repo set-url`, `repo rm` |
+| Mirrors | `repo init`, `repo import`, `repo add`, `repo ls`, `repo branches`, `repo fetch <repo>|--all`, `repo alias`, `repo set-url`, `repo rm` |
 | Discovery | `scan` (read-only), `link`, `unlink` |
-| Inventory | `gitspace`, `ls`, `log`, `status`, `show`, `path` |
+| Inventory | `gitspace`, `ls`, `show`, `status`, `path`, `log` |
 | Publishing | `push`, `rebase`, `base` |
-| Maintenance | `keep ls|prune` |
-| Recovery | `reindex` — rediscover mirrors from disk, rebuild workspaces from markers |
+| Maintenance | `doctor keep ls|prune` |
+| Recovery | `doctor reindex` — rediscover mirrors from disk, rebuild workspaces from markers |
 | Machine surface | `--json` on every command, exit codes 0–7, `--verbose` prints git argv |
 
 322 checks (318 tests, 3 properties, 1 doctest) in ~69 s.
@@ -44,14 +44,19 @@ make test          # test suite
 make lint          # format check + warnings-as-errors
 make ci            # lint, then tests
 make burrito       # standalone binary
+make man           # lint and render man/gitspace.1
 
 make run ARGS=doctor
 make bench         # synthetic benchmark
 make bench BENCH_REPO=/path/to/repo BENCH_WORKTREES=2 BENCH_DIR=/data/tmp/gitspace-bench
 
-make install       # installs gitspace and the gsp alias under $(PREFIX)/bin
+make install       # binary, gsp alias and manpage under $(PREFIX)
+make install-man   # manpage only
 make install DESTDIR=/tmp/stage PREFIX=/usr/local
 ```
+
+The full reference is in `man/gitspace.1`; `make install` installs it as `gitspace(1)` under
+`$(MANPREFIX)/man1`.
 
 First run:
 
@@ -65,7 +70,7 @@ gitspace co api@main --topic dev
 gitspace co api@main --topic JENKINS-123
 gitspace project new webapp --repo api --repo web
 gitspace co webapp@main --topic JENKINS-123 --only api,web
-gitspace workspace status webapp@JENKINS-123
+gitspace status webapp@JENKINS-123
 gitspace scan ~/src
 gitspace link ~/src/old-api
 gitspace
@@ -113,7 +118,7 @@ later without moving existing checkouts.
 ```sh
 gitspace project new vemags --repo api --repo web --description "VEMAGS services"
 gitspace project add vemags legacy
-gitspace project show vemags
+gitspace show project:vemags
 gitspace project ls
 gitspace project remove vemags legacy
 ```
@@ -171,13 +176,14 @@ the topic workspace is ignored**, even when the requested ref or branch mode dif
 after adding a project member therefore adds only the missing member; no `--only` is needed.
 Exclusions never delete existing members.
 
-`workspace new` remains the explicit form; `workspace add` is an alias for it:
+`workspace new` creates a workspace; `workspace add` extends an existing one and fails if the
+workspace does not exist, so a typo cannot silently create a second workspace:
 
 ```sh
 gitspace workspace new vemags@4711 --own api@main --own web@main
 gitspace workspace new 4711/sub --own api@main      # topic 4711/sub, project inferred
 gitspace workspace new vemags@dev --own api --own web --as-is  # each default branch
-gitspace workspace add vemags@4711 --own api@main               # alias for new
+gitspace workspace add vemags@4711 --own api@main               # add a member
 ```
 
 The target is `[<project>@]<topic>`. `@` separates project and topic; topics may contain `/`,
@@ -318,11 +324,11 @@ reindex. There is no editor: everything is explicit parameters, which keeps it u
 scripts and agents.
 
 ```sh
-gitspace label add vemags@4711 jira-123 review
-gitspace label rm vemags@4711 review
-gitspace label set vemags@4711 jira-123     # replace the whole set
-gitspace label set vemags@4711              # clear all labels
-gitspace label ls vemags@4711
+gitspace workspace label add vemags@4711 jira-123 review
+gitspace workspace label rm vemags@4711 review
+gitspace workspace label set vemags@4711 jira-123     # replace the whole set
+gitspace workspace label set vemags@4711              # clear all labels
+gitspace workspace label ls vemags@4711
 
 gitspace workspace edit vemags@4711 --description "move the deploy job"
 gitspace workspace edit vemags@4711 --clear-description
@@ -331,8 +337,8 @@ gitspace project edit vemags --description "VEMAGS services"
 gitspace project edit vemags --clear-description
 ```
 
-`gitspace ls --label review` filters by label. `workspace show`/`status` display labels and
-the description.
+`gitspace ls --label review` filters by label. `gitspace show <workspace>` displays labels and
+the description; `status` deliberately shows only live state.
 
 ## Removing workspaces
 
@@ -394,7 +400,6 @@ fits in roughly 100 characters.
 ```sh
 gitspace ls
 gitspace ls --verbose      # adds HASH and MIRROR
-gitspace ls --wide         # old name for --verbose
 gitspace ls --project P    # one project
 gitspace ls --topic T      # one topic across projects
 gitspace ls --refresh      # recompute git status, no fetch
@@ -403,10 +408,20 @@ gitspace ls --json         # full rows, including path and mirror metadata
 
 A `?` in a count means the cached status is missing or older than
 `status.max_age_seconds` (default 3600). `gitspace ls --refresh` recomputes the listed
-checkouts; `gitspace status --refresh` refreshes every indexed checkout and shows the inbox.
+checkouts; `gitspace --refresh` recomputes every indexed checkout before rendering the inbox.
 `repo fetch --all` prints one progress line per repository (`fetching demo ... ok`) as it
 completes; `--json` remains a single document. `repo fetch` is not a status refresh: fetching
 invalidates `last_status_at` and can make more `?` appear until a `status`/`ls --refresh` runs.
+
+### show vs status
+
+- `gitspace show <target>` is the identity and definition: project, workspace, repo, branch,
+  head, path, membership, and for projects/repos their members and workspaces.
+- `gitspace status <target>` is the live state: dirty and untracked files, ahead/behind,
+  unpushed commits, an operation in progress, risk, age, and with `--long`/`--diff` the files
+  and patch.
+- `gitspace ls` is the plural checkout inventory. `gitspace` is the inbox. There is no
+  `status` without a target.
 
 Use `gitspace path <target>` or `gitspace show <target>` when the checkout path is what you
 need. `gitspace show .` (and `gitspace status .`) resolves the current directory, including
@@ -520,15 +535,15 @@ The temporary anchor used during rollback is removed again after a successful re
 
 ## Keep refs
 
-Teardown and `doctor --fix` anchor commits under `refs/gitspace/keep/…` before removing a
+Teardown and `doctor fix` anchor commits under `refs/gitspace/keep/…` before removing a
 worktree or pruning stale metadata. They are real backups, not garbage, so gitspace never
 deletes them silently:
 
 ```sh
-gitspace keep ls --verbose                 # repo, kind, age, redundant/kept, commit
-gitspace keep prune                        # delete redundant anchors only
-gitspace keep prune --older-than 30 --yes  # also orphaned anchors older than 30 days
-gitspace keep prune --dry-run              # preview only
+gitspace doctor keep ls --verbose                 # repo, kind, age, redundant/kept, commit
+gitspace doctor keep prune                        # delete redundant anchors only
+gitspace doctor keep prune --older-than 30 --yes  # also orphaned anchors older than 30 days
+gitspace doctor keep prune --dry-run              # preview only
 ```
 
 A redundant anchor points at a commit that is still reachable from a branch, remote or tag;
@@ -617,7 +632,7 @@ status (20) 61.6 ms.
 - `scan` does not follow symlinks.
 - Stable checkout IDs survive normal reruns and reindexes, but not deletion of the index;
   workspace identity is recovered from markers.
-- `doctor --fix` prunes worktree metadata; use `--reindex` to reconcile missing checkout rows.
+- `doctor fix` prunes worktree metadata; use `doctor reindex` to reconcile missing checkout rows.
 - The occupied-branch dialog has unit and strategy coverage plus a PTY smoke test; a fully
   automated PTY suite is not in place. The non-TTY and `--json` contracts are tested.
 - `GITSPACE_NO_PROMPT=1` forces non-interactive behaviour even when stdin is a terminal.

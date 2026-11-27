@@ -276,13 +276,23 @@ defmodule Gitspace.CLI.WorkspaceTest do
     assert Jason.decode!(conflict)["error"]["code"] == "usage"
   end
 
-  test "workspace add is an alias for workspace new" do
-    {output, 0} = cli(["workspace", "add", "a@alias", "--own", "a", "--json"])
+  test "workspace add only extends an existing workspace" do
+    {output, 3} = cli(["workspace", "add", "a@alias", "--own", "a", "--json"])
+    error = Jason.decode!(output)["error"]
+    assert error["code"] == "not_found"
+    assert error["hint"] =~ "workspace new"
+
+    {_, 0} = cli(["workspace", "new", "a@alias", "--own", "a", "--json"])
+
+    {output, 0} = cli(["workspace", "add", "a@alias", "--own", "b", "--json"])
     data = Jason.decode!(output)["data"]
 
     assert data["workspace"] == "a@alias"
-    assert [member] = data["members"]
-    assert member["branch"] == "feature/alias"
+    assert Enum.sort(Enum.map(data["members"], & &1["name"])) == ["a", "b"]
+    assert Enum.all?(data["members"], &(&1["branch"] == "feature/alias"))
+
+    {output, 2} = cli(["workspace", "add", "a@alias", "--json"])
+    assert Jason.decode!(output)["error"]["code"] == "usage"
   end
 
   test "workspace new project@topic needs no --project or --branch" do
@@ -372,26 +382,26 @@ defmodule Gitspace.CLI.WorkspaceTest do
     {_, 0} = cli(["co", "a@main", "--label", "one", "--json"])
     dir = Path.join([config.projects_root, "a", "main"])
 
-    {output, 0} = cli(["label", "add", "a@main", "two", "three", "--json"])
+    {output, 0} = cli(["workspace", "label", "add", "a@main", "two", "three", "--json"])
     assert Jason.decode!(output)["data"]["labels"] == ["one", "two", "three"]
 
     marker = Marker.read!(dir)
     assert marker["labels"] == ["one", "two", "three"]
 
-    {output, 0} = cli(["label", "rm", "a@main", "two", "--json"])
+    {output, 0} = cli(["workspace", "label", "rm", "a@main", "two", "--json"])
     assert Jason.decode!(output)["data"]["labels"] == ["one", "three"]
 
-    {output, 0} = cli(["label", "set", "a@main", "solo", "--json"])
+    {output, 0} = cli(["workspace", "label", "set", "a@main", "solo", "--json"])
     assert Jason.decode!(output)["data"]["labels"] == ["solo"]
 
-    {output, 0} = cli(["label", "set", "a@main", "--json"])
+    {output, 0} = cli(["workspace", "label", "set", "a@main", "--json"])
     assert Jason.decode!(output)["data"]["labels"] == []
 
-    {output, 0} = cli(["label", "ls", "a@main", "--json"])
+    {output, 0} = cli(["workspace", "label", "ls", "a@main", "--json"])
     assert Jason.decode!(output)["data"]["labels"] == []
     assert Marker.read!(dir)["labels"] == []
 
-    {output, 2} = cli(["label", "add", "a@main", " ", "--json"])
+    {output, 2} = cli(["workspace", "label", "add", "a@main", " ", "--json"])
     assert Jason.decode!(output)["error"]["code"] == "usage"
   end
 
@@ -480,7 +490,7 @@ defmodule Gitspace.CLI.WorkspaceTest do
   test "help covers co and workspace" do
     {top, 0} = cli(["--help"])
     assert top =~ "checkout <project>[@<ref>]"
-    assert top =~ "workspace new|add|ls|status"
+    assert top =~ "workspace new|add|label|ls|edit|rm"
 
     {co, 0} = cli(["co", "--help"])
     assert co =~ "gitspace checkout <project>[@<ref>]"
@@ -488,7 +498,9 @@ defmodule Gitspace.CLI.WorkspaceTest do
     assert co =~ "MT4711"
 
     {workspace, 0} = cli(["workspace", "--help"])
-    assert workspace =~ "gitspace workspace new|add [<project>@]<topic>"
+    assert workspace =~ "gitspace workspace new [<project>@]<topic>"
+    assert workspace =~ "gitspace workspace add <workspace>"
+    assert workspace =~ "gitspace workspace label add|rm|set|ls"
     assert workspace =~ "BORROWED MEMBERS"
   end
 

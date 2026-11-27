@@ -57,8 +57,8 @@ defmodule Gitspace.CLI.CompletionTest do
     assert "completion" in lines(commands)
 
     {subcommands, 0} = cli(["__complete", "1", "project", ""])
-    assert "show" in lines(subcommands)
     assert "add" in lines(subcommands)
+    assert "edit" in lines(subcommands)
 
     {flags, 0} = cli(["__complete", "1", "co", "--as-i"])
     assert lines(flags) == ["--as-is"]
@@ -150,7 +150,7 @@ defmodule Gitspace.CLI.CompletionTest do
     {at_path_members, 0} = cli(["__complete", "1", "status", "vemags@dev/"])
     assert "vemags@dev/api" in lines(at_path_members)
 
-    {workspace_command, 0} = cli(["__complete", "2", "workspace", "status", "vemags@"])
+    {workspace_command, 0} = cli(["__complete", "2", "workspace", "rm", "vemags@"])
     assert lines(workspace_command) == ["vemags@dev"]
   end
 
@@ -196,11 +196,10 @@ defmodule Gitspace.CLI.CompletionTest do
     {continue, 0} = cli(["__complete", "1", "rebase", "--c"])
     assert lines(continue) == ["--continue"]
 
-    {keep_subcommands, 0} = cli(["__complete", "1", "keep", ""])
-    assert "prune" in lines(keep_subcommands)
-
-    {older_than, 0} = cli(["__complete", "2", "keep", "prune", "--o"])
-    assert lines(older_than) == ["--older-than"]
+    {doctor_subcommands, 0} = cli(["__complete", "1", "doctor", ""])
+    assert "fix" in lines(doctor_subcommands)
+    assert "reindex" in lines(doctor_subcommands)
+    assert "keep" in lines(doctor_subcommands)
 
     {keys, 0} = cli(["__complete", "2", "config", "get", ""])
     assert "log.max_commits" in lines(keys)

@@ -10,14 +10,11 @@ defmodule Gitspace.CLI do
     Co,
     Doctor,
     Inventory,
-    Keep,
-    Label,
     Log,
     Output,
     Project,
     Push,
     Rebase,
-    Reindex,
     Repo,
     Scan,
     Setup,
@@ -81,18 +78,15 @@ defmodule Gitspace.CLI do
         subcommand(args) != "set"
 
       "doctor" ->
-        not Enum.any?(args, &(&1 in ["--fix", "--reindex"]))
+        subcommand(args) in [nil, "check"]
 
       "repo" ->
         subcommand(args) in ["ls", "fetch"]
 
       "workspace" ->
-        subcommand(args) in ["ls", "status"]
+        subcommand(args) == "ls"
 
       "project" ->
-        subcommand(args) in ["ls", "show"]
-
-      "keep" ->
         subcommand(args) == "ls"
 
       _ ->
@@ -151,9 +145,6 @@ defmodule Gitspace.CLI do
         "log" ->
           Log.run(global, command_args)
 
-        "keep" ->
-          Keep.run(global, command_args)
-
         "push" ->
           Push.run(global, command_args)
 
@@ -171,9 +162,6 @@ defmodule Gitspace.CLI do
 
         "workspace" ->
           Workspace.run(global, command_args)
-
-        "label" ->
-          Label.run(global, command_args)
 
         "project" ->
           Project.run(global, command_args)
@@ -204,9 +192,6 @@ defmodule Gitspace.CLI do
 
         "setup" ->
           Setup.run(global, command_args)
-
-        "reindex" ->
-          Reindex.run(global, command_args)
 
         "config" ->
           Config.run(global, command_args)
@@ -279,28 +264,25 @@ defmodule Gitspace.CLI do
       gitspace <command> [options]
 
     COMMANDS
-      ls                           all indexed checkouts
+      ls                           indexed checkouts
       log <target>                 outgoing and incoming commits
-      keep ls|prune                list and prune refs/gitspace/keep anchors
       push <target>                push the checked-out branch
       rebase [target]              rebase worktrees onto their base
       base <target> [<ref>]        show or change the rebase base per checkout
       checkout <project>[@<ref>]   check out a project topic (co = alias)
-      workspace new|add|ls|status|edit|rm  explicit workspace creation, inspection and removal
-      label add|rm|set|ls <workspace>  add, remove or replace workspace labels
-      project new|ls|show|edit|add|remove|rm  project definitions
-      status [target]              inbox, or one workspace/checkout/repository
-      show <target>                details and provenance
+      workspace new|add|label|ls|edit|rm  workspaces, members and labels
+      project new|ls|edit|add|remove|rm  project definitions
+      status <target>              live state, files and diffs
+      show <target>                identity and definition
       path <target>                print a checkout path
-      repo add|ls|branches|fetch|rm|alias|set-url  mirrors, branches, aliases and remote URLs
+      repo init|import|add|ls|branches|fetch|rm|alias|set-url  mirrors and repos
       scan [path...]               discover existing clones and worktrees (read-only)
       link <path>                  index an external checkout
       unlink <path>                forget an external checkout
-      doctor [--fix] [--reindex]   health checks
+      doctor check|fix|reindex|keep  health, repair and index maintenance
       config list|get|set|export|import  settings, projects and repos
       completion bash|zsh|fish     print a shell completion script
       setup                        choose data and projects directories
-      reindex                      rebuild the index from git and markers
 
     GLOBAL
       --json --no-color --verbose --yes --help --version
@@ -316,7 +298,7 @@ defmodule Gitspace.CLI do
                       [--kind worktree|clone] [--source managed|external]
                       [--refresh] [--verbose]
 
-        --verbose (or the old --wide) adds HASH and MIRROR to the table.
+        --verbose adds HASH and MIRROR to the table.
         --refresh recomputes the cached git status of the listed checkouts
         (no fetch).
         """
@@ -324,24 +306,23 @@ defmodule Gitspace.CLI do
       "status" ->
         """
         USAGE
-          gitspace status [target] [--refresh]
-          gitspace status workspace:member
+          gitspace status <target> [--refresh]
           gitspace status <workspace:member|checkout> --long [--diff] [--diff-lines N]
+
+        The target may be a workspace, workspace:member, checkout, repo or
+        project. The inbox is `gitspace`; use `gitspace --refresh` to recompute
+        every indexed checkout before rendering it.
 
         --long lists the changed and untracked paths. --diff adds the staged and
         unstaged patch and implies --long. -l and -v are short for --long and
         --diff. Both need a single member or checkout target.
 
-        --refresh recomputes git status; with no target it refreshes every
-        indexed checkout before rendering the inbox. It never fetches.
+        --refresh recomputes the target's git status. It never fetches.
 
         A checkout with a merge, rebase, cherry-pick or revert in progress
         reports it as `operation:`. `ls` and the inbox include it in the risk
         reasons.
         """
-
-      "keep" ->
-        Keep.help()
 
       "rebase" ->
         """
@@ -448,9 +429,6 @@ defmodule Gitspace.CLI do
       "workspace" ->
         Workspace.help()
 
-      "label" ->
-        Label.help()
-
       "show" ->
         """
         USAGE
@@ -502,10 +480,7 @@ defmodule Gitspace.CLI do
         """
 
       "doctor" ->
-        """
-        USAGE
-          gitspace doctor [--fix] [--reindex]
-        """
+        Doctor.help()
 
       "config" ->
         """
@@ -544,12 +519,6 @@ defmodule Gitspace.CLI do
         """
         USAGE
           gitspace setup [--data DIR] [--projects DIR] [--force]
-        """
-
-      "reindex" ->
-        """
-        USAGE
-          gitspace reindex
         """
 
       _ ->

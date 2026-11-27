@@ -98,6 +98,8 @@ defmodule Gitspace.CLITest do
     assert text =~ "project:   demo"
     assert text =~ "workspace: demo@JENKINS-123"
     assert text =~ "repo:      demo"
+    refute text =~ "dirty:"
+    refute text =~ "ahead:"
 
     sub = Path.join(path, "sub/dir")
     File.mkdir_p!(sub)
@@ -234,8 +236,8 @@ defmodule Gitspace.CLITest do
     Repo.delete_all(Repository)
     assert [] = Repos.list(config)
 
-    {output, 0} = cli(["reindex", "--json"])
-    data = Jason.decode!(output)["data"]
+    {output, 0} = cli(["doctor", "reindex", "--json"])
+    data = Jason.decode!(output)["data"]["reindex"]
     assert data["discovered_repositories"] == 1
     assert data["workspaces"] == 1
 
@@ -385,6 +387,10 @@ defmodule Gitspace.CLITest do
     {workspace, 0} = cli(["push", "demo@JENKINS-123", "--json"])
     assert [entry] = Jason.decode!(workspace)["data"]["entries"]
     assert entry["handle"] == "demo@JENKINS-123:demo"
+
+    {by_repo, 0} = cli(["push", "repo:demo", "--json"])
+    assert [entry] = Jason.decode!(by_repo)["data"]["entries"]
+    assert entry["handle"] == "demo"
   end
 
   test "push dry-run does not update the remote", %{path: path, source: source} do
@@ -733,6 +739,9 @@ defmodule Gitspace.CLITest do
   end
 
   test "repo fetch --all reports each repository inline", %{} do
+    {_, 2} = cli(["repo", "fetch"])
+    {_, 2} = cli(["repo", "fetch", "--all", "demo"])
+
     {output, 0} = cli(["repo", "fetch", "--all"])
     assert output =~ "fetching demo ... ok"
     assert output =~ "fetched 1 repositories"
@@ -865,7 +874,7 @@ defmodule Gitspace.CLITest do
   end
 
   test "doctor --fix renders the keep fix without a repo key", %{config: _config} do
-    {output, 0} = cli(["doctor", "--fix"])
+    {output, 0} = cli(["doctor", "fix"])
     assert output =~ "pruned keep refs"
   end
 
@@ -903,7 +912,7 @@ defmodule Gitspace.CLITest do
     assert mirrors["status"] == "warn"
     assert mirrors["detail"] =~ "missing_from_text"
 
-    {fixed, 0} = cli(["doctor", "--fix", "--json"])
+    {fixed, 0} = cli(["doctor", "fix", "--json"])
     fixes = Jason.decode!(fixed)["data"]["fixes"]
     assert Enum.any?(fixes, &(&1["discovered"] == 1 and &1["issues"] == 0))
     assert File.exists?(Gitspace.MirrorIndex.path(config))

@@ -9,6 +9,8 @@ MIX             ?= mix
 BURRITO_TARGET  ?= linux_x86_64
 PREFIX          ?= /usr/local
 BINDIR          ?= $(PREFIX)/bin
+MANPREFIX       ?= $(PREFIX)/share/man
+MANDIR          ?= $(MANPREFIX)/man1
 
 # Benchmark inputs. Leave BENCH_REPO empty for the synthetic fixture.
 BENCH_REPO      ?=
@@ -28,20 +30,24 @@ ARGS            ?=
 unexport DESTDIR
 unexport PREFIX
 unexport BINDIR
+unexport MANPREFIX
+unexport MANDIR
 
 # Fixed values; not meant to be overridden.
 INSTALL         := install
 INSTALL_DIR     := $(INSTALL) -d
 INSTALL_PROGRAM := $(INSTALL) -m 0755
+INSTALL_DATA    := $(INSTALL) -m 0644
 LN_S            := ln -s
 BINARY          := burrito_out/gitspace_$(BURRITO_TARGET)
+MANPAGE         := man/gitspace.1
 
 ifndef VERBOSE
 .SILENT:
 endif
 
-.PHONY: all build deps test check format format-check lint ci bench burrito run
-.PHONY: install uninstall clean mostlyclean distclean maintainer-clean help
+.PHONY: all build deps test check format format-check lint ci man bench burrito run
+.PHONY: install install-man uninstall clean mostlyclean distclean maintainer-clean help
 
 ##
 ## BUILD
@@ -87,6 +93,7 @@ lint: format-check build
 ## ci                  » what CI runs: lint, then tests
 ci: lint
 	$(MAKE) test
+	$(MAKE) man
 
 ##
 ## RUNNING
@@ -103,6 +110,16 @@ bench:
 		$(MIX) run bench/bench.exs; \
 	fi
 
+## man                 » lint and render the manpage
+man:
+	@if command -v mandoc >/dev/null 2>&1; then \
+		mandoc -Tlint $(MANPAGE); \
+	elif command -v groff >/dev/null 2>&1; then \
+		groff -man -Tutf8 $(MANPAGE) >/dev/null; \
+	else \
+		echo "skip manpage check: neither mandoc nor groff is installed"; \
+	fi
+
 ## run                 » run the dev CLI (ARGS="doctor")
 run:
 	$(MIX) run -e 'Gitspace.CLI.main(System.argv())' -- $(ARGS)
@@ -111,15 +128,23 @@ run:
 ## INSTALL
 ## -------
 
-## install             » install the binary and the gsp alias
-install: burrito
+## install             » install the binary, the gsp alias and the manpage
+install: burrito man
 	$(INSTALL_DIR) $(DESTDIR)$(BINDIR)
 	$(INSTALL_PROGRAM) $(BINARY) $(DESTDIR)$(BINDIR)/gitspace
 	$(LN_S) -f gitspace $(DESTDIR)$(BINDIR)/gsp
+	$(INSTALL_DIR) $(DESTDIR)$(MANDIR)
+	$(INSTALL_DATA) $(MANPAGE) $(DESTDIR)$(MANDIR)/gitspace.1
 
-## uninstall           » remove the installed binary and alias
+## install-man         » install only the manpage
+install-man: man
+	$(INSTALL_DIR) $(DESTDIR)$(MANDIR)
+	$(INSTALL_DATA) $(MANPAGE) $(DESTDIR)$(MANDIR)/gitspace.1
+
+## uninstall           » remove the installed binary, alias and manpage
 uninstall:
 	rm -f $(DESTDIR)$(BINDIR)/gitspace $(DESTDIR)$(BINDIR)/gsp
+	rm -f $(DESTDIR)$(MANDIR)/gitspace.1
 
 ##
 ## CLEANING

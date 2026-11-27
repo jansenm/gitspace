@@ -2,14 +2,15 @@ defmodule Gitspace.CLI.Workspace do
   @moduledoc false
 
   alias Gitspace.{Create, Error, Teardown, Workspaces}
-  alias Gitspace.CLI.{Helpers, Inventory, Output, Prompt}
+  alias Gitspace.CLI.{Helpers, Inventory, Label, Output, Prompt}
 
   def run(global, args) do
     case args do
-      ["new" | rest] -> new(global, rest)
-      ["add" | rest] -> new(global, rest)
-      ["ls" | rest] -> list(global, rest)
+      ["new" | rest] -> new(global, rest, :new)
+      ["add" | rest] -> new(global, rest, :add)
+      ["label" | rest] -> Label.run(global, rest)
       ["status" | rest] -> status(global, rest)
+      ["ls" | rest] -> list(global, rest)
       ["edit" | rest] -> edit(global, rest)
       ["rm" | rest] -> remove(global, rest)
       [] -> {:ok, %{help: help()}, &render_help/1}
@@ -18,26 +19,29 @@ defmodule Gitspace.CLI.Workspace do
     end
   end
 
-  defp new(global, args) do
+  defp new(global, args, mode) do
+    usage = "gitspace workspace #{mode} [<project>@]<topic> [--own repo]..."
+
     with {:ok, opts, rest} <- Helpers.parse(args, new_strict()),
-         {:ok, name} <-
-           one_arg(rest, "gitspace workspace new [<project>@]<topic> [--own repo]..."),
+         {:ok, name} <- one_arg(rest, usage),
          {:ok, owned} <- specs(Keyword.get_values(opts, :own), "owned", opts),
          {:ok, borrowed} <- specs(Keyword.get_values(opts, :borrow), "borrowed", opts),
          {:ok, owned, borrowed} <-
            apply_member_aliases(owned, borrowed, Keyword.get_values(opts, :as)),
+         :ok <- add_members_present(mode, owned, borrowed),
          {:ok, config} <- Helpers.load_config(),
-         :ok <- Helpers.start_index(config) do
+         :ok <- Helpers.start_index(config),
+         :ok <- ensure_add_target(config, mode, name) do
       create_opts =
         [
           branch: opts[:branch],
           as_is: opts[:as_is],
-          labels: Keyword.get_values(opts, :label),
+          labels: if(mode == :new, do: Keyword.get_values(opts, :label), else: []),
           fetch: opts[:fetch],
           dry_run: opts[:dry_run],
-          created_by: "workspace new",
+          created_by: "workspace #{mode}",
           on_occupied: occupied_handler(global, opts)
-        ] ++ description_opt(opts)
+        ] ++ if(mode == :new, do: description_opt(opts), else: [])
 
       case Create.workspace_new(config, name, owned, borrowed, create_opts) do
         {:ok, result} ->
@@ -49,6 +53,29 @@ defmodule Gitspace.CLI.Workspace do
         {:error, error} ->
           {:error, error}
       end
+    end
+  end
+
+  defp add_members_present(:add, [], []),
+    do: {:error, Error.new(:usage, "workspace add needs --own or --borrow")}
+
+  defp add_members_present(_mode, _owned, _borrowed), do: :ok
+
+  defp ensure_add_target(_config, :new, _name), do: :ok
+
+  defp ensure_add_target(config, :add, name) do
+    case Workspaces.get(config, name) do
+      {:ok, _workspace} ->
+        :ok
+
+      {:error, %Error{code: :not_found}} ->
+        {:error,
+         Error.new(:not_found, "workspace not found: #{name}",
+           hint: "create it with `gitspace workspace new #{name} ...`"
+         )}
+
+      {:error, error} ->
+        {:error, error}
     end
   end
 
@@ -352,6 +379,13 @@ defmodule Gitspace.CLI.Workspace do
     end
   end
 
+  defp status(_global, []),
+    do: {:error, Error.new(:usage, "usage: gitspace status <workspace>")}
+
+  defp status(global, [name | rest]) do
+    Inventory.status(global, [name | rest])
+  end
+
   defp edit_strict do
     [description: :string, clear_description: :boolean] ++ Helpers.global_strict()
   end
@@ -363,13 +397,6 @@ defmodule Gitspace.CLI.Workspace do
     labels = if result.labels == [], do: "(none)", else: Enum.join(result.labels, ", ")
     IO.puts("  labels:      #{labels}")
     IO.puts("  marker:      #{result.marker_path}")
-  end
-
-  defp status(_global, []),
-    do: {:error, Error.new(:usage, "usage: gitspace workspace status <name>")}
-
-  defp status(global, [name | rest]) do
-    Inventory.status(global, [name | rest])
   end
 
   defp one_arg([arg], _usage), do: {:ok, arg}
@@ -521,7 +548,11 @@ defmodule Gitspace.CLI.Workspace do
       command exists for explicit owned/borrowed member lists, labels, descriptions,
       member directory names and dry runs.
 
-    `workspace add` is an alias for `workspace new`.
+    `workspace add` extends an existing workspace with --own/--borrow members.
+    It never creates a workspace; a typo therefore fails instead of silently
+    creating a second workspace. `workspace new` remains ensure-only.
+
+    `workspace label` manages workspace labels (the only labelable object).
 
     REMOVAL
       `workspace rm <workspace>` removes every member and tombstones the workspace.
@@ -540,12 +571,13 @@ defmodule Gitspace.CLI.Workspace do
       project definition stays.
 
     USAGE
-      gitspace workspace new|add [<project>@]<topic> [--own <repo>[@<ref>]]...
+      gitspace workspace new [<project>@]<topic> [--own <repo>[@<ref>]]...
+      gitspace workspace add <workspace> [--own <repo>[@<ref>]]...
                                     [--borrow <repo>[@<ref>]]... [--branch B] [--as-is]
                                     [--label L]... [--description D]
                                     [--as <repo>=<dir>]... [--fetch] [--dry-run] [--json]
       gitspace workspace ls [--project P] [--label L] [--all] [--json]
-      gitspace workspace status <workspace> [--refresh] [--json]
+      gitspace workspace label add|rm|set|ls <workspace> ...
       gitspace workspace edit <workspace> [--description D] [--clear-description]
       gitspace workspace rm <workspace>[:<member>] [--force] [--delete-branch]
                                   [--dry-run] [--yes] [--json]

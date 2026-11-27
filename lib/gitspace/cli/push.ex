@@ -13,7 +13,7 @@ defmodule Gitspace.CLI.Push do
          {:ok, config} <- Helpers.load_config(),
          :ok <- Helpers.start_index(config),
          {:ok, resolved} <- Targets.resolve(config, target),
-         {:ok, entries} <- entries(resolved) do
+         {:ok, entries} <- entries(config, resolved) do
       results =
         entries
         |> Enum.map(&push_entry(&1, opts, force))
@@ -57,11 +57,11 @@ defmodule Gitspace.CLI.Push do
     {:error, Error.new(:usage, "usage: gitspace push <workspace|workspace:member|checkout>")}
   end
 
-  defp entries({:workspace, workspace}) do
+  defp entries(_config, {:workspace, workspace}) do
     {:ok, Enum.map(workspace.members, &entry_for(workspace, &1))}
   end
 
-  defp entries({:member, workspace, member}) do
+  defp entries(_config, {:member, workspace, member}) do
     if member.ownership == "borrowed" do
       {:error,
        Error.new(:refused, "#{workspace.name}:#{member_name(member)} is borrowed",
@@ -72,12 +72,39 @@ defmodule Gitspace.CLI.Push do
     end
   end
 
-  defp entries({:checkout, checkout}) do
+  defp entries(_config, {:checkout, checkout}) do
     {:ok, [checkout_entry(checkout)]}
   end
 
-  defp entries(_resolved) do
-    {:error, Error.new(:usage, "push needs a workspace, workspace:member or checkout target")}
+  defp entries(config, {:repo, repo}) do
+    unique_checkout(config, repo, "push")
+  end
+
+  defp entries(_config, _resolved) do
+    {:error,
+     Error.new(
+       :usage,
+       "push needs a workspace, workspace:member, checkout or unambiguous repo target"
+     )}
+  end
+
+  defp unique_checkout(config, repo, verb) do
+    case Checkouts.list(config, repo: repo.slug) do
+      [checkout] ->
+        {:ok, [checkout_entry(checkout)]}
+
+      [] ->
+        {:error,
+         Error.new(:not_found, "no indexed checkouts for #{repo.slug}",
+           hint: "create one with `gitspace checkout #{repo.slug} --topic ...`"
+         )}
+
+      many ->
+        {:error,
+         Error.new(:ambiguous, "#{repo.slug} has #{length(many)} checkouts",
+           hint: "use a workspace, workspace:member or checkout to #{verb}"
+         )}
+    end
   end
 
   defp entry_for(workspace, member) do
