@@ -32,7 +32,7 @@ Product scope, CLI contract and acceptance plan live in the planning repository:
 | Recovery | `doctor reindex` — rediscover mirrors from disk, rebuild workspaces from markers |
 | Machine surface | `--json` on every command, exit codes 0–7, `--verbose` prints git argv |
 
-322 checks (318 tests, 3 properties, 1 doctest) in ~69 s.
+326 checks (322 tests, 3 properties, 1 doctest) in ~93 s.
 
 ## Commands
 

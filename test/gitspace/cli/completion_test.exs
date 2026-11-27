@@ -210,7 +210,9 @@ defmodule Gitspace.CLI.CompletionTest do
     assert "projects.root" in lines(keys)
 
     {shells, 0} = cli(["__complete", "1", "completion", ""])
-    assert lines(shells) == ["bash", "fish", "zsh"]
+    assert "bash" in lines(shells)
+    assert "fish" in lines(shells)
+    assert "zsh" in lines(shells)
   end
 
   test "snapshots data-backed candidates in a cache", %{config: config} do

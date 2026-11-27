@@ -159,7 +159,18 @@ Add missing members to an existing workspace. The workspace must already
 exist; a typo fails instead of creating a second workspace. Nothing existing
 is changed.
 .TP
-.B gitspace workspace label add|rm|set|ls WORKSPACE ...
+.B gitspace workspace label add WORKSPACE LABEL...
+Add workspace labels.
+.TP
+.B gitspace workspace label rm WORKSPACE LABEL...
+Remove individual labels.
+.TP
+.B gitspace workspace label set WORKSPACE [LABEL...]
+Replace the whole label set.
+.TP
+.B gitspace workspace label ls WORKSPACE
+List workspace labels.
+.PP
 Manage workspace labels. Labels are free-form, trimmed and unique. Adding is a
 union; removing removes individual labels; setting replaces the whole set.
 Labels live in the workspace marker and survive a reindex.
@@ -206,7 +217,12 @@ List projects.
 .B gitspace project edit NAME [\-\-description D|--clear-description]
 Change the project description.
 .TP
-.B gitspace project add|remove NAME REPO...
+.B gitspace project add NAME REPO...
+Add future project members.
+.TP
+.B gitspace project remove NAME REPO...
+Remove future project members.
+.PP
 Change future project membership. Existing workspaces are never moved.
 .TP
 .B gitspace project rm NAME [\-\-force]
@@ -280,9 +296,11 @@ Show or change the ref a checkout rebases onto. The base is recorded in
 it does not change the push target. Nothing is fetched or rebased.
 .SS Maintain
 .TP
-.B gitspace doctor [check]
+.B gitspace doctor check
 Check git, paths, the index, repositories, mirrors, checkouts, workspaces,
-keep refs and sync roots.
+keep refs and sync roots. Plain
+.B gitspace doctor
+is the same check.
 .TP
 .B gitspace doctor fix
 Repair mirrors and paths, prune redundant keep anchors and fix other
@@ -291,16 +309,27 @@ recoverable problems.
 .B gitspace doctor reindex
 Rebuild the index from mirrors and workspace markers.
 .TP
-.B gitspace doctor keep ls|prune
-Inspect or prune
+.B gitspace doctor keep ls
+List
 .IR refs/gitspace/keep/
 anchors.
+.TP
+.B gitspace doctor keep prune [\-\-older-than DAYS] [\-\-dry-run] [\-\-gc] [\-\-yes]
+Prune redundant anchors; with
+.B \-\-older-than
+also prune orphaned anchors.
 .TP
 .B gitspace setup [\-\-data DIR] [\-\-projects DIR]
 Write the initial configuration.
 .TP
-.B gitspace config list|get|set
-Show or change the effective configuration.
+.B gitspace config list
+Show the effective configuration.
+.TP
+.B gitspace config get KEY
+Read one setting.
+.TP
+.B gitspace config set KEY VALUE [\-\-force]
+Change one setting.
 .TP
 .B gitspace config export [\-\-output FILE]
 Write a versioned JSON bundle of projects and remote-backed repositories.
@@ -330,8 +359,14 @@ Index an existing checkout as an external checkout.
 .B gitspace unlink PATH
 Forget an indexed external checkout.
 .TP
-.B gitspace completion bash|zsh|fish
-Print a shell completion script.
+.B gitspace completion bash
+Print the bash completion script.
+.TP
+.B gitspace completion zsh
+Print the zsh completion script.
+.TP
+.B gitspace completion fish
+Print the fish completion script.
 .SH OPTIONS
 .TP
 .B \-\-json

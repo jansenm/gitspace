@@ -18,6 +18,7 @@ defmodule Gitspace.CLI do
     Repo,
     Scan,
     Setup,
+    Spec,
     Workspace
   }
 
@@ -255,39 +256,7 @@ defmodule Gitspace.CLI do
 
   defp render_help(%{help: help}), do: IO.puts(help)
 
-  defp top_help do
-    """
-    gitspace — workspaces for git checkouts
-
-    USAGE
-      gitspace                     inbox: what needs a decision
-      gitspace <command> [options]
-
-    COMMANDS
-      ls                           indexed checkouts
-      log <target>                 outgoing and incoming commits
-      push <target>                push the checked-out branch
-      rebase [target]              rebase worktrees onto their base
-      base <target> [<ref>]        show or change the rebase base per checkout
-      checkout <project>[@<ref>]   check out a project topic (co = alias)
-      workspace new|add|label|ls|edit|rm  workspaces, members and labels
-      project new|ls|edit|add|remove|rm  project definitions
-      status <target>              live state, files and diffs
-      show <target>                identity and definition
-      path <target>                print a checkout path
-      repo init|import|add|ls|branches|fetch|rm|alias|set-url  mirrors and repos
-      scan [path...]               discover existing clones and worktrees (read-only)
-      link <path>                  index an external checkout
-      unlink <path>                forget an external checkout
-      doctor check|fix|reindex|keep  health, repair and index maintenance
-      config list|get|set|export|import  settings, projects and repos
-      completion bash|zsh|fish     print a shell completion script
-      setup                        choose data and projects directories
-
-    GLOBAL
-      --json --no-color --verbose --yes --help --version
-    """
-  end
+  defp top_help, do: Spec.top_help()
 
   defp command_help(command) do
     case command do

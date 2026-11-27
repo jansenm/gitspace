@@ -14,56 +14,11 @@ defmodule Gitspace.CLI.Completion do
 
   alias Gitspace.{Config, Projects, Repos, Workspaces}
   alias Gitspace.CLI.Helpers
+  alias Gitspace.CLI.Spec
 
   @cache_version 3
 
-  @commands ~w(ls log push rebase base checkout co workspace project status show path repo scan link unlink doctor setup config completion help)
-
-  @subcommands %{
-    "doctor" => ~w(check fix reindex keep help),
-    "workspace" => ~w(new add label ls edit rm help),
-    "project" => ~w(new ls add remove edit rm help),
-    "repo" => ~w(init import branches add ls fetch rm alias set-url help),
-    "config" => ~w(list get set export import help),
-    "completion" => ~w(bash zsh fish)
-  }
-
-  @global_flags ~w(--json --no-color --verbose --yes --help --version)
-
-  @command_flags %{
-    "ls" =>
-      ~w(--repo --project --topic --workspace --label --state --kind --source --verbose --refresh),
-    "co" => ~w(--topic --only --exclude --as --as-is --branch --detach --label --fetch),
-    "project:new" => ~w(--repo --at --description --branch-template --default-ref),
-    "project:edit" => ~w(--description --clear-description),
-    "project:rm" => ~w(--force),
-    "repo:init" => ~w(--branch --topic --path),
-    "repo:import" => ~w(--name --no-link),
-    "repo:branches" => ~w(--match --regex --tags),
-    "repo:add" => ~w(--name --remote --project --no-fetch),
-    "repo:fetch" => ~w(--all),
-    "repo:rm" => ~w(--force --dry-run),
-    "repo:set-url" => ~w(--push),
-    "workspace:new" =>
-      ~w(--own --borrow --as --branch --as-is --label --description --fetch --dry-run),
-    "workspace:add" => ~w(--own --borrow --as --branch --as-is --fetch --dry-run),
-    "workspace:ls" => ~w(--project --label --all),
-    "workspace:edit" => ~w(--description --clear-description),
-    "workspace:rm" => ~w(--force --delete-branch --dry-run),
-    "status" => ~w(--refresh --long --diff --diff-lines),
-    "log" => ~w(--outgoing --incoming --both --limit --all --fetch),
-    "push" => ~w(--dry-run --remote --force --force-with-lease),
-    "rebase" => ~w(--continue --abort --fetch),
-    "base" => ~w(--clear),
-    "config:set" => ~w(--force),
-    "config:export" => ~w(--output),
-    "config:import" => ~w(--dry-run --no-fetch),
-    "setup" => ~w(--data --projects --checkouts --force),
-    "scan" => ~w(--max-depth --exclude),
-    "link" => ~w(--repo)
-  }
-
-  @value_flags ~w(--repo --project --topic --workspace --label --state --kind --source --only --exclude --as --branch --at --description --branch-template --default-ref --name --remote --own --borrow --data --projects --checkouts --max-depth --ide --shell --limit --diff-lines --older-than --output)
+  alias Gitspace.CLI.Spec
 
   @config_keys ~w(paths.data projects.root branch.template git.minimum_version status.max_age_seconds log.max_commits)
 
@@ -229,9 +184,7 @@ defmodule Gitspace.CLI.Completion do
       command = Enum.at(cleaned, 0)
       sub = subcommand(command, Enum.at(cleaned, 1))
 
-      @global_flags ++
-        Map.get(@command_flags, command, []) ++
-        if(sub, do: Map.get(@command_flags, "#{command}:#{sub}", []), else: [])
+      Spec.global_flags() ++ Spec.flag_names(command, sub)
     end
   end
 
@@ -243,7 +196,7 @@ defmodule Gitspace.CLI.Completion do
 
       case cleaned do
         [] ->
-          {:static, @commands}
+          {:static, Spec.completion_commands()}
 
         [command | rest] ->
           sub = subcommand(command, Enum.at(rest, 0))
@@ -253,16 +206,26 @@ defmodule Gitspace.CLI.Completion do
     end
   end
 
-  defp positional_values("co", nil, []), do: {:data, [:projects]}
+  defp positional_values(command, nil, []) when command in ["co", "checkout"],
+    do: {:data, [:projects]}
 
   defp positional_values(command, nil, [])
        when command in ~w(log push rebase base status show path),
        do: {:data, [:targets]}
 
-  defp positional_values("help", nil, []), do: {:static, @commands}
+  defp positional_values("help", nil, []), do: {:static, Spec.completion_commands()}
 
   defp positional_values(command, nil, []) do
-    {:static, Map.get(@subcommands, command, [])}
+    case Spec.command(command) do
+      nil ->
+        {:static, []}
+
+      command ->
+        case Spec.visible_subcommands(command) do
+          [] -> {:static, []}
+          subcommands -> {:static, Enum.map(subcommands, & &1.name) ++ ["help"]}
+        end
+    end
   end
 
   defp positional_values(_command, nil, _args), do: {:static, []}
@@ -301,7 +264,10 @@ defmodule Gitspace.CLI.Completion do
   defp positional_values(_command, _sub, _args), do: {:static, []}
 
   defp subcommand(command, candidate) do
-    if candidate in Map.get(@subcommands, command, []), do: candidate
+    case Spec.subcommand(command, candidate) do
+      nil -> nil
+      spec -> spec.name
+    end
   end
 
   defp positional_args(words) do
@@ -309,7 +275,7 @@ defmodule Gitspace.CLI.Completion do
       Enum.reduce(words, {[], false}, fn word, {args, skip?} ->
         cond do
           skip? -> {args, false}
-          String.starts_with?(word, "-") -> {args, word in @value_flags}
+          String.starts_with?(word, "-") -> {args, word in Spec.value_flags()}
           true -> {[word | args], false}
         end
       end)
@@ -336,7 +302,7 @@ defmodule Gitspace.CLI.Completion do
 
   defp strip_globals(words) do
     words
-    |> Enum.drop_while(&(&1 in @global_flags))
+    |> Enum.drop_while(&(&1 in Spec.global_flags()))
   end
 
   defp resolve(keys) do
