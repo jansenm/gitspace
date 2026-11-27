@@ -32,7 +32,7 @@ Product scope, CLI contract and acceptance plan live in the planning repository:
 | Recovery | `reindex` — rediscover mirrors from disk, rebuild workspaces from markers |
 | Machine surface | `--json` on every command, exit codes 0–7, `--verbose` prints git argv |
 
-307 checks (303 tests, 3 properties, 1 doctest) in ~66 s.
+310 checks (306 tests, 3 properties, 1 doctest) in ~65 s.
 
 ## Commands
 
@@ -435,9 +435,10 @@ a single member or checkout target.
 ## Publishing
 
 ```sh
-gitspace push vemags@JENKINS-123:api             # push the checked-out branch
-gitspace push vemags@JENKINS-123 --dry-run       # all owned members, no changes
-gitspace push vemags@JENKINS-123:api --remote up # choose the remote
+gitspace push vemags@JENKINS-123:api                    # push the checked-out branch
+gitspace push vemags@JENKINS-123 --dry-run              # all owned members, no changes
+gitspace push vemags@JENKINS-123:api --remote up        # choose the remote
+gitspace push vemags@JENKINS-123:api --force-with-lease # after a rebase
 ```
 
 A push targets the same-named remote branch (`HEAD:refs/heads/<branch>`) and sets that branch
@@ -445,7 +446,11 @@ as the upstream. A branch that tracks a differently named upstream is never push
 upstream; the mismatch is reported and the tracking is updated to the pushed branch. The
 remote is the configured upstream's remote, otherwise `origin`, otherwise the only remote;
 multiple candidates require `--remote`. Borrowed members are skipped, detached checkouts and
-checkouts without a remote are refused, and there is no force option. After a successful
+checkouts without a remote are refused. A non-fast-forward push is rejected unless
+`--force` or `--force-with-lease` is given. After a rebase, prefer
+`--force-with-lease`: it only rewrites while the local remote-tracking ref still matches the
+remote, so fetch first for a current lease. `--force` skips that check and can overwrite remote
+work. The two flags are mutually exclusive; `--dry-run` works with either. After a successful
 push the status cache is refreshed.
 
 New owned branches created by `co --topic` or `workspace new` are configured to push to the

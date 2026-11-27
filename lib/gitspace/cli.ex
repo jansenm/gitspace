@@ -375,14 +375,20 @@ defmodule Gitspace.CLI do
         """
         USAGE
           gitspace push <workspace|workspace:member|checkout>
-                       [--dry-run] [--remote NAME]
+                       [--dry-run] [--remote NAME] [--force|--force-with-lease]
 
         Pushes the checked-out branch to the same-named branch on the remote
         (origin, the configured upstream's remote, or --remote). A branch that
         tracks a differently named upstream is never pushed to that upstream;
         the tracking is updated to the pushed branch. Borrowed members are
         skipped; detached checkouts and checkouts without a remote are refused.
-        No force option exists.
+
+        A non-fast-forward push is rejected unless --force or
+        --force-with-lease is given. After a rebase, --force-with-lease is the
+        safe choice: it only rewrites while the local remote-tracking ref still
+        matches the remote. Fetch first for a current lease. --force skips that
+        check and can overwrite remote work. The two flags are mutually
+        exclusive; --dry-run works with either.
         """
 
       "log" ->

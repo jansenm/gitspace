@@ -23,7 +23,8 @@ defmodule Gitspace.Git.Publish do
           output: String.t(),
           reason: String.t() | nil,
           hint: String.t() | nil,
-          note: String.t() | nil
+          note: String.t() | nil,
+          force: :force | :force_with_lease | nil
         }
 
   @type failure :: %{
@@ -35,16 +36,19 @@ defmodule Gitspace.Git.Publish do
   @doc """
   Pushes the checked-out branch.
 
-  Options: `:dry_run` and `:remote` (overrides remote selection).
+  Options: `:dry_run`, `:remote` (overrides remote selection) and `:force`
+  (`:force` or `:force_with_lease`). The explicit refspec keeps the pushed
+  branch equal to the local branch name even when forcing.
   """
   @spec run(Path.t(), keyword()) :: {:ok, result()} | {:error, failure()}
   def run(worktree, opts \\ []) do
     dry_run? = !!opts[:dry_run]
+    force = opts[:force]
 
     with {:ok, status} <- Status.read(worktree),
          :ok <- ensure_branch(status),
          {:ok, remote} <- select_remote(worktree, status, opts[:remote]) do
-      execute(worktree, status, remote, dry_run?)
+      execute(worktree, status, remote, dry_run?, force)
     else
       {:error, %{kind: _} = failure} -> {:error, failure}
       {:error, other} -> {:error, failure_from_error(other)}
@@ -126,33 +130,38 @@ defmodule Gitspace.Git.Publish do
     end
   end
 
-  defp execute(worktree, status, remote, dry_run?) do
+  defp execute(worktree, status, remote, dry_run?, force) do
     branch = status.branch
     upstream = "#{remote}/#{branch}"
     refspec = "HEAD:refs/heads/#{branch}"
 
     args =
       ["push", "--porcelain", "--set-upstream"] ++
+        force_args(force) ++
         if(dry_run?, do: ["--dry-run"], else: []) ++ [remote, refspec]
 
     commits = commits_not_on_remotes(worktree)
 
     case Git.run(args, cd: worktree, timeout: 300_000) do
       {:ok, result} ->
-        {:ok, build(result, status, remote, upstream, commits, dry_run?)}
+        {:ok, build(result, status, remote, upstream, commits, dry_run?, force)}
 
       {:error, result} ->
         output = result.stdout <> result.stderr
 
         if rejected?(output) do
-          {:ok, build(result, status, remote, upstream, commits, dry_run?)}
+          {:ok, build(result, status, remote, upstream, commits, dry_run?, force)}
         else
           {:error, failure(:error, error_line(output), "git push failed")}
         end
     end
   end
 
-  defp build(result, status, remote, upstream, commits, dry_run?) do
+  defp force_args(:force), do: ["--force"]
+  defp force_args(:force_with_lease), do: ["--force-with-lease"]
+  defp force_args(nil), do: []
+
+  defp build(result, status, remote, upstream, commits, dry_run?, force) do
     output = result.stdout <> result.stderr
     status_name = classify(output, dry_run?)
 
@@ -166,8 +175,9 @@ defmodule Gitspace.Git.Publish do
       untracked: status.untracked,
       output: output,
       reason: rejection_reason(output),
-      hint: hint(status_name),
-      note: note(status, upstream)
+      hint: hint(status_name, output),
+      note: note(status, upstream),
+      force: force
     }
   end
 
@@ -198,11 +208,15 @@ defmodule Gitspace.Git.Publish do
     end
   end
 
-  defp hint(:rejected) do
-    "fetch and integrate the remote commits first, then push again"
+  defp hint(:rejected, output) do
+    if String.contains?(output, "stale info") do
+      "fetch the remote branch first so --force-with-lease has a current lease"
+    else
+      "fetch and integrate the remote commits first, then push again"
+    end
   end
 
-  defp hint(_status), do: nil
+  defp hint(_status, _output), do: nil
 
   defp note(%Status{upstream: upstream}, upstream), do: nil
 

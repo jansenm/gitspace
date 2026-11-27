@@ -386,6 +386,36 @@ defmodule Gitspace.CLITest do
     assert String.trim(after_push) == String.trim(before)
   end
 
+  test "push force flags are explicit and exclusive", %{path: path, source: source} do
+    Fixtures.configure_user(path)
+    Fixtures.write(path, "first.txt", "1\n")
+    Fixtures.commit!(path, "first")
+
+    {output, 2} =
+      cli(["push", "demo@JENKINS-123:demo", "--force", "--force-with-lease", "--json"])
+
+    assert Jason.decode!(output)["error"]["code"] == "usage"
+
+    {output, 0} = cli(["push", "demo@JENKINS-123:demo", "--force-with-lease", "--json"])
+    entry = Jason.decode!(output)["data"]["entries"] |> hd()
+    assert entry["status"] == "pushed"
+    assert entry["force"] == "force_with_lease"
+
+    Gitspace.Git.run!(["commit", "--amend", "-m", "rewritten"], cd: path)
+
+    {output, 0} = cli(["push", "demo@JENKINS-123:demo", "--force", "--json"])
+    entry = Jason.decode!(output)["data"]["entries"] |> hd()
+    assert entry["status"] == "pushed"
+    assert entry["force"] == "force"
+
+    remote =
+      Gitspace.Git.run!(["rev-parse", "refs/heads/feature_JENKINS-123"], cd: source)
+      |> String.trim()
+
+    local = Gitspace.Git.run!(["rev-parse", "HEAD"], cd: path) |> String.trim()
+    assert remote == local
+  end
+
   test "push refuses detached checkouts and projects", %{path: path} do
     Gitspace.Git.run!(["checkout", "--detach"], cd: path)
 

@@ -54,7 +54,7 @@ defmodule Gitspace.CLI.Completion do
     "workspace:rm" => ~w(--force --delete-branch --dry-run),
     "status" => ~w(--refresh --long --diff --diff-lines),
     "log" => ~w(--outgoing --incoming --both --limit --all --fetch),
-    "push" => ~w(--dry-run --remote),
+    "push" => ~w(--dry-run --remote --force --force-with-lease),
     "rebase" => ~w(--continue --abort --fetch),
     "base" => ~w(--clear),
     "keep:prune" => ~w(--older-than --dry-run --gc),

@@ -45,6 +45,53 @@ defmodule Gitspace.Git.PublishTest do
     assert ref!(bare, "refs/heads/main") == first
   end
 
+  test "force pushes a rewritten branch", %{bare: bare, path: path} do
+    commit!(path, "first")
+    assert {:ok, pushed} = Publish.run(path)
+    assert pushed.force == nil
+
+    Git.run!(["commit", "--amend", "-m", "rewritten"], cd: path)
+    assert {:ok, rejected} = Publish.run(path)
+    assert rejected.status == :rejected
+
+    assert {:ok, result} = Publish.run(path, force: :force)
+
+    assert result.status == :pushed
+    assert result.force == :force
+    assert ref!(bare, "refs/heads/main") == head!(path)
+  end
+
+  test "force-with-lease pushes a rewritten branch and refuses a stale lease", %{
+    bare: bare,
+    path: path
+  } do
+    commit!(path, "first")
+    assert {:ok, _} = Publish.run(path)
+
+    Git.run!(["commit", "--amend", "-m", "rewritten"], cd: path)
+
+    assert {:ok, leased} = Publish.run(path, force: :force_with_lease)
+    assert leased.status == :pushed
+    assert leased.force == :force_with_lease
+
+    other = clone!(bare)
+    commit!(other, "remote moved")
+    assert {:ok, %{status: :pushed}} = Publish.run(other)
+    remote_head = ref!(bare, "refs/heads/main")
+
+    Git.run!(["commit", "--amend", "-m", "rewritten again"], cd: path)
+
+    assert {:ok, stale} = Publish.run(path, force: :force_with_lease)
+    assert stale.status == :rejected
+    assert stale.reason =~ "stale info"
+    assert stale.hint =~ "lease"
+    assert ref!(bare, "refs/heads/main") == remote_head
+
+    Git.run!(["fetch", "origin"], cd: path)
+    assert {:ok, refreshed} = Publish.run(path, force: :force_with_lease)
+    assert refreshed.status == :pushed
+  end
+
   test "a rejected push reports the rejection", %{bare: bare, path: path} do
     commit!(path, "first")
     assert {:ok, _} = Publish.run(path)

@@ -9,18 +9,20 @@ defmodule Gitspace.CLI.Push do
   def run(_global, args) do
     with {:ok, opts, rest} <- Helpers.parse(args, strict()),
          {:ok, target} <- one_arg(rest),
+         {:ok, force} <- force_mode(opts),
          {:ok, config} <- Helpers.load_config(),
          :ok <- Helpers.start_index(config),
          {:ok, resolved} <- Targets.resolve(config, target),
          {:ok, entries} <- entries(resolved) do
       results =
         entries
-        |> Enum.map(&push_entry(&1, opts))
+        |> Enum.map(&push_entry(&1, opts, force))
         |> Enum.map(&refresh(&1, config))
 
       data = %{
         target: target,
         dry_run: !!opts[:dry_run],
+        force: force,
         entries: Enum.map(results, &Map.drop(&1, [:checkout]))
       }
 
@@ -29,7 +31,24 @@ defmodule Gitspace.CLI.Push do
   end
 
   defp strict do
-    [dry_run: :boolean, remote: :string] ++ Helpers.global_strict()
+    [dry_run: :boolean, remote: :string, force: :boolean, force_with_lease: :boolean] ++
+      Helpers.global_strict()
+  end
+
+  defp force_mode(opts) do
+    cond do
+      !!opts[:force] and !!opts[:force_with_lease] ->
+        {:error, Error.new(:usage, "--force and --force-with-lease are mutually exclusive")}
+
+      opts[:force] ->
+        {:ok, :force}
+
+      opts[:force_with_lease] ->
+        {:ok, :force_with_lease}
+
+      true ->
+        {:ok, nil}
+    end
   end
 
   defp one_arg([arg]), do: {:ok, arg}
@@ -93,7 +112,7 @@ defmodule Gitspace.CLI.Push do
     end
   end
 
-  defp push_entry(%{ownership: "borrowed"} = entry, _opts) do
+  defp push_entry(%{ownership: "borrowed"} = entry, _opts, _force) do
     Map.merge(entry, %{
       status: :skipped,
       reason: "borrowed",
@@ -104,7 +123,7 @@ defmodule Gitspace.CLI.Push do
     })
   end
 
-  defp push_entry(entry, opts) do
+  defp push_entry(entry, opts, force) do
     base = Map.drop(entry, [:checkout])
 
     if not File.dir?(entry.path) do
@@ -119,12 +138,12 @@ defmodule Gitspace.CLI.Push do
         commits: 0
       })
     else
-      run_push(base, entry.path, opts)
+      run_push(base, entry.path, opts, force)
     end
   end
 
-  defp run_push(base, path, opts) do
-    case Publish.run(path, dry_run: opts[:dry_run], remote: opts[:remote]) do
+  defp run_push(base, path, opts, force) do
+    case Publish.run(path, dry_run: opts[:dry_run], remote: opts[:remote], force: force) do
       {:ok, %{status: :rejected} = result} ->
         Map.merge(base, Map.put(result, :kind, :conflict))
 
@@ -200,14 +219,16 @@ defmodule Gitspace.CLI.Push do
     end)
   end
 
-  defp result_text(%{status: :pushed, commits: commits}), do: "pushed #{commits_text(commits)}"
+  defp result_text(%{status: :pushed, commits: commits} = entry),
+    do: "pushed #{commits_text(commits)}" <> force_text(entry)
+
   defp result_text(%{status: :up_to_date}), do: "up to date"
 
   defp result_text(%{status: :rejected, reason: reason}),
     do: "rejected#{if reason, do: " — " <> reason}"
 
-  defp result_text(%{status: :would_push, commits: commits}),
-    do: "would push #{commits_text(commits)}"
+  defp result_text(%{status: :would_push, commits: commits} = entry),
+    do: "would push #{commits_text(commits)}" <> force_text(entry)
 
   defp result_text(%{status: :would_reject, reason: reason}),
     do: "would be rejected#{if reason, do: " — " <> reason}"
@@ -215,6 +236,10 @@ defmodule Gitspace.CLI.Push do
   defp result_text(%{status: :skipped, reason: reason}), do: "skipped (#{reason})"
   defp result_text(%{status: :failed, error: error}), do: "failed — #{error}"
   defp result_text(entry), do: inspect(entry.status)
+
+  defp force_text(%{force: :force}), do: " (forced)"
+  defp force_text(%{force: :force_with_lease}), do: " (forced with lease)"
+  defp force_text(_entry), do: ""
 
   defp commits_text(1), do: "1 commit"
   defp commits_text(count), do: "#{count} commits"
