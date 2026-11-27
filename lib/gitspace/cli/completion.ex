@@ -17,7 +17,7 @@ defmodule Gitspace.CLI.Completion do
 
   @cache_version 3
 
-  @commands ~w(ls log co workspace project status show path repo scan link unlink doctor setup reindex config completion help)
+  @commands ~w(ls log push co workspace project status show path repo scan link unlink doctor setup reindex config completion help)
 
   @subcommands %{
     "workspace" => ~w(new ls status rm help),
@@ -48,6 +48,7 @@ defmodule Gitspace.CLI.Completion do
     "workspace:rm" => ~w(--force --dry-run),
     "status" => ~w(--refresh --long --diff --diff-lines),
     "log" => ~w(--outgoing --incoming --both --limit --all --fetch),
+    "push" => ~w(--dry-run --remote),
     "config:set" => ~w(--force),
     "setup" => ~w(--data --projects --checkouts --force),
     "doctor" => ~w(--fix --reindex),
@@ -248,6 +249,7 @@ defmodule Gitspace.CLI.Completion do
   defp positional_values("co", nil, []), do: {:data, [:projects]}
 
   defp positional_values("log", nil, []), do: {:data, [:targets]}
+  defp positional_values("push", nil, []), do: {:data, [:targets]}
 
   defp positional_values(command, nil, []) when command in ~w(status show path),
     do: {:data, [:targets]}

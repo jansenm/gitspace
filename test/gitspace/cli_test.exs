@@ -315,6 +315,64 @@ defmodule Gitspace.CLITest do
     assert Jason.decode!(output)["error"]["code"] == "usage"
   end
 
+  test "push publishes the checked-out branch", %{path: path, source: source} do
+    Fixtures.configure_user(path)
+    Fixtures.write(path, "push.txt", "push\n")
+    Fixtures.commit!(path, "push work")
+
+    {output, 0} = cli(["push", "demo@JENKINS-123:demo", "--json"])
+    data = Jason.decode!(output)["data"]
+
+    assert data["dry_run"] == false
+    assert [entry] = data["entries"]
+    assert entry["status"] == "pushed"
+    assert entry["remote"] == "origin"
+    assert entry["upstream"] == "origin/feature_JENKINS-123"
+    assert entry["commits"] == 1
+
+    ref =
+      Gitspace.Git.run!(["rev-parse", "--verify", "refs/heads/feature_JENKINS-123"], cd: source)
+
+    assert String.trim(ref) != ""
+
+    {again, 0} = cli(["push", "demo@JENKINS-123:demo", "--json"])
+    assert hd(Jason.decode!(again)["data"]["entries"])["status"] == "up_to_date"
+
+    {workspace, 0} = cli(["push", "demo@JENKINS-123", "--json"])
+    assert [entry] = Jason.decode!(workspace)["data"]["entries"]
+    assert entry["handle"] == "demo@JENKINS-123:demo"
+  end
+
+  test "push dry-run does not update the remote", %{path: path, source: source} do
+    Fixtures.configure_user(path)
+    Fixtures.write(path, "first.txt", "1\n")
+    Fixtures.commit!(path, "first")
+    {_, 0} = cli(["push", "demo@JENKINS-123:demo", "--json"])
+    before = Gitspace.Git.run!(["rev-parse", "refs/heads/feature_JENKINS-123"], cd: source)
+
+    Fixtures.write(path, "second.txt", "2\n")
+    Fixtures.commit!(path, "second")
+
+    {output, 0} = cli(["push", "demo@JENKINS-123:demo", "--dry-run", "--json"])
+    entry = Jason.decode!(output)["data"]["entries"] |> hd()
+
+    assert entry["status"] == "would_push"
+    assert entry["commits"] == 1
+
+    after_push = Gitspace.Git.run!(["rev-parse", "refs/heads/feature_JENKINS-123"], cd: source)
+    assert String.trim(after_push) == String.trim(before)
+  end
+
+  test "push refuses detached checkouts and projects", %{path: path} do
+    Gitspace.Git.run!(["checkout", "--detach"], cd: path)
+
+    {output, 5} = cli(["push", "demo@JENKINS-123:demo", "--json"])
+    assert Jason.decode!(output)["error"]["code"] == "refused"
+
+    {output, 2} = cli(["push", "demo", "--json"])
+    assert Jason.decode!(output)["error"]["code"] == "usage"
+  end
+
   test "repo shows help and repo ls includes the remote URI", %{source: source, repo: repo} do
     {help, 0} = cli(["repo"])
     assert help =~ "gitspace repo add"

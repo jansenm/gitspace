@@ -12,6 +12,7 @@ defmodule Gitspace.CLI do
     Log,
     Output,
     Project,
+    Push,
     Reindex,
     Repo,
     Scan,
@@ -137,6 +138,9 @@ defmodule Gitspace.CLI do
         "log" ->
           Log.run(global, command_args)
 
+        "push" ->
+          Push.run(global, command_args)
+
         "co" ->
           Co.run(global, command_args)
 
@@ -249,6 +253,7 @@ defmodule Gitspace.CLI do
     COMMANDS
       ls                           all indexed checkouts
       log <target>                 outgoing and incoming commits
+      push <target>                push the checked-out branch
       co <project>[@<ref>]         check out a project topic
       workspace new|ls|status|rm   explicit workspace creation, inspection and removal
       project new|ls|show|add|remove|rm  project definitions
@@ -291,6 +296,20 @@ defmodule Gitspace.CLI do
         --long lists the changed and untracked paths. --diff adds the staged and
         unstaged patch and implies --long. -l and -v are short for --long and
         --diff. Both need a single member or checkout target.
+        """
+
+      "push" ->
+        """
+        USAGE
+          gitspace push <workspace|workspace:member|checkout>
+                       [--dry-run] [--remote NAME]
+
+        Pushes the checked-out branch to the same-named branch on the remote
+        (origin, the configured upstream's remote, or --remote). A branch that
+        tracks a differently named upstream is never pushed to that upstream;
+        the tracking is updated to the pushed branch. Borrowed members are
+        skipped; detached checkouts and checkouts without a remote are refused.
+        No force option exists.
         """
 
       "log" ->

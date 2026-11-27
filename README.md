@@ -27,10 +27,11 @@ Product scope, CLI contract and acceptance plan live in the planning repository:
 | Mirrors | `repo init`, `repo import`, `repo add`, `repo ls`, `repo fetch`, `repo alias`, `repo set-url`, `repo rm` |
 | Discovery | `scan` (read-only), `link`, `unlink` |
 | Inventory | `gitspace`, `ls`, `log`, `status`, `show`, `path` |
+| Publishing | `push` |
 | Recovery | `reindex` — rediscover mirrors from disk, rebuild workspaces from markers |
 | Machine surface | `--json` on every command, exit codes 0–7, `--verbose` prints git argv |
 
-240 checks (236 tests, 3 properties, 1 doctest) in ~45 s.
+250 checks (246 tests, 3 properties, 1 doctest) in ~49 s.
 
 ## Commands
 
@@ -368,6 +369,22 @@ gitspace status vemags@JENKINS-123:api -v --diff-lines 0
 `--long`/`-l` lists file entries; `--diff`/`-v` adds the patch and implies `--long`. Diffs
 are capped at 200 lines per side by default, and `--diff-lines 0` removes the cap. Both need
 a single member or checkout target.
+
+## Publishing
+
+```sh
+gitspace push vemags@JENKINS-123:api             # push the checked-out branch
+gitspace push vemags@JENKINS-123 --dry-run       # all owned members, no changes
+gitspace push vemags@JENKINS-123:api --remote up # choose the remote
+```
+
+A push targets the same-named remote branch (`HEAD:refs/heads/<branch>`) and sets that branch
+as the upstream. A branch that tracks a differently named upstream is never pushed to that
+upstream; the mismatch is reported and the tracking is updated to the pushed branch. The
+remote is the configured upstream's remote, otherwise `origin`, otherwise the only remote;
+multiple candidates require `--remote`. Borrowed members are skipped, detached checkouts and
+checkouts without a remote are refused, and there is no force option. After a successful
+push the status cache is refreshed.
 
 ## Decisions
 
