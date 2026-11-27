@@ -479,11 +479,11 @@ defmodule Gitspace.CLI.WorkspaceTest do
 
   test "help covers co and workspace" do
     {top, 0} = cli(["--help"])
-    assert top =~ "co <project>[@<ref>]"
+    assert top =~ "checkout <project>[@<ref>]"
     assert top =~ "workspace new|add|ls|status"
 
     {co, 0} = cli(["co", "--help"])
-    assert co =~ "gitspace co <project>[@<ref>]"
+    assert co =~ "gitspace checkout <project>[@<ref>]"
     assert co =~ "--as-is"
     assert co =~ "MT4711"
 

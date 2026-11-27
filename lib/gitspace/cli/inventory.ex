@@ -6,11 +6,11 @@ defmodule Gitspace.CLI.Inventory do
   alias Gitspace.Git.{Changes, Operation}
 
   def inbox(_global, args) do
-    with {:ok, _opts, rest} <- Helpers.parse(args, Helpers.global_strict()),
+    with {:ok, opts, rest} <- Helpers.parse(args, [refresh: :boolean] ++ Helpers.global_strict()),
          :ok <- Helpers.no_extra_args(rest),
          {:ok, config} <- Helpers.load_config(),
          :ok <- Helpers.start_index(config) do
-      {:ok, Inventory.inbox(config), &render_inbox/1}
+      {:ok, Inventory.inbox(config, refresh: !!opts[:refresh]), &render_inbox/1}
     end
   end
 
@@ -44,18 +44,14 @@ defmodule Gitspace.CLI.Inventory do
          {:ok, config} <- Helpers.load_config(),
          :ok <- Helpers.start_index(config) do
       case rest do
-        [] ->
-          if detail?(opts) do
-            {:error, Error.new(:usage, "status --long/--diff needs a member or checkout target")}
-          else
-            {:ok, Inventory.inbox(config, refresh: opts[:refresh]), &render_inbox/1}
-          end
-
         [target] ->
           status_target(config, target, opts)
 
         _ ->
-          {:error, Error.new(:usage, "usage: gitspace status [target]")}
+          {:error,
+           Error.new(:usage, "usage: gitspace status <target>",
+             hint: "use `gitspace` for the inbox"
+           )}
       end
     end
   end

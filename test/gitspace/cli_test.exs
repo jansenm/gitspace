@@ -176,10 +176,10 @@ defmodule Gitspace.CLITest do
     assert refreshed["untracked"] == 1
   end
 
-  test "status --refresh recomputes every indexed checkout", %{config: config} do
+  test "gitspace --refresh recomputes every indexed checkout", %{config: config} do
     Gitspace.Repo.update_all(Gitspace.Index.Checkout, set: [last_status_at: nil])
 
-    {output, 0} = cli(["status", "--refresh", "--json"])
+    {output, 0} = cli(["--refresh", "--json"])
     assert Jason.decode!(output)["ok"]
 
     assert Enum.all?(Gitspace.Checkouts.list(config), & &1.last_status_at)

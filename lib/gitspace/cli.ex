@@ -120,8 +120,14 @@ defmodule Gitspace.CLI do
         {before, rest} = Enum.split_while(args, &String.starts_with?(&1, "-"))
 
         case Enum.reject(before, &(&1 in @global_flags)) do
-          [] -> dispatch_command(rest, before, global)
-          [unknown | _] -> {:error, Error.new(:usage, "unknown option: #{unknown}")}
+          [] ->
+            dispatch_command(rest, before, global)
+
+          ["--refresh"] when rest == [] ->
+            Inventory.inbox(global, before)
+
+          [unknown | _] ->
+            {:error, Error.new(:usage, "unknown option: #{unknown}")}
         end
     end
   end
@@ -130,7 +136,7 @@ defmodule Gitspace.CLI do
     if "--help" in before or "-h" in before do
       help()
     else
-      Inventory.inbox(global, [])
+      Inventory.inbox(global, before)
     end
   end
 
@@ -156,6 +162,9 @@ defmodule Gitspace.CLI do
 
         "base" ->
           Base.run(global, command_args)
+
+        "checkout" ->
+          Co.run(global, command_args)
 
         "co" ->
           Co.run(global, command_args)
@@ -276,7 +285,7 @@ defmodule Gitspace.CLI do
       push <target>                push the checked-out branch
       rebase [target]              rebase worktrees onto their base
       base <target> [<ref>]        show or change the rebase base per checkout
-      co <project>[@<ref>]         check out a project topic
+      checkout <project>[@<ref>]   check out a project topic (co = alias)
       workspace new|add|ls|status|edit|rm  explicit workspace creation, inspection and removal
       label add|rm|set|ls <workspace>  add, remove or replace workspace labels
       project new|ls|show|edit|add|remove|rm  project definitions
@@ -407,10 +416,10 @@ defmodule Gitspace.CLI do
         mirror first, so incoming reflects the current upstream.
         """
 
-      "co" ->
+      command when command in ["co", "checkout"] ->
         """
         USAGE
-          gitspace co <project>[@<ref>] [--topic T] [--only M,...] [--exclude M,...]
+          gitspace checkout <project>[@<ref>] [--topic T] [--only M,...] [--exclude M,...]
                                       [--as-is] [--branch B] [--detach]
                                       [--as DIR] [--label L]... [--fetch] [--json]
 
@@ -426,11 +435,11 @@ defmodule Gitspace.CLI do
         of the project is checked out.
 
         EXAMPLES
-          gitspace co ferroclass@main --topic dev
-          gitspace co vemags@development --topic MT4711
-          gitspace co vemags@development --topic MT4711 --only api,web
-          gitspace co vemags@feature/MT4711 --topic MT4711 --exclude legacy
-          gitspace co vemags@main --as-is --topic main
+          gitspace checkout ferroclass@main --topic dev
+          gitspace checkout vemags@development --topic MT4711
+          gitspace checkout vemags@development --topic MT4711 --only api,web
+          gitspace checkout vemags@feature/MT4711 --topic MT4711 --exclude legacy
+          gitspace checkout vemags@main --as-is --topic main
         """
 
       "project" ->
