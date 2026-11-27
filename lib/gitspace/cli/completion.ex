@@ -257,12 +257,9 @@ defmodule Gitspace.CLI.Completion do
 
   defp positional_values("co", nil, []), do: {:data, [:projects]}
 
-  defp positional_values("log", nil, []), do: {:data, [:targets]}
-  defp positional_values("push", nil, []), do: {:data, [:targets]}
-  defp positional_values("rebase", nil, []), do: {:data, [:targets]}
-
-  defp positional_values(command, nil, []) when command in ~w(status show path),
-    do: {:data, [:targets]}
+  defp positional_values(command, nil, [])
+       when command in ~w(log push rebase base status show path),
+       do: {:data, [:targets]}
 
   defp positional_values("help", nil, []), do: {:static, @commands}
 

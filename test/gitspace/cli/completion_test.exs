@@ -106,6 +106,25 @@ defmodule Gitspace.CLI.CompletionTest do
     assert lines(set_url_flags) == ["--push"]
   end
 
+  test "completes project@topic:repo segment by segment", %{} do
+    {project, 0} = cli(["__complete", "1", "base", "vem"])
+    assert "vemags" in lines(project)
+
+    {topic, 0} = cli(["__complete", "1", "status", "vemags@"])
+    assert "vemags@dev" in lines(topic)
+
+    {member, 0} = cli(["__complete", "1", "status", "vemags@dev:"])
+    assert "vemags@dev:api" in lines(member)
+    assert "vemags@dev:web" in lines(member)
+
+    {base_topic, 0} = cli(["__complete", "1", "base", "vemags@"])
+    assert "vemags@dev" in lines(base_topic)
+
+    {base_member, 0} = cli(["__complete", "1", "base", "vemags@dev:"])
+    assert "vemags@dev:api" in lines(base_member)
+    assert "vemags@dev:web" in lines(base_member)
+  end
+
   test "completes compound workspace targets segment by segment" do
     {path_topics, 0} = cli(["__complete", "1", "status", "vemags/"])
     assert lines(path_topics) == ["vemags/dev"]
