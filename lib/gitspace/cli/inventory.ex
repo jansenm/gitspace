@@ -3,7 +3,7 @@ defmodule Gitspace.CLI.Inventory do
 
   alias Gitspace.{Error, Inventory, Targets, Workspaces}
   alias Gitspace.CLI.{Helpers, Output}
-  alias Gitspace.Git.Changes
+  alias Gitspace.Git.{Changes, Operation}
 
   def inbox(_global, args) do
     with {:ok, _opts, rest} <- Helpers.parse(args, Helpers.global_strict()),
@@ -371,6 +371,10 @@ defmodule Gitspace.CLI.Inventory do
     IO.puts("  behind:    #{number(checkout.behind, checkout.stale)}")
     IO.puts("  unpushed:  #{number(checkout.unpushed, checkout.stale)}")
     IO.puts("  age:       #{checkout.age}")
+
+    if checkout.operation do
+      IO.puts("  operation: #{Operation.describe(checkout.operation)}")
+    end
 
     if checkout.risk.reasons != [] do
       IO.puts("  risk:      #{Enum.join(checkout.risk.reasons, ", ")}")

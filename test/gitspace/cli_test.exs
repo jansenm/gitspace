@@ -373,6 +373,116 @@ defmodule Gitspace.CLITest do
     assert Jason.decode!(output)["error"]["code"] == "usage"
   end
 
+  test "rebase rebases every worktree onto its upstream", %{
+    path: path,
+    repo: repo,
+    source: source
+  } do
+    Fixtures.configure_user(path)
+
+    Fixtures.write(source, "upstream.txt", "up\n")
+    Fixtures.commit!(source, "upstream work")
+    Gitspace.Git.Mirror.fetch!(repo.bare_path)
+
+    Fixtures.write(path, "local.txt", "local\n")
+    Fixtures.commit!(path, "local work")
+
+    {output, 0} = cli(["rebase", "--json"])
+    data = Jason.decode!(output)["data"]
+
+    assert data["mode"] == "start"
+    assert [entry] = data["entries"]
+    assert entry["status"] == "rebased"
+    assert entry["upstream"] == "origin/main"
+    assert entry["commits"] == 1
+    assert Gitspace.Git.Operation.read(path) == nil
+
+    {again, 0} = cli(["rebase", "--json"])
+    entry = Jason.decode!(again)["data"]["entries"] |> hd()
+    assert entry["status"] == "up_to_date"
+  end
+
+  test "a rebase conflict is visible in status, ls and the inbox", %{
+    path: path,
+    repo: repo,
+    source: source
+  } do
+    Fixtures.configure_user(path)
+
+    Fixtures.write(source, "README.md", "# remote\n")
+    Fixtures.commit!(source, "remote change")
+    Gitspace.Git.Mirror.fetch!(repo.bare_path)
+
+    Fixtures.write(path, "README.md", "# local\n")
+    Fixtures.commit!(path, "local change")
+
+    {conflict, 4} = cli(["rebase", "--json"])
+    error = Jason.decode!(conflict)["error"]
+
+    assert error["code"] == "conflict"
+    assert [entry] = error["details"]["entries"]
+    assert entry["status"] == "conflict"
+    assert entry["files"] == ["README.md"]
+
+    {status, 0} = cli(["status", "demo@JENKINS-123:demo", "--json"])
+    checkout = Jason.decode!(status)["data"]["checkout"]
+    assert checkout["operation"]["kind"] == "rebase"
+    assert Enum.any?(checkout["risk"]["reasons"], &String.starts_with?(&1, "rebase in progress"))
+
+    {ls, 0} = cli(["ls", "--json"])
+    row = Jason.decode!(ls)["data"]["checkouts"] |> hd()
+    assert Enum.any?(row["risk"]["reasons"], &String.starts_with?(&1, "rebase in progress"))
+
+    {inbox, 0} = cli(["--json"])
+    assert Enum.any?(Jason.decode!(inbox)["data"]["needs"], &(&1["name"] == "demo@JENKINS-123"))
+
+    File.write!(Path.join(path, "README.md"), "# resolved\n")
+    Gitspace.Git.run!(["add", "README.md"], cd: path)
+
+    {continued, 0} = cli(["rebase", "--continue", "demo@JENKINS-123:demo", "--json"])
+    entry = Jason.decode!(continued)["data"]["entries"] |> hd()
+    assert entry["status"] == "rebased"
+    assert Gitspace.Git.Operation.read(path) == nil
+  end
+
+  test "batch abort needs confirmation", %{path: path, repo: repo, source: source} do
+    Fixtures.configure_user(path)
+
+    Fixtures.write(source, "README.md", "# remote\n")
+    Fixtures.commit!(source, "remote change")
+    Gitspace.Git.Mirror.fetch!(repo.bare_path)
+
+    Fixtures.write(path, "README.md", "# local\n")
+    Fixtures.commit!(path, "local change")
+
+    {_, 4} = cli(["rebase", "--json"])
+
+    {refused, 6} = cli(["rebase", "--abort", "--json"])
+    assert Jason.decode!(refused)["error"]["code"] == "confirmation_required"
+
+    {aborted, 0} = cli(["rebase", "--abort", "--yes", "--json"])
+    entry = Jason.decode!(aborted)["data"]["entries"] |> hd()
+    assert entry["status"] == "aborted"
+    assert Gitspace.Git.Operation.read(path) == nil
+  end
+
+  test "rebase refuses a dirty worktree per entry", %{path: path} do
+    File.write!(Path.join(path, "dirty.txt"), "dirty\n")
+
+    {output, 5} = cli(["rebase", "demo@JENKINS-123:demo", "--json"])
+    error = Jason.decode!(output)["error"]
+
+    assert error["code"] == "refused"
+    assert [entry] = error["details"]["entries"]
+    assert entry["status"] == "failed"
+    assert entry["error"] =~ "not clean"
+  end
+
+  test "batch continue with nothing in progress is a no-op", %{} do
+    {output, 0} = cli(["rebase", "--continue", "--json"])
+    assert Jason.decode!(output)["data"]["entries"] == []
+  end
+
   test "repo shows help and repo ls includes the remote URI", %{source: source, repo: repo} do
     {help, 0} = cli(["repo"])
     assert help =~ "gitspace repo add"

@@ -4,6 +4,7 @@ defmodule Gitspace.Inventory do
   import Ecto.Query
 
   alias Gitspace.{Checkouts, Config, Error, Repo, Workspaces}
+  alias Gitspace.Git.Operation
   alias Gitspace.Index.{Checkout, WorkspaceMember}
 
   @initial_refresh_limit 20
@@ -105,6 +106,8 @@ defmodule Gitspace.Inventory do
       end
 
     {project, topic} = membership_parts(membership)
+    operation = Operation.read(checkout.path)
+    risk = operation_risk(Checkouts.risk(checkout), operation)
 
     %{
       kind: :checkout,
@@ -129,7 +132,8 @@ defmodule Gitspace.Inventory do
       unpushed: checkout.unpushed,
       untracked: checkout.untracked,
       stale: not Checkouts.fresh?(checkout, config.status_max_age),
-      risk: Checkouts.risk(checkout),
+      operation: operation,
+      risk: risk,
       age: human_age(checkout.last_seen_at || checkout.updated_at),
       last_seen_at: checkout.last_seen_at,
       last_status_at: checkout.last_status_at
@@ -240,6 +244,13 @@ defmodule Gitspace.Inventory do
       seconds < 2_592_000 -> "#{div(seconds, 86_400)}d"
       true -> "#{div(seconds, 2_592_000)}M"
     end
+  end
+
+  defp operation_risk(risk, nil), do: risk
+
+  defp operation_risk(risk, operation) do
+    reason = Operation.describe(operation)
+    %{risk | at_risk: true, reasons: Enum.uniq(risk.reasons ++ [reason])}
   end
 
   defp mirror_hash(nil), do: nil

@@ -161,6 +161,12 @@ defmodule Gitspace.CLI.CompletionTest do
     {dry_run, 0} = cli(["__complete", "1", "push", "--d"])
     assert lines(dry_run) == ["--dry-run"]
 
+    {rebase_targets, 0} = cli(["__complete", "1", "rebase", ""])
+    assert "vemags@dev" in lines(rebase_targets)
+
+    {continue, 0} = cli(["__complete", "1", "rebase", "--c"])
+    assert lines(continue) == ["--continue"]
+
     {keys, 0} = cli(["__complete", "2", "config", "get", ""])
     assert "log.max_commits" in lines(keys)
   end

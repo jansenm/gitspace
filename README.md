@@ -27,11 +27,11 @@ Product scope, CLI contract and acceptance plan live in the planning repository:
 | Mirrors | `repo init`, `repo import`, `repo add`, `repo ls`, `repo fetch`, `repo alias`, `repo set-url`, `repo rm` |
 | Discovery | `scan` (read-only), `link`, `unlink` |
 | Inventory | `gitspace`, `ls`, `log`, `status`, `show`, `path` |
-| Publishing | `push` |
+| Publishing | `push`, `rebase` |
 | Recovery | `reindex` — rediscover mirrors from disk, rebuild workspaces from markers |
 | Machine surface | `--json` on every command, exit codes 0–7, `--verbose` prints git argv |
 
-252 checks (248 tests, 3 properties, 1 doctest) in ~48 s.
+267 checks (263 tests, 3 properties, 1 doctest) in ~53 s.
 
 ## Commands
 
@@ -392,6 +392,27 @@ same-named remote branch (`branch.<name>.remote`/`merge`) at creation time, so a
 the first push or fetch, gitspace treats the not-yet-existing upstream as absent, so the
 unpushed count still includes every commit that exists nowhere else. Existing branches keep
 their tracking; the first `gitspace push` corrects a mismatched upstream.
+
+## Rebasing
+
+```sh
+gitspace rebase                        # every managed worktree
+gitspace rebase vemags@JENKINS-123     # owned members of one workspace
+gitspace rebase vemags@JENKINS-123:api --fetch
+gitspace rebase --continue             # every worktree with a rebase in progress
+gitspace rebase --abort --yes          # all of them, after confirmation
+```
+
+Each worktree is rebased independently onto its upstream. A failure is reported per worktree
+and the remaining ones are still attempted. Conflicts are left in place with the conflicting
+files and progress (`1/3`): resolve them, `git add`, then `--continue`, or `--abort`.
+Starting requires a clean tree, an attached branch, an upstream that exists (push first) and
+no merge/rebase/cherry-pick/revert in progress. `--fetch` refreshes the mirrors before
+starting. Batch abort requires `--yes`.
+
+`gitspace status` prints `operation: rebase in progress (2/5) onto …` while a merge, rebase,
+cherry-pick or revert is in progress. `ls` and the inbox add the operation to the risk
+reasons. The state is read from the worktree's git dir, so no index migration is needed.
 
 ## Decisions
 

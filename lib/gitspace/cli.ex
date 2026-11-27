@@ -13,6 +13,7 @@ defmodule Gitspace.CLI do
     Output,
     Project,
     Push,
+    Rebase,
     Reindex,
     Repo,
     Scan,
@@ -141,6 +142,9 @@ defmodule Gitspace.CLI do
         "push" ->
           Push.run(global, command_args)
 
+        "rebase" ->
+          Rebase.run(global, command_args)
+
         "co" ->
           Co.run(global, command_args)
 
@@ -254,6 +258,7 @@ defmodule Gitspace.CLI do
       ls                           all indexed checkouts
       log <target>                 outgoing and incoming commits
       push <target>                push the checked-out branch
+      rebase [target]              rebase worktrees onto their upstream
       co <project>[@<ref>]         check out a project topic
       workspace new|ls|status|rm   explicit workspace creation, inspection and removal
       project new|ls|show|add|remove|rm  project definitions
@@ -296,6 +301,26 @@ defmodule Gitspace.CLI do
         --long lists the changed and untracked paths. --diff adds the staged and
         unstaged patch and implies --long. -l and -v are short for --long and
         --diff. Both need a single member or checkout target.
+
+        A checkout with a merge, rebase, cherry-pick or revert in progress
+        reports it as `operation:`. `ls` and the inbox include it in the risk
+        reasons.
+        """
+
+      "rebase" ->
+        """
+        USAGE
+          gitspace rebase [<workspace|workspace:member|checkout>] [--fetch]
+          gitspace rebase [<target>] --continue
+          gitspace rebase [<target>] --abort [--yes]
+
+        Without a target every managed worktree is considered. Each worktree
+        is rebased onto its upstream independently; a conflict is reported and
+        left in place while the remaining worktrees are still attempted.
+        --continue and --abort operate on one target, or on every worktree with
+        a rebase in progress when no target is given. --fetch updates the
+        mirrors before starting. Rebases require a clean tree, an attached
+        branch and an upstream that exists (push the branch first).
         """
 
       "push" ->
