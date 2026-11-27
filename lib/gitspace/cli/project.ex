@@ -1,8 +1,8 @@
 defmodule Gitspace.CLI.Project do
   @moduledoc false
 
-  alias Gitspace.{Error, Projects, Repo, Workspaces}
-  alias Gitspace.CLI.{Helpers, Output}
+  alias Gitspace.{Env, Error, Projects, Repo, Workspaces}
+  alias Gitspace.CLI.{Helpers, Output, Terminal}
 
   def run(global, args) do
     case args do
@@ -10,6 +10,8 @@ defmodule Gitspace.CLI.Project do
       ["ls" | rest] -> list(global, rest)
       ["show" | rest] -> show(global, rest)
       ["edit" | rest] -> edit(global, rest)
+      ["env" | rest] -> env(global, rest)
+      ["secret" | rest] -> secret(global, rest)
       ["add" | rest] -> add(global, rest)
       ["remove" | rest] -> remove(global, rest)
       ["rm" | rest] -> rm(global, rest)
@@ -80,6 +82,139 @@ defmodule Gitspace.CLI.Project do
       {:ok, project_map(config, project), &render_show/1}
     end
   end
+
+  defp env(global, args) do
+    case args do
+      ["edit" | rest] -> edit_file(global, rest, :env)
+      ["ls" | rest] -> list_file(global, rest, :env)
+      ["path" | rest] -> path_file(global, rest, :env)
+      [] -> {:error, Error.new(:usage, "usage: gitspace project env edit|ls|path <project>")}
+      [other | _] -> {:error, Error.new(:usage, "unknown project env command: #{other}")}
+    end
+  end
+
+  defp secret(global, args) do
+    case args do
+      ["edit" | rest] -> edit_file(global, rest, :secret)
+      ["ls" | rest] -> list_file(global, rest, :secret)
+      ["path" | rest] -> path_file(global, rest, :secret)
+      [] -> {:error, Error.new(:usage, "usage: gitspace project secret edit|ls|path <project>")}
+      [other | _] -> {:error, Error.new(:usage, "unknown project secret command: #{other}")}
+    end
+  end
+
+  defp edit_file(_global, args, kind) do
+    with {:ok, _opts, rest} <- Helpers.parse(args, Helpers.global_strict()),
+         {:ok, name} <- one_arg(rest, "gitspace project #{kind} edit <project>"),
+         {:ok, config} <- Helpers.load_config(),
+         :ok <- Helpers.start_index(config),
+         {:ok, paths} <- Env.project_paths(config, name),
+         path = file_path(paths, kind),
+         :ok <- ensure_tty(path),
+         :ok <- ensure_file(path, kind),
+         {:ok, status} <- run_editor(path),
+         :ok <- editor_status(status),
+         {:ok, entries} <- Env.file_entries(path) do
+      {:ok, %{kind: kind, path: path, entries: entries}, &render_file/1}
+    end
+  end
+
+  defp list_file(_global, args, kind) do
+    with {:ok, opts, rest} <- Helpers.parse(args, [values: :boolean] ++ Helpers.global_strict()),
+         {:ok, name} <- one_arg(rest, "gitspace project #{kind} ls <project>"),
+         {:ok, config} <- Helpers.load_config(),
+         :ok <- Helpers.start_index(config),
+         {:ok, paths} <- Env.project_paths(config, name),
+         path = file_path(paths, kind),
+         {:ok, entries} <- Env.file_entries(path) do
+      show_values = kind == :env or !!opts[:values]
+      entries = if show_values, do: entries, else: Enum.map(entries, &%{key: &1.key})
+      {:ok, %{kind: kind, path: path, values: show_values, entries: entries}, &render_file/1}
+    end
+  end
+
+  defp path_file(_global, args, kind) do
+    with {:ok, _opts, rest} <- Helpers.parse(args, Helpers.global_strict()),
+         {:ok, name} <- one_arg(rest, "gitspace project #{kind} path <project>"),
+         {:ok, config} <- Helpers.load_config(),
+         :ok <- Helpers.start_index(config),
+         {:ok, paths} <- Env.project_paths(config, name) do
+      {:ok, %{kind: kind, path: file_path(paths, kind)}, &render_path/1}
+    end
+  end
+
+  defp file_path(paths, :env), do: Env.project_env_path(paths)
+  defp file_path(paths, :secret), do: Env.project_secret_path(paths)
+
+  defp ensure_tty(path) do
+    if Output.tty?() do
+      :ok
+    else
+      {:error,
+       Error.new(:refused, "cannot open an editor without a terminal",
+         hint: "edit #{path} with your editor"
+       )}
+    end
+  end
+
+  defp ensure_file(path, kind) do
+    File.mkdir_p!(Path.dirname(path))
+    _ = File.write(path, "", [:append])
+
+    if kind == :secret do
+      File.chmod!(path, 0o600)
+    end
+
+    :ok
+  rescue
+    error ->
+      {:error, Error.new(:error, "cannot create #{path}", hint: Exception.message(error))}
+  end
+
+  defp run_editor(path) do
+    editor =
+      [System.get_env("VISUAL"), System.get_env("EDITOR"), "vi"]
+      |> Enum.find(fn value -> is_binary(value) and String.trim(value) != "" end)
+      |> String.trim()
+
+    [executable | args] = OptionParser.split(editor)
+
+    case Terminal.run(executable, args ++ [path], cd: Path.dirname(path)) do
+      {:ok, status} ->
+        {:ok, status}
+
+      {:error, {:not_found, executable}} ->
+        {:error, Error.new(:error, "editor not found: #{executable}")}
+
+      {:error, error} ->
+        {:error, Error.new(:error, "cannot start editor", hint: inspect(error))}
+    end
+  end
+
+  defp editor_status(0), do: :ok
+
+  defp editor_status(status) do
+    {:error, Error.new(:error, "editor exited with status #{status}")}
+  end
+
+  defp render_file(data) do
+    IO.puts("#{data.kind} #{data.path}")
+
+    if data.entries == [] do
+      IO.puts("  (empty)")
+    else
+      headers = if data.values, do: ["KEY", "VALUE"], else: ["KEY"]
+
+      rows =
+        Enum.map(data.entries, fn entry ->
+          if data.values, do: [entry.key, entry.value], else: [entry.key]
+        end)
+
+      Output.table(headers, rows)
+    end
+  end
+
+  defp render_path(%{path: path}), do: IO.puts(path)
 
   defp edit(_global, args) do
     with {:ok, opts, rest} <- Helpers.parse(args, edit_strict()),
@@ -310,10 +445,19 @@ defmodule Gitspace.CLI.Project do
                                 [--description D] [--branch-template T]
                                 [--default-ref REF] [--json]
       gitspace project ls [--json]
-          gitspace project edit <name> [--description D] [--clear-description] [--json]
+      gitspace project edit <name> [--description D] [--clear-description] [--json]
       gitspace project add <name> <repo>...
       gitspace project remove <name> <repo>...
       gitspace project rm <name> [--force] [--json]
+      gitspace project env edit|ls|path <name>
+      gitspace project secret edit|ls|path <name> [--values]
+
+    ENVIRONMENT
+      Project env lives in <project.path>/.env; project secrets live in
+      <project.path>/.env.secrets (mode 600). `edit` opens $VISUAL/$EDITOR,
+      falling back to vi, and requires a terminal. `ls` shows values for env;
+      secrets show keys only unless --values is given. `path` prints the file
+      path for scripts.
 
     PATHS
       By default a project lives at projects.root/<name>. --at names the

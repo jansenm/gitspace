@@ -230,13 +230,19 @@ defmodule Gitspace.CLI.Workspace do
         |> filter_project(opts[:project])
         |> Enum.map(&workspace_map/1)
 
-      {:ok, %{workspaces: workspaces}, &render_list/1}
+      {:ok, %{workspaces: workspaces, paths: !!opts[:paths]}, &render_list/1}
     end
   end
 
   defp ls_strict do
-    [label: :string, project: :string, active: :boolean, torn_down: :boolean, all: :boolean] ++
-      Helpers.global_strict()
+    [
+      label: :string,
+      project: :string,
+      active: :boolean,
+      torn_down: :boolean,
+      all: :boolean,
+      paths: :boolean
+    ] ++ Helpers.global_strict()
   end
 
   defp filter_label(workspaces, nil), do: workspaces
@@ -268,6 +274,7 @@ defmodule Gitspace.CLI.Workspace do
       owned: owned,
       borrowed: borrowed,
       marker_path: workspace.marker_path,
+      path: workspace.marker_path && Path.dirname(workspace.marker_path),
       inserted_at: workspace.inserted_at
     }
   end
@@ -439,6 +446,12 @@ defmodule Gitspace.CLI.Workspace do
         ]
       end)
     )
+  end
+
+  defp render_list(%{paths: true, workspaces: workspaces}) do
+    Enum.each(workspaces, fn workspace ->
+      if workspace.path, do: IO.puts(workspace.path)
+    end)
   end
 
   defp render_list(%{workspaces: workspaces}) do

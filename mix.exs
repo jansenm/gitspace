@@ -62,6 +62,7 @@ defmodule Gitspace.MixProject do
   defp deps do
     [
       {:exile, "~> 0.15"},
+      {:dotenvy, "~> 1.2"},
       {:jason, "~> 1.4"},
       {:ecto_sqlite3, "~> 0.26"},
       {:toml_elixir, "~> 3.3"},

@@ -41,7 +41,7 @@ defmodule Gitspace.CLI.Inventory do
 
       verbose = !!global.verbose
 
-      {:ok, %{checkouts: rows, verbose: verbose}, &render_ls/1}
+      {:ok, %{checkouts: rows, verbose: verbose, paths: !!opts[:paths]}, &render_ls/1}
     end
   end
 
@@ -237,6 +237,7 @@ defmodule Gitspace.CLI.Inventory do
       kind: :string,
       source: :string,
       all: :boolean,
+      paths: :boolean,
       refresh: :boolean
     ] ++ Helpers.global_strict()
   end
@@ -314,6 +315,10 @@ defmodule Gitspace.CLI.Inventory do
 
     IO.puts("")
     IO.puts("next: gitspace ls · gitspace doctor")
+  end
+
+  defp render_ls(%{paths: true, checkouts: rows}) do
+    Enum.each(rows, &IO.puts(&1.path))
   end
 
   defp render_ls(%{checkouts: rows} = data) do

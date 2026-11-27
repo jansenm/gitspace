@@ -122,6 +122,27 @@ incoming is what a rebase would integrate.
 and
 .B \-\-fetch
 control the view.
+.TP
+.B gitspace env [TARGET] [\-\-values|\-\-shell]
+Show the effective project and repository environment for a target. The default
+lists keys and sources without values.
+.B \-\-values
+shows resolved values;
+.B \-\-shell
+prints export lines for evaluation. No shell is needed to inspect values.
+.TP
+.B gitspace shell [TARGET] [\-c COMMAND] [\-\-shell PATH] [\-\-no\-env]
+Open an interactive shell in the target with its environment, or run
+.I COMMAND
+with
+.BR \-c .
+Without a target the current checkout is used.
+.B \-\-no\-env
+skips dotenv files but still sets the
+.B GITSPACE_*
+context variables.
+.B \-\-shell
+chooses the shell executable.
 .SS Create and change
 .TP
 .B gitspace checkout PROJECT[@REF] [\-\-topic T]
@@ -274,6 +295,41 @@ Change the repository alias.
 Change the fetch URL, or the push URL with
 .BR \-\-push .
 The identity and mirror directory never change.
+.TP
+.B gitspace project env edit <project>
+Open
+.IR <project.path>/.env
+in
+.BR $VISUAL ,
+.BR $EDITOR
+or
+.BR vi .
+Fails without a terminal.
+.TP
+.B gitspace project env ls <project>
+List keys and values from the project env file.
+.TP
+.B gitspace project env path <project>
+Print the project env file path.
+.TP
+.B gitspace project secret edit <project>
+Open
+.IR <project.path>/.env.secrets
+with mode 600. Fails without a terminal.
+.TP
+.B gitspace project secret ls <project> [\-\-values]
+List project secret keys; values are hidden unless
+.B \-\-values
+is given.
+.TP
+.B gitspace project secret path <project>
+Print the project secret file path.
+.PP
+Repo
+.I .env
+and
+.I .env.local
+are normal repository files and are read by gitspace but never edited by it.
 .SS Work
 .TP
 .B gitspace push TARGET [\-\-dry-run] [\-\-remote NAME] [\-\-force|--force-with-lease]
@@ -436,6 +492,18 @@ Bare mirrors named by the SHA-256 of the repository identity, plus
 Workspace directory and
 .IR .gitspace.json .
 .TP
+.I <project.path>/.env
+Project environment values.
+.TP
+.I <project.path>/.env.secrets
+Project secrets, mode 600.
+.TP
+.I <checkout.path>/.env
+Repository environment values.
+.TP
+.I <checkout.path>/.env.local
+Repository-local secrets.
+.TP
 .I <data>/trash/
 Archived worktrees, untracked files and local-repository bundles.
 .TP
@@ -454,6 +522,31 @@ Override the projects root.
 .TP
 .B GITSPACE_NO_PROMPT
 Disable interactive confirmation even on a terminal.
+.TP
+.B VISUAL, EDITOR
+Editor used by
+.B project env edit
+and
+.B project secret edit
+when a terminal is available; the fallback is
+.BR vi .
+.PP
+The
+.B env
+and
+.B shell
+commands also set
+.BR GITSPACE_PROJECT ,
+.BR GITSPACE_TOPIC ,
+.BR GITSPACE_WORKSPACE ,
+.BR GITSPACE_MEMBER ,
+.BR GITSPACE_REPO ,
+.BR GITSPACE_BRANCH ,
+.B GITSPACE_PATH
+and
+.B GITSPACE_IDENTITY
+for the child process. These names are reserved; dotenv files must not assign
+them.
 .SH EXAMPLES
 Start a topic from main:
 .nf

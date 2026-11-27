@@ -13,25 +13,27 @@ defmodule Gitspace.Bundle do
   overwritten.
   """
 
-  alias Gitspace.{Config, Error, Layout, Projects, Repo, Repos}
+  alias Gitspace.{Config, Env, Error, Layout, Projects, Repo, Repos}
   alias Gitspace.Index.Repository
 
   @schema_version 1
   @app "gitspace"
 
-  @spec export(Config.t()) :: map()
+  @spec export(Config.t()) :: {:ok, map()} | {:error, Error.t()}
   def export(%Config{} = config) do
-    {repos, skipped_repos} = export_repos(config)
-    {projects, skipped_projects} = export_projects(config)
-
-    %{
-      "schema_version" => @schema_version,
-      "app" => @app,
-      "exported_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
-      "projects" => projects,
-      "repos" => repos,
-      "skipped" => Enum.sort_by(skipped_repos ++ skipped_projects, &(&1["alias"] || &1["name"]))
-    }
+    with {repos, skipped_repos} <- export_repos(config),
+         {:ok, projects, skipped_projects} <- export_projects(config) do
+      {:ok,
+       %{
+         "schema_version" => @schema_version,
+         "app" => @app,
+         "exported_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
+         "projects" => projects,
+         "repos" => repos,
+         "skipped" =>
+           Enum.sort_by(skipped_repos ++ skipped_projects, &(&1["alias"] || &1["name"]))
+       }}
+    end
   end
 
   @spec import_bundle(Config.t(), map(), keyword()) ::
@@ -49,7 +51,7 @@ defmodule Gitspace.Bundle do
       plan = %{repos: repos, projects: projects, warnings: warnings}
 
       if opts[:dry_run] do
-        {:ok, summary(plan, true)}
+        {:ok, summary(plan, true, config)}
       else
         execute(config, plan, opts)
       end
@@ -94,10 +96,9 @@ defmodule Gitspace.Bundle do
   end
 
   defp export_projects(config) do
-    {projects, skipped} =
-      config
-      |> Projects.list()
-      |> Enum.reduce({[], []}, fn project, {projects, skipped} ->
+    Enum.reduce_while(Projects.list(config), {:ok, [], []}, fn project,
+                                                               {:ok, projects, skipped} ->
+      with {:ok, env, secrets} <- export_project_env(project) do
         {members, missing} =
           Enum.reduce(project.members, {[], []}, fn key, {members, missing} ->
             case Repo.get_by(Repository, remote_key: key) do
@@ -111,7 +112,9 @@ defmodule Gitspace.Bundle do
           "description" => project.description,
           "branch_template" => project.branch_template,
           "default_ref" => project.default_ref,
-          "members" => Enum.sort(members)
+          "members" => Enum.sort(members),
+          "env" => env,
+          "secrets" => secrets
         }
 
         entry =
@@ -126,10 +129,25 @@ defmodule Gitspace.Bundle do
             [%{"project" => project.name, "member" => key} | acc]
           end)
 
-        {[entry | projects], skipped}
-      end)
+        {:cont, {:ok, [entry | projects], skipped}}
+      else
+        {:error, error} -> {:halt, {:error, error}}
+      end
+    end)
+    |> case do
+      {:ok, projects, skipped} -> {:ok, Enum.sort_by(projects, & &1["name"]), skipped}
+      {:error, error} -> {:error, error}
+    end
+  end
 
-    {Enum.sort_by(projects, & &1["name"]), skipped}
+  defp export_project_env(project) do
+    env_path = Path.join(project.path, ".env")
+    secrets_path = Path.join(project.path, ".env.secrets")
+
+    with {:ok, env_entries} <- Env.file_entries(env_path),
+         {:ok, secret_entries} <- Env.file_entries(secrets_path) do
+      {:ok, Map.new(env_entries, &{&1.key, &1.value}), Enum.map(secret_entries, & &1.key)}
+    end
   end
 
   defp skip(alias_name, reason), do: %{"alias" => alias_name, "reason" => reason}
@@ -337,10 +355,11 @@ defmodule Gitspace.Bundle do
         {:error, Error.new(:invalid_config, "project entry has no name")}
 
       match?({:ok, _}, Projects.get(config, name)) ->
-        {:ok, %{name: name, action: :exists, members: [], attrs: %{}}, []}
+        {:ok, %{name: name, action: :exists, members: [], attrs: %{}, env: %{}, secrets: []}, []}
 
       true ->
-        with {:ok, members, warnings} <- resolve_members(name, members, repos) do
+        with {:ok, env, secrets} <- project_env(entry),
+             {:ok, members, warnings} <- resolve_members(name, members, repos) do
           warnings =
             Enum.map(
               List.wrap(entry["missing_members"]),
@@ -358,10 +377,43 @@ defmodule Gitspace.Bundle do
              name: name,
              action: :create,
              members: members,
-             attrs: attrs
+             attrs: attrs,
+             env: env,
+             secrets: secrets
            }, warnings}
         end
     end
+  end
+
+  defp project_env(entry) do
+    env = entry["env"] || %{}
+    secrets = entry["secrets"] || []
+
+    if valid_env?(env) and valid_secrets?(secrets) do
+      {:ok, env, secrets}
+    else
+      {:error,
+       Error.new(:invalid_config, "project #{entry["name"]} has invalid env or secrets",
+         hint: "env must map valid variable names to strings; secrets must be variable names"
+       )}
+    end
+  end
+
+  defp valid_env?(env) when is_map(env) do
+    Enum.all?(env, fn {key, value} -> valid_env_key?(key) and is_binary(value) end)
+  end
+
+  defp valid_env?(_env), do: false
+
+  defp valid_secrets?(secrets) when is_list(secrets) do
+    Enum.all?(secrets, &valid_env_key?/1)
+  end
+
+  defp valid_secrets?(_secrets), do: false
+
+  defp valid_env_key?(key) do
+    is_binary(key) and Regex.match?(~r/^[A-Za-z_][A-Za-z0-9_]*$/, key) and
+      not String.starts_with?(key, "GITSPACE_")
   end
 
   defp resolve_members(name, members, repos) do
@@ -392,7 +444,7 @@ defmodule Gitspace.Bundle do
     with {:ok, created} <- create_repos(config, plan.repos, opts) do
       case create_projects(config, plan.projects) do
         :ok ->
-          summary = summary(plan, false) |> Map.put(:created_repos, created)
+          summary = summary(plan, false, config) |> Map.put(:created_repos, created)
 
           if plan.warnings == [] do
             {:ok, summary}
@@ -439,13 +491,79 @@ defmodule Gitspace.Bundle do
     Enum.reduce_while(projects, :ok, fn project, :ok ->
       if project.action == :create do
         case Projects.create(config, project.name, project_opts(project)) do
-          {:ok, _} -> {:cont, :ok}
-          {:error, error} -> {:halt, {:error, error}}
+          {:ok, created} ->
+            case write_project_env(created, project) do
+              :ok -> {:cont, :ok}
+              {:error, error} -> {:halt, {:error, error}}
+            end
+
+          {:error, error} ->
+            {:halt, {:error, error}}
         end
       else
         {:cont, :ok}
       end
     end)
+  end
+
+  defp write_project_env(project, spec) do
+    env_path = Path.join(project.path, ".env")
+    secret_example = Path.join(project.path, ".env.secrets.example")
+
+    with :ok <- write_env(env_path, spec.env, false),
+         :ok <- write_secret_example(secret_example, project.name, spec.secrets) do
+      :ok
+    end
+  end
+
+  defp write_env(_path, env, _secret?) when env == %{}, do: :ok
+
+  defp write_env(path, env, secret?) do
+    if File.exists?(path) do
+      :ok
+    else
+      body =
+        env
+        |> Enum.sort_by(fn {key, _} -> key end)
+        |> Enum.map_join("", fn {key, value} -> "#{key}=#{dotenv_value(value)}\n" end)
+
+      File.mkdir_p!(Path.dirname(path))
+      File.write!(path, body)
+      if secret?, do: File.chmod!(path, 0o600)
+      :ok
+    end
+  rescue
+    error -> {:error, Error.new(:error, "cannot write #{path}", hint: Exception.message(error))}
+  end
+
+  defp write_secret_example(_path, _project, []), do: :ok
+
+  defp write_secret_example(path, project_name, secrets) do
+    if File.exists?(path) do
+      :ok
+    else
+      body =
+        "# gitspace secrets for #{project_name}\n" <>
+          "# Copy this file to .env.secrets and fill the values.\n" <>
+          Enum.map_join(secrets, "", fn key -> "#{key}=\n" end)
+
+      File.mkdir_p!(Path.dirname(path))
+      File.write!(path, body)
+      :ok
+    end
+  rescue
+    error -> {:error, Error.new(:error, "cannot write #{path}", hint: Exception.message(error))}
+  end
+
+  defp dotenv_value(value) do
+    escaped =
+      value
+      |> String.replace("\\", "\\\\")
+      |> String.replace("\"", "\\\"")
+      |> String.replace("\n", "\\n")
+      |> String.replace("\r", "\\r")
+
+    "\"" <> escaped <> "\""
   end
 
   defp project_opts(project) do
@@ -457,7 +575,17 @@ defmodule Gitspace.Bundle do
     ]
   end
 
-  defp summary(plan, dry_run?) do
+  defp summary(plan, dry_run?, config) do
+    env_files =
+      for %{action: :create, name: name, env: env} <- plan.projects, env != %{} do
+        %{project: name, path: Path.join([config.projects_root, name, ".env"])}
+      end
+
+    secret_examples =
+      for %{action: :create, name: name, secrets: secrets} <- plan.projects, secrets != [] do
+        %{project: name, path: Path.join([config.projects_root, name, ".env.secrets.example"])}
+      end
+
     %{
       dry_run: dry_run?,
       repos:
@@ -468,6 +596,8 @@ defmodule Gitspace.Bundle do
         Enum.map(plan.projects, fn project ->
           %{name: project.name, action: project.action, members: project.members}
         end),
+      env_files: env_files,
+      secret_examples: secret_examples,
       warnings: plan.warnings
     }
   end

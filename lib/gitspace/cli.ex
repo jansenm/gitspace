@@ -9,6 +9,7 @@ defmodule Gitspace.CLI do
     Config,
     Co,
     Doctor,
+    EnvCommand,
     Inventory,
     Log,
     Output,
@@ -18,6 +19,7 @@ defmodule Gitspace.CLI do
     Repo,
     Scan,
     Setup,
+    ShellCommand,
     Spec,
     Workspace
   }
@@ -72,11 +74,12 @@ defmodule Gitspace.CLI do
       nil ->
         true
 
-      command when command in ~w(ls log status show path help completion __complete version) ->
+      command
+      when command in ~w(ls log status show path env help completion __complete version) ->
         true
 
       "config" ->
-        subcommand(args) != "set"
+        subcommand(args) in [nil, "list", "get", "export"]
 
       "doctor" ->
         subcommand(args) in [nil, "check"]
@@ -172,6 +175,12 @@ defmodule Gitspace.CLI do
 
         "show" ->
           Inventory.show(global, command_args)
+
+        "env" ->
+          EnvCommand.run(global, command_args)
+
+        "shell" ->
+          ShellCommand.run(global, command_args)
 
         "path" ->
           Inventory.path(global, command_args)
@@ -350,6 +359,29 @@ defmodule Gitspace.CLI do
         exclusive; --dry-run works with either.
         """
 
+      "env" ->
+        """
+        USAGE
+          gitspace env [target] [--values|--shell]
+
+        Resolve the effective environment for a project, workspace,
+        workspace:member, checkout or repo target. The default output lists
+        keys and sources without values. --values prints the resolved values;
+        --shell prints export lines for evaluation. The shell is not needed to
+        inspect values; the same resolver is used by `gitspace shell`.
+        """
+
+      "shell" ->
+        """
+        USAGE
+          gitspace shell [target] [-c COMMAND] [--shell PATH] [--no-env]
+
+        Open an interactive shell in the target with its project and repo
+        environment, or run COMMAND with -c. Without a target the current
+        checkout is used. --no-env skips dotenv files but still sets the
+        GITSPACE_* context variables. --shell chooses the shell executable.
+        """
+
       "log" ->
         """
         USAGE
@@ -457,6 +489,18 @@ defmodule Gitspace.CLI do
           gitspace config [list]
           gitspace config get <key>
           gitspace config set <key> <value> [--force]
+          gitspace config export [--output FILE]
+          gitspace config import <FILE|-> [--dry-run] [--no-fetch] [--yes]
+
+        EXPORT AND IMPORT
+          A bundle contains projects and their remote-backed repositories only.
+          Workspaces, checkouts, labels, absolute paths and credentials are not
+          included. Local repositories are skipped. Import creates only missing
+          repositories and projects; existing entries are left untouched.
+
+          Project .env values and secret keys are exported. Import writes .env
+          and .env.secrets.example for new projects; it never writes secret
+          values and never overwrites existing files.
 
         KEYS
           paths.data

@@ -187,7 +187,7 @@ defmodule Gitspace.CLITest do
     assert Enum.all?(Gitspace.Checkouts.list(config), & &1.last_status_at)
   end
 
-  test "refresh and doctor fix report inline progress in text mode", %{config: config} do
+  test "refresh and doctor fix report inline progress in text mode", %{config: _} do
     Gitspace.Repo.update_all(Gitspace.Index.Checkout, set: [last_status_at: nil])
 
     {refresh, 0} = cli(["--refresh"])

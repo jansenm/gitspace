@@ -210,7 +210,7 @@ defmodule Gitspace.CLI.Completion do
     do: {:data, [:projects]}
 
   defp positional_values(command, nil, [])
-       when command in ~w(log push rebase base status show path),
+       when command in ~w(log push rebase base status show path env shell),
        do: {:data, [:targets]}
 
   defp positional_values("help", nil, []), do: {:static, Spec.completion_commands()}
@@ -237,6 +237,8 @@ defmodule Gitspace.CLI.Completion do
       {"rm", 0} -> {:data, [:projects]}
       {"add", count} when count >= 1 -> {:data, [:repos]}
       {"remove", count} when count >= 1 -> {:data, [:repos]}
+      {sub, 0} when sub in ["env", "secret"] -> {:static, ["edit", "ls", "path"]}
+      {sub, 1} when sub in ["env", "secret"] -> {:data, [:projects]}
       _ -> {:static, []}
     end
   end

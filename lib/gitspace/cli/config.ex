@@ -75,8 +75,8 @@ defmodule Gitspace.CLI.Config do
          :ok <- Helpers.no_extra_args(rest),
          :ok <- reject_export_json(global),
          {:ok, config} <- Helpers.load_config(),
-         :ok <- Helpers.start_index(config) do
-      bundle = Bundle.export(config)
+         :ok <- Helpers.start_index(config),
+         {:ok, bundle} <- Bundle.export(config) do
       body = Jason.encode!(bundle, pretty: true) <> "\n"
 
       case opts[:output] do
@@ -426,6 +426,14 @@ defmodule Gitspace.CLI.Config do
         end)
       )
     end
+
+    Enum.each(Map.get(data, :env_files, []), fn file ->
+      IO.puts("env: #{file.project} -> #{file.path}")
+    end)
+
+    Enum.each(Map.get(data, :secret_examples, []), fn file ->
+      IO.puts("secrets example: #{file.project} -> #{file.path}")
+    end)
 
     if data.warnings != [] do
       IO.puts("")

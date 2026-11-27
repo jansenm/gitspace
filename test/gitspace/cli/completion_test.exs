@@ -62,6 +62,18 @@ defmodule Gitspace.CLI.CompletionTest do
 
     {flags, 0} = cli(["__complete", "1", "co", "--as-i"])
     assert lines(flags) == ["--as-is"]
+
+    {shell_flags, 0} = cli(["__complete", "1", "shell", "--s"])
+    assert "--shell" in lines(shell_flags)
+
+    {shell_short, 0} = cli(["__complete", "1", "shell", "-"])
+    assert "-c" in lines(shell_short)
+
+    {env_subcommands, 0} = cli(["__complete", "2", "project", "env", ""])
+    assert lines(env_subcommands) == ["edit", "ls", "path"]
+
+    {env_projects, 0} = cli(["__complete", "3", "project", "env", "edit", ""])
+    assert "vemags" in lines(env_projects)
   end
 
   test "completes dynamic projects, workspaces and members" do

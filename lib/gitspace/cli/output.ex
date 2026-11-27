@@ -6,9 +6,14 @@ defmodule Gitspace.CLI.Output do
   @schema_version 1
 
   @spec emit(
-          {:ok, term(), fun()} | {:error, Error.t()} | {:partial, term(), fun(), Error.t()},
+          {:ok, term(), fun()}
+          | {:error, Error.t()}
+          | {:partial, term(), fun(), Error.t()}
+          | {:exit, non_neg_integer()},
           map()
         ) :: non_neg_integer()
+  def emit({:exit, code}, _global), do: code
+
   def emit({:ok, data, _renderer}, %{json: true}) do
     IO.puts(
       Jason.encode!(%{

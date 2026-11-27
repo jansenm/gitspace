@@ -10,7 +10,7 @@ defmodule Gitspace.BundleTest do
     {:ok, _} = Repos.add(config, Fixtures.repo_url(source_b), name: "b")
     {:ok, _local} = Repos.init_local(config, "local-one")
 
-    {:ok, _} =
+    {:ok, project} =
       Projects.create(config, "vemags",
         repo: ["a", "b"],
         description: "migration",
@@ -18,7 +18,10 @@ defmodule Gitspace.BundleTest do
         default_ref: "main"
       )
 
-    bundle = Bundle.export(config)
+    File.write!(Path.join(project.path, ".env"), "FOO=bar\nDB=${GITSPACE_TOPIC}\n")
+    File.write!(Path.join(project.path, ".env.secrets"), "TOKEN=shh\n")
+
+    assert {:ok, bundle} = Bundle.export(config)
 
     assert bundle["app"] == "gitspace"
     assert bundle["schema_version"] == 1
@@ -30,6 +33,8 @@ defmodule Gitspace.BundleTest do
     assert project["description"] == "migration"
     assert project["branch_template"] == "feature/{topic}"
     assert project["default_ref"] == "main"
+    assert project["env"] == %{"DB" => "${GITSPACE_TOPIC}", "FOO" => "bar"}
+    assert project["secrets"] == ["TOKEN"]
 
     assert Enum.any?(bundle["skipped"], &(&1["alias"] == "local-one"))
   end
@@ -39,7 +44,7 @@ defmodule Gitspace.BundleTest do
 
     assert {:ok, _} = Repos.add(config, url, name: "private", no_fetch: true)
 
-    bundle = Bundle.export(config)
+    assert {:ok, bundle} = Bundle.export(config)
     repo = Enum.find(bundle["repos"], &(&1["alias"] == "private"))
 
     assert repo["remote_url"] == "https://example.com/org/private.git"
@@ -69,7 +74,9 @@ defmodule Gitspace.BundleTest do
           "description" => "from a bundle",
           "branch_template" => "feature/{topic}",
           "default_ref" => "main",
-          "members" => ["imported"]
+          "members" => ["imported"],
+          "env" => %{"FOO" => "bar", "DB" => "${GITSPACE_TOPIC}"},
+          "secrets" => ["TOKEN"]
         }
       ]
     }
@@ -87,6 +94,17 @@ defmodule Gitspace.BundleTest do
     assert {:ok, project} = Projects.get(config, "imported-project")
     assert project.members == [key]
     assert project.description == "from a bundle"
+
+    env_path = Path.join(project.path, ".env")
+    assert File.read!(env_path) =~ "FOO=\"bar\""
+    assert File.read!(env_path) =~ "DB=\"${GITSPACE_TOPIC}\""
+
+    example_path = Path.join(project.path, ".env.secrets.example")
+    assert File.read!(example_path) =~ "TOKEN="
+    refute File.read!(example_path) =~ "shh"
+
+    assert {:ok, entries} = Gitspace.Env.file_entries(env_path)
+    assert Map.new(entries, &{&1.key, &1.value})["DB"] == "${GITSPACE_TOPIC}"
 
     assert {:ok, again} = Bundle.import_bundle(config, bundle, no_fetch: true)
     assert [%{alias: "imported", action: :exists}] = again.repos
@@ -132,6 +150,37 @@ defmodule Gitspace.BundleTest do
 
     assert {:ok, created} = Projects.get(config, "new-one")
     assert created.members == [key]
+  end
+
+  test "import rejects malformed env and secret keys", %{config: config} do
+    bundle = fn project ->
+      %{
+        "app" => "gitspace",
+        "schema_version" => 1,
+        "repos" => [],
+        "projects" => [Map.merge(%{"name" => "bad", "members" => []}, project)]
+      }
+    end
+
+    assert {:error, error} =
+             Bundle.import_bundle(config, bundle.(%{"env" => %{"FOO" => 1}}), no_fetch: true)
+
+    assert error.code == :invalid_config
+    assert error.message =~ "invalid env"
+
+    assert {:error, error} =
+             Bundle.import_bundle(
+               config,
+               bundle.(%{"env" => %{"GITSPACE_PROJECT" => "bad"}}),
+               no_fetch: true
+             )
+
+    assert error.code == :invalid_config
+
+    assert {:error, error} =
+             Bundle.import_bundle(config, bundle.(%{"secrets" => ["BAD=KEY"]}), no_fetch: true)
+
+    assert error.code == :invalid_config
   end
 
   test "import does not touch an alias with a different identity", %{config: config} do

@@ -21,18 +21,18 @@ Product scope, CLI contract and acceptance plan live in the planning repository:
 
 | Area | Commands |
 |---|---|
-| Creation | `checkout` (`co`), `workspace new|add`, `project new|add|remove`, `repo init|import|add` |
+| Creation | `checkout` (`co`), `workspace new|add`, `project new|env|secret|add|remove`, `repo init|import|add` |
 | Setup, config and health | `setup`, `config list|get|set|export|import`, `doctor check|fix|reindex|keep` |
 | Completion | `completion bash|zsh|fish` |
 | Mirrors | `repo init`, `repo import`, `repo add`, `repo ls`, `repo branches`, `repo fetch <repo>|--all`, `repo alias`, `repo set-url`, `repo rm` |
 | Discovery | `scan` (read-only), `link`, `unlink` |
-| Inventory | `gitspace`, `ls`, `show`, `status`, `path`, `log` |
+| Inventory | `gitspace`, `ls`, `show`, `status`, `path`, `env`, `shell`, `log` |
 | Publishing | `push`, `rebase`, `base` |
 | Maintenance | `doctor keep ls|prune` |
 | Recovery | `doctor reindex` — rediscover mirrors from disk, rebuild workspaces from markers |
 | Machine surface | `--json` on every command, exit codes 0–7, `--verbose` prints git argv |
 
-327 checks (323 tests, 3 properties, 1 doctest) in ~86 s.
+335 checks (331 tests, 3 properties, 1 doctest) in ~65 s.
 
 ## Commands
 
@@ -298,6 +298,58 @@ gitspace repo branches vemags --tags
 
 `--match` and `--regex` are mutually exclusive and filter by branch name. Filters apply to
 local and remote branches as well as tags.
+
+## Environment and shells
+
+Project and repo environment is plain dotenv. It is loaded explicitly by `env`,
+`shell` and `shell -c`; gitspace's own git commands never load it.
+
+```text
+<project.path>/.env              project values, exportable
+<project.path>/.env.secrets      project secrets, mode 600, keys only in bundles
+<checkout.path>/.env             repo values, may be committed
+<checkout.path>/.env.local       repo-local secrets, gitignored
+```
+
+Layer order, lowest to highest: project `.env`, repo `.env`, project
+`.env.secrets`, repo `.env.local`, process environment, `GITSPACE_*`. Secrets
+override same-named non-secrets; the process environment wins over files.
+
+```sh
+gitspace project env edit demo          # $VISUAL/$EDITOR, else vi; needs a TTY
+gitspace project env ls demo            # keys and values
+gitspace project env path demo          # print the .env path
+
+gitspace project secret edit demo       # .env.secrets, mode 600
+gitspace project secret ls demo         # keys only
+gitspace project secret ls demo --values
+gitspace project secret path demo
+
+gitspace env demo@4711:api              # keys and sources, no values
+gitspace env demo@4711:api --values     # resolved values
+gitspace env demo@4711:api --shell      # export lines
+gitspace shell demo@4711:api            # interactive shell
+gitspace shell demo@4711:api -c "mix test"
+```
+
+`env` and `shell` use the same resolver; no shell is needed to inspect the
+resolved values. `${VAR}` interpolation uses the process environment and the
+`GITSPACE_*` context. Command substitution is rejected.
+
+`GITSPACE_*` values set for children: `PROJECT`, `TOPIC`, `WORKSPACE`, `MEMBER`,
+`REPO`, `BRANCH`, `PATH`, `IDENTITY`.
+
+`config export` includes project `.env` values and secret **keys only**; import
+writes `.env` and `.env.secrets.example` for new projects. Repo files are never
+part of a bundle.
+
+For many checkouts, `ls --paths` and `workspace ls --paths` print one path per
+line, ready for fzf:
+
+```sh
+gitspace shell "$(gitspace ls --paths | fzf)"
+cd "$(gitspace path demo@4711:api)"
+```
 
 ## Changing remote URLs
 

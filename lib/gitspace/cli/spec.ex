@@ -30,18 +30,22 @@ defmodule Gitspace.CLI.Spec do
 
   @global_flags ~w(--json --no-color --verbose --yes --help --version -h)
 
+  @flag_aliases %{"c" => "-c"}
+
   @shorts %{
     "ls" => "ls",
     "show" => "show <target>",
     "status" => "status <target>",
     "path" => "path <target>",
     "log" => "log <target>",
+    "env" => "env [target]",
+    "shell" => "shell [target] [-c CMD]",
     "checkout" => "checkout <project>[@<ref>]",
     "push" => "push <target>",
     "rebase" => "rebase [target]",
     "base" => "base <target> [<ref>]",
     "workspace" => "workspace new|add|label|ls|edit|rm",
-    "project" => "project new|ls|edit|add|remove|rm",
+    "project" => "project new|env|secret|ls|edit|add|remove|rm",
     "repo" => "repo init|import|add|ls|branches|fetch|rm|alias|set-url",
     "doctor" => "doctor check|fix|reindex|keep",
     "scan" => "scan [path...]",
@@ -73,6 +77,7 @@ defmodule Gitspace.CLI.Spec do
         kind: :string,
         source: :string,
         verbose: :boolean,
+        paths: :boolean,
         refresh: :boolean
       ],
       subcommands: [],
@@ -108,6 +113,30 @@ defmodule Gitspace.CLI.Spec do
       summary: "print a checkout path",
       usage: ["gitspace path <workspace|workspace:member|checkout|repo|project>"],
       flags: [],
+      subcommands: [],
+      hidden: false
+    },
+    %{
+      name: "env",
+      aliases: [],
+      group: :inspect,
+      summary: "resolved project and repo environment",
+      usage: ["gitspace env [target] [--values|--shell]"],
+      flags: [values: :boolean, shell: :boolean],
+      subcommands: [],
+      hidden: false
+    },
+    %{
+      name: "shell",
+      aliases: [],
+      group: :work,
+      summary: "open a shell or run a command with env",
+      usage: [
+        "gitspace shell [target]",
+        "gitspace shell [target] -c COMMAND",
+        "gitspace shell [target] [--shell PATH] [--no-env]"
+      ],
+      flags: [c: :string, shell: :string, no_env: :boolean],
       subcommands: [],
       hidden: false
     },
@@ -310,7 +339,7 @@ defmodule Gitspace.CLI.Spec do
           aliases: [],
           summary: "list workspaces",
           usage: ["gitspace workspace ls [--project P] [--label L] [--all] [--json]"],
-          flags: [project: :string, label: :string, all: :boolean],
+          flags: [project: :string, label: :string, all: :boolean, paths: :boolean],
           subcommands: [],
           hidden: false
         },
@@ -393,6 +422,88 @@ defmodule Gitspace.CLI.Spec do
           ],
           flags: [description: :string, clear_description: :boolean],
           subcommands: [],
+          hidden: false
+        },
+        %{
+          name: "env",
+          aliases: [],
+          summary: "edit or list project environment",
+          usage: [
+            "gitspace project env edit <project>",
+            "gitspace project env ls <project> [--json]",
+            "gitspace project env path <project>"
+          ],
+          flags: [],
+          subcommands: [
+            %{
+              name: "edit",
+              aliases: [],
+              summary: "edit the env file",
+              usage: [],
+              flags: [],
+              subcommands: [],
+              hidden: false
+            },
+            %{
+              name: "ls",
+              aliases: [],
+              summary: "list env keys and values",
+              usage: [],
+              flags: [],
+              subcommands: [],
+              hidden: false
+            },
+            %{
+              name: "path",
+              aliases: [],
+              summary: "print the env file path",
+              usage: [],
+              flags: [],
+              subcommands: [],
+              hidden: false
+            }
+          ],
+          hidden: false
+        },
+        %{
+          name: "secret",
+          aliases: [],
+          summary: "edit or list project secrets",
+          usage: [
+            "gitspace project secret edit <project>",
+            "gitspace project secret ls <project> [--values] [--json]",
+            "gitspace project secret path <project>"
+          ],
+          flags: [],
+          subcommands: [
+            %{
+              name: "edit",
+              aliases: [],
+              summary: "edit the secret file",
+              usage: [],
+              flags: [],
+              subcommands: [],
+              hidden: false
+            },
+            %{
+              name: "ls",
+              aliases: [],
+              summary: "list secret keys",
+              usage: [],
+              flags: [values: :boolean],
+              subcommands: [],
+              hidden: false
+            },
+            %{
+              name: "path",
+              aliases: [],
+              summary: "print the secret file path",
+              usage: [],
+              flags: [],
+              subcommands: [],
+              hidden: false
+            }
+          ],
           hidden: false
         },
         %{
@@ -792,8 +903,7 @@ defmodule Gitspace.CLI.Spec do
     end
   end
 
-  defp flags(%{flags: flags}),
-    do: Enum.map(flags, fn {name, _type} -> "--" <> flag_name(name) end)
+  defp flags(%{flags: flags}), do: Enum.map(flags, &flag_option/1)
 
   @spec value_flags() :: [String.t()]
   def value_flags do
@@ -806,7 +916,7 @@ defmodule Gitspace.CLI.Spec do
     own =
       flags
       |> Enum.reject(fn {_name, type} -> type == :boolean end)
-      |> Enum.map(fn {name, _type} -> "--" <> flag_name(name) end)
+      |> Enum.map(&flag_option/1)
 
     own ++ Enum.flat_map(subcommands, &collect_value_flags/1)
   end
@@ -862,6 +972,11 @@ defmodule Gitspace.CLI.Spec do
       [first | _] -> String.replace_prefix(first, "gitspace ", "")
       [] -> command.name
     end
+  end
+
+  defp flag_option({name, _type}) do
+    key = flag_name(name)
+    Map.get(@flag_aliases, key, "--" <> key)
   end
 
   defp flag_name(name), do: name |> Atom.to_string() |> String.replace("_", "-")
