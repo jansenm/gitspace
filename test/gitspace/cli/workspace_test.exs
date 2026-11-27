@@ -300,7 +300,7 @@ defmodule Gitspace.CLI.WorkspaceTest do
     assert data["topic"] == "4711/sub"
 
     assert [member] = data["members"]
-    assert member["branch"] == "feature/4711-sub"
+    assert member["branch"] == "feature/4711/sub"
     assert member["path"] == Path.join([data_root(), "work", "a", "4711-sub", "a"])
   end
 

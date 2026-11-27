@@ -555,7 +555,9 @@ defmodule Gitspace.CLI.Workspace do
     OWNED MEMBERS
       The branch is derived from the topic using the project template (default
       feature/{topic}) and starts at the project default ref or the repo default.
-      --branch overrides the name; --as-is checks the ref out unchanged.
+      The topic is used verbatim in the branch, including '/'; only the
+      workspace directory is slugged. --branch overrides the name; --as-is
+      checks the ref out unchanged.
 
     BORROWED MEMBERS
       An existing checkout, symlinked into the workspace at its member name and

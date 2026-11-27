@@ -153,6 +153,11 @@ branch asks for borrow / new branch / detach / cancel on a terminal; with `--jso
 terminal it is a `branch_occupied` error (exit 4). `--branch`, `--as-is` and `--detach` are
 mutually exclusive.
 
+The topic is inserted into the branch template **verbatim**, including `/`: topic
+`jenkins/ejb-remoting` with the default template gives `feature/jenkins/ejb-remoting`, matching the
+remote ref. Only the workspace directory is slugged (`jenkins-ejb-remoting`). `--branch` uses the
+given name verbatim, and `--as-is` checks out the ref unchanged.
+
 `--only M,...` and `--exclude M,...` select the project members for this invocation, and are
 mutually exclusive. The default is every member. **A repository that already has a checkout in
 the topic workspace is ignored**, even when the requested ref or branch mode differs. Re-running
@@ -170,8 +175,9 @@ gitspace workspace new vemags@dev --own api --own web --as-is  # each default br
 The target is `[<project>@]<topic>`. `@` separates project and topic; topics may contain `/`,
 but `@` is reserved in project names, topics and repository aliases. Without a project the
 first owned repository's project is used. Owned branches are derived from the topic using the
-project template (default `feature/{topic}`); `--branch` overrides the name and `--as-is`
-checks the ref (or each repository's default branch) out unchanged. Labels, descriptions, `--as repo=name`, `--fetch` and `--dry-run`
+project template (default `feature/{topic}`); the topic is used verbatim, including `/`, while
+only the workspace directory is slugged. `--branch` overrides the name and `--as-is` checks the
+ref (or each repository's default branch) out unchanged. Labels, descriptions, `--as repo=name`, `--fetch` and `--dry-run`
 work as before.
 
 Creation is ensure-only: matching members are reused, conflicting paths or branches are

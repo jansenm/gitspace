@@ -51,6 +51,14 @@ defmodule Gitspace.LayoutTest do
 
     assert Layout.branch_for("JENKINS-123", "feature/{work}") ==
              {:ok, "feature/JENKINS-123"}
+
+    assert Layout.branch_for("jenkins/ejb-remoting") ==
+             {:ok, "feature/jenkins/ejb-remoting"}
+
+    assert Layout.branch_for("jenkins/ejb-remoting", "feature_{work}") ==
+             {:ok, "feature_jenkins/ejb-remoting"}
+
+    assert Layout.branch_for("My Work") == {:error, :invalid_branch}
   end
 
   test "invalid branch templates are rejected" do

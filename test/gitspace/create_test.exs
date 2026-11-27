@@ -295,7 +295,7 @@ defmodule Gitspace.CreateTest do
     assert slashed.workspace == "a@4711/sub"
     assert Path.basename(slashed.path) == "4711-sub"
     assert [slashed_member] = slashed.members
-    assert slashed_member.branch == "feature/4711-sub"
+    assert slashed_member.branch == "feature/4711/sub"
 
     assert {:error, spaced} = Create.workspace_new(config, "My Work", [owned("a")], [])
     assert spaced.code == :usage

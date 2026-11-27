@@ -53,19 +53,22 @@ defmodule Gitspace.Layout do
   @doc """
   Derives the branch from the work name.
 
-  The default template is `feature/{topic}`. `{work}` is accepted as a
-  backwards-compatible placeholder for `{topic}`.
+  The work name is a branch component, not a path: `/` is preserved and the
+  path slug rules are not applied. A topic that is not a valid branch component
+  is rejected rather than silently rewritten. The default template is
+  `feature/{topic}`; `{work}` is accepted as a backwards-compatible placeholder
+  for `{topic}`.
   """
   @spec branch_for(String.t(), String.t()) :: {:ok, String.t()} | {:error, atom()}
-  def branch_for(work, template \\ "feature/{topic}") do
-    with {:ok, slug} <- work_slug(work) do
-      branch =
-        template
-        |> String.replace("{topic}", slug)
-        |> String.replace("{work}", slug)
+  def branch_for(work, template \\ "feature/{topic}") when is_binary(work) do
+    work = String.trim(work)
 
-      if valid_branch?(branch), do: {:ok, branch}, else: {:error, :invalid_branch}
-    end
+    branch =
+      template
+      |> String.replace("{topic}", work)
+      |> String.replace("{work}", work)
+
+    if work != "" and valid_branch?(branch), do: {:ok, branch}, else: {:error, :invalid_branch}
   end
 
   @doc "Absolute checkout path for an owned member."

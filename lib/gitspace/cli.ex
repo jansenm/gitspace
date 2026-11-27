@@ -411,9 +411,10 @@ defmodule Gitspace.CLI do
         @<ref> is the starting point. Without an explicit --topic/--name the
         ref is checked out as-is. A topic derives an owned branch from the
         template (default feature/{topic}); without a ref it starts at each
-        repository's default ref. --branch creates that explicit branch
-        instead. --as-is checks the ref or default out unchanged; --detach
-        checks it out without a branch.
+        repository's default ref. The topic is used verbatim, including '/';
+        only the workspace directory is slugged. --branch creates that explicit
+        branch instead. --as-is checks the ref or default out unchanged;
+        --detach checks it out without a branch.
 
         --only and --exclude are mutually exclusive. By default every member
         of the project is checked out.
