@@ -91,6 +91,27 @@ defmodule Gitspace.CLITest do
     refute Map.has_key?(data, "repo")
   end
 
+  test "show resolves the current directory and prints project, workspace and repo", %{
+    path: path
+  } do
+    {text, 0} = File.cd!(path, fn -> cli(["show", "."]) end)
+    assert text =~ "project:   demo"
+    assert text =~ "workspace: demo@JENKINS-123"
+    assert text =~ "repo:      demo"
+
+    sub = Path.join(path, "sub/dir")
+    File.mkdir_p!(sub)
+
+    {sub_text, 0} = File.cd!(sub, fn -> cli(["show", "."]) end)
+    assert sub_text =~ "workspace: demo@JENKINS-123"
+
+    {json, 0} = File.cd!(path, fn -> cli(["show", ".", "--json"]) end)
+    checkout = Jason.decode!(json)["data"]["checkout"]
+    assert checkout["project"] == "demo"
+    assert checkout["workspace"] == "demo@JENKINS-123"
+    assert checkout["repo"] == "demo"
+  end
+
   test "status resolves project/topic/member from the index when the topic directory is slugged",
        %{
          config: config

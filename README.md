@@ -32,7 +32,7 @@ Product scope, CLI contract and acceptance plan live in the planning repository:
 | Recovery | `reindex` — rediscover mirrors from disk, rebuild workspaces from markers |
 | Machine surface | `--json` on every command, exit codes 0–7, `--verbose` prints git argv |
 
-310 checks (306 tests, 3 properties, 1 doctest) in ~65 s.
+312 checks (308 tests, 3 properties, 1 doctest) in ~67 s.
 
 ## Commands
 
@@ -164,12 +164,13 @@ the topic workspace is ignored**, even when the requested ref or branch mode dif
 after adding a project member therefore adds only the missing member; no `--only` is needed.
 Exclusions never delete existing members.
 
-`workspace new` remains the explicit form:
+`workspace new` remains the explicit form; `workspace add` is an alias for it:
 
 ```sh
 gitspace workspace new vemags@4711 --own api@main --own web@main
 gitspace workspace new 4711/sub --own api@main      # topic 4711/sub, project inferred
 gitspace workspace new vemags@dev --own api --own web --as-is  # each default branch
+gitspace workspace add vemags@4711 --own api@main               # alias for new
 ```
 
 The target is `[<project>@]<topic>`. `@` separates project and topic; topics may contain `/`,
@@ -401,7 +402,8 @@ completes; `--json` remains a single document. `repo fetch` is not a status refr
 invalidates `last_status_at` and can make more `?` appear until a `status`/`ls --refresh` runs.
 
 Use `gitspace path <target>` or `gitspace show <target>` when the checkout path is what you
-need.
+need. `gitspace show .` (and `gitspace status .`) resolves the current directory, including
+subdirectories, and prints `project`, `workspace` and `repo`; `--json` exposes the same fields.
 
 ## History and diffs
 

@@ -20,7 +20,7 @@ defmodule Gitspace.CLI.Completion do
   @commands ~w(ls log push rebase base keep co workspace project label status show path repo scan link unlink doctor setup reindex config completion help)
 
   @subcommands %{
-    "workspace" => ~w(new ls status rm help),
+    "workspace" => ~w(new add ls status rm help),
     "project" => ~w(new ls show add remove edit rm help),
     "label" => ~w(add rm set ls help),
     "repo" => ~w(init import branches add ls fetch rm alias set-url help),
@@ -46,6 +46,8 @@ defmodule Gitspace.CLI.Completion do
     "repo:rm" => ~w(--force --dry-run),
     "repo:set-url" => ~w(--push),
     "workspace:new" =>
+      ~w(--own --borrow --as --branch --as-is --label --description --fetch --dry-run),
+    "workspace:add" =>
       ~w(--own --borrow --as --branch --as-is --label --description --fetch --dry-run),
     "workspace:ls" => ~w(--project --label --all),
     "workspace:status" => ~w(--refresh),
@@ -291,7 +293,8 @@ defmodule Gitspace.CLI.Completion do
     end
   end
 
-  defp positional_values("workspace", "new", []), do: {:data, [:projects]}
+  defp positional_values("workspace", sub, []) when sub in ["new", "add"],
+    do: {:data, [:projects]}
 
   defp positional_values("workspace", sub, []) when sub in ["status", "rm"] do
     {:data, [:workspaces]}

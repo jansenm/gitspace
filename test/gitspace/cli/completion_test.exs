@@ -80,6 +80,10 @@ defmodule Gitspace.CLI.CompletionTest do
 
     {subcommands, 0} = cli(["__complete", "1", "workspace", ""])
     assert "rm" in lines(subcommands)
+    assert "add" in lines(subcommands)
+
+    {add_flags, 0} = cli(["__complete", "2", "workspace", "add", "--o"])
+    assert lines(add_flags) == ["--own"]
 
     {targets, 0} = cli(["__complete", "2", "workspace", "rm", ""])
     assert "vemags@dev" in lines(targets)

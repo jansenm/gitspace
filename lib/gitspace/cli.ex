@@ -277,7 +277,7 @@ defmodule Gitspace.CLI do
       rebase [target]              rebase worktrees onto their base
       base <target> [<ref>]        show or change the rebase base per checkout
       co <project>[@<ref>]         check out a project topic
-      workspace new|ls|status|edit|rm  explicit workspace creation, inspection and removal
+      workspace new|add|ls|status|edit|rm  explicit workspace creation, inspection and removal
       label add|rm|set|ls <workspace>  add, remove or replace workspace labels
       project new|ls|show|edit|add|remove|rm  project definitions
       status [target]              inbox, or one workspace/checkout/repository

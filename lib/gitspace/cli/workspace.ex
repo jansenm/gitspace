@@ -7,6 +7,7 @@ defmodule Gitspace.CLI.Workspace do
   def run(global, args) do
     case args do
       ["new" | rest] -> new(global, rest)
+      ["add" | rest] -> new(global, rest)
       ["ls" | rest] -> list(global, rest)
       ["status" | rest] -> status(global, rest)
       ["edit" | rest] -> edit(global, rest)
@@ -520,6 +521,8 @@ defmodule Gitspace.CLI.Workspace do
       command exists for explicit owned/borrowed member lists, labels, descriptions,
       member directory names and dry runs.
 
+    `workspace add` is an alias for `workspace new`.
+
     REMOVAL
       `workspace rm <workspace>` removes every member and tombstones the workspace.
       `workspace rm <workspace>:<member>` removes one membership; removing the last
@@ -537,7 +540,7 @@ defmodule Gitspace.CLI.Workspace do
       project definition stays.
 
     USAGE
-      gitspace workspace new [<project>@]<topic> [--own <repo>[@<ref>]]...
+      gitspace workspace new|add [<project>@]<topic> [--own <repo>[@<ref>]]...
                                     [--borrow <repo>[@<ref>]]... [--branch B] [--as-is]
                                     [--label L]... [--description D]
                                     [--as <repo>=<dir>]... [--fetch] [--dry-run] [--json]

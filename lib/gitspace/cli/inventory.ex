@@ -367,7 +367,9 @@ defmodule Gitspace.CLI.Inventory do
 
   defp render_checkout_status(%{checkout: checkout} = data) do
     IO.puts("#{checkout.repo} · #{checkout.path}")
+    IO.puts("  project:   #{checkout.project || "-"}")
     IO.puts("  workspace: #{checkout.workspace || "-"}")
+    IO.puts("  repo:      #{checkout.repo}")
     IO.puts("  branch:    #{checkout.branch || "(detached)"}")
     IO.puts("  state:     #{checkout.state}#{if checkout.stale, do: " (status stale)", else: ""}")
     IO.puts("  source:    #{checkout.source} (#{checkout.kind_name})")

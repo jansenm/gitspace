@@ -276,6 +276,15 @@ defmodule Gitspace.CLI.WorkspaceTest do
     assert Jason.decode!(conflict)["error"]["code"] == "usage"
   end
 
+  test "workspace add is an alias for workspace new" do
+    {output, 0} = cli(["workspace", "add", "a@alias", "--own", "a", "--json"])
+    data = Jason.decode!(output)["data"]
+
+    assert data["workspace"] == "a@alias"
+    assert [member] = data["members"]
+    assert member["branch"] == "feature/alias"
+  end
+
   test "workspace new project@topic needs no --project or --branch" do
     {output, 0} =
       cli(["workspace", "new", "a@4711", "--own", "a@main", "--json"])
@@ -471,7 +480,7 @@ defmodule Gitspace.CLI.WorkspaceTest do
   test "help covers co and workspace" do
     {top, 0} = cli(["--help"])
     assert top =~ "co <project>[@<ref>]"
-    assert top =~ "workspace new|ls|status"
+    assert top =~ "workspace new|add|ls|status"
 
     {co, 0} = cli(["co", "--help"])
     assert co =~ "gitspace co <project>[@<ref>]"
@@ -479,7 +488,7 @@ defmodule Gitspace.CLI.WorkspaceTest do
     assert co =~ "MT4711"
 
     {workspace, 0} = cli(["workspace", "--help"])
-    assert workspace =~ "gitspace workspace new [<project>@]<topic>"
+    assert workspace =~ "gitspace workspace new|add [<project>@]<topic>"
     assert workspace =~ "BORROWED MEMBERS"
   end
 
