@@ -9,6 +9,7 @@ defmodule Gitspace.CLI.Project do
       ["new" | rest] -> new(global, rest)
       ["ls" | rest] -> list(global, rest)
       ["show" | rest] -> show(global, rest)
+      ["edit" | rest] -> edit(global, rest)
       ["add" | rest] -> add(global, rest)
       ["remove" | rest] -> remove(global, rest)
       ["rm" | rest] -> rm(global, rest)
@@ -78,6 +79,50 @@ defmodule Gitspace.CLI.Project do
          {:ok, project} <- Projects.get(config, name) do
       {:ok, project_map(config, project), &render_show/1}
     end
+  end
+
+  defp edit(_global, args) do
+    with {:ok, opts, rest} <- Helpers.parse(args, edit_strict()),
+         {:ok, name} <-
+           one_arg(rest, "gitspace project edit <name> [--description D] [--clear-description]"),
+         {:ok, config} <- Helpers.load_config(),
+         :ok <- Helpers.start_index(config),
+         {:ok, project} <- Projects.get(config, name),
+         {:ok, description} <- edited_description(project.description, opts),
+         {:ok, project} <- Projects.update(config, name, %{description: description}) do
+      {:ok, %{project: project.name, path: project.path, description: project.description},
+       &render_edit/1}
+    end
+  end
+
+  defp edit_strict do
+    [description: :string, clear_description: :boolean] ++ Helpers.global_strict()
+  end
+
+  defp edited_description(existing, opts) do
+    cond do
+      opts[:clear_description] == true and Keyword.has_key?(opts, :description) ->
+        {:error,
+         Error.new(:usage, "--clear-description and --description are mutually exclusive")}
+
+      opts[:clear_description] ->
+        {:ok, nil}
+
+      Keyword.has_key?(opts, :description) ->
+        case String.trim(opts[:description]) do
+          "" -> {:ok, nil}
+          description -> {:ok, description}
+        end
+
+      true ->
+        {:ok, existing}
+    end
+  end
+
+  defp render_edit(data) do
+    IO.puts("edited project #{data.project}")
+    IO.puts("  path:        #{data.path}")
+    IO.puts("  description: #{data.description || "(none)"}")
   end
 
   defp add(_global, args) do
@@ -266,6 +311,7 @@ defmodule Gitspace.CLI.Project do
                                 [--default-ref REF] [--json]
       gitspace project ls [--json]
       gitspace project show <name> [--json]
+      gitspace project edit <name> [--description D] [--clear-description] [--json]
       gitspace project add <name> <repo>...
       gitspace project remove <name> <repo>...
       gitspace project rm <name> [--force] [--json]

@@ -359,6 +359,58 @@ defmodule Gitspace.CLI.WorkspaceTest do
     assert Jason.decode!(output)["error"]["code"] == "usage"
   end
 
+  test "label add/rm/set/ls updates the marker and the index", %{config: config} do
+    {_, 0} = cli(["co", "a@main", "--label", "one", "--json"])
+    dir = Path.join([config.projects_root, "a", "main"])
+
+    {output, 0} = cli(["label", "add", "a@main", "two", "three", "--json"])
+    assert Jason.decode!(output)["data"]["labels"] == ["one", "two", "three"]
+
+    marker = Marker.read!(dir)
+    assert marker["labels"] == ["one", "two", "three"]
+
+    {output, 0} = cli(["label", "rm", "a@main", "two", "--json"])
+    assert Jason.decode!(output)["data"]["labels"] == ["one", "three"]
+
+    {output, 0} = cli(["label", "set", "a@main", "solo", "--json"])
+    assert Jason.decode!(output)["data"]["labels"] == ["solo"]
+
+    {output, 0} = cli(["label", "set", "a@main", "--json"])
+    assert Jason.decode!(output)["data"]["labels"] == []
+
+    {output, 0} = cli(["label", "ls", "a@main", "--json"])
+    assert Jason.decode!(output)["data"]["labels"] == []
+    assert Marker.read!(dir)["labels"] == []
+
+    {output, 2} = cli(["label", "add", "a@main", " ", "--json"])
+    assert Jason.decode!(output)["error"]["code"] == "usage"
+  end
+
+  test "workspace edit changes and clears the description", %{config: config} do
+    {_, 0} = cli(["co", "a@main", "--label", "keep", "--json"])
+    dir = Path.join([config.projects_root, "a", "main"])
+
+    {output, 0} = cli(["workspace", "edit", "a@main", "--description", "changed", "--json"])
+    data = Jason.decode!(output)["data"]
+    assert data["description"] == "changed"
+    assert data["labels"] == ["keep"]
+    assert Marker.read!(dir)["description"] == "changed"
+    assert Marker.read!(dir)["labels"] == ["keep"]
+
+    {output, 0} =
+      cli(["workspace", "edit", "a@main", "--clear-description", "--json"])
+
+    data = Jason.decode!(output)["data"]
+    assert data["description"] == nil
+    assert Marker.read!(dir)["description"] == nil
+    assert Marker.read!(dir)["labels"] == ["keep"]
+
+    {output, 2} =
+      cli(["workspace", "edit", "a@main", "--description", "x", "--clear-description", "--json"])
+
+    assert Jason.decode!(output)["error"]["code"] == "usage"
+  end
+
   test "WS-1/2 workspace status reports three members and member addressing resolves", %{
     config: config
   } do

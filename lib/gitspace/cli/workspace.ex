@@ -9,6 +9,7 @@ defmodule Gitspace.CLI.Workspace do
       ["new" | rest] -> new(global, rest)
       ["ls" | rest] -> list(global, rest)
       ["status" | rest] -> status(global, rest)
+      ["edit" | rest] -> edit(global, rest)
       ["rm" | rest] -> remove(global, rest)
       [] -> {:ok, %{help: help()}, &render_help/1}
       ["help"] -> {:ok, %{help: help()}, &render_help/1}
@@ -324,6 +325,29 @@ defmodule Gitspace.CLI.Workspace do
     )
   end
 
+  defp edit(_global, args) do
+    with {:ok, opts, rest} <- Helpers.parse(args, edit_strict()),
+         {:ok, name} <- one_arg(rest, "gitspace workspace edit <workspace> [--description D]"),
+         {:ok, config} <- Helpers.load_config(),
+         :ok <- Helpers.start_index(config),
+         {:ok, result} <- Workspaces.edit(config, name, opts) do
+      {:ok, result, &render_edit/1}
+    end
+  end
+
+  defp edit_strict do
+    [description: :string, clear_description: :boolean] ++ Helpers.global_strict()
+  end
+
+  defp render_edit(result) do
+    IO.puts("edited #{result.workspace}")
+    IO.puts("  description: #{result.description || "(none)"}")
+
+    labels = if result.labels == [], do: "(none)", else: Enum.join(result.labels, ", ")
+    IO.puts("  labels:      #{labels}")
+    IO.puts("  marker:      #{result.marker_path}")
+  end
+
   defp status(_global, []),
     do: {:error, Error.new(:usage, "usage: gitspace workspace status <name>")}
 
@@ -479,6 +503,7 @@ defmodule Gitspace.CLI.Workspace do
                                     [--as <repo>=<dir>]... [--fetch] [--dry-run] [--json]
       gitspace workspace ls [--project P] [--label L] [--all] [--json]
       gitspace workspace status <workspace> [--refresh] [--json]
+      gitspace workspace edit <workspace> [--description D] [--clear-description]
       gitspace workspace rm <workspace>[:<member>] [--force] [--dry-run] [--yes] [--json]
 
     TARGET

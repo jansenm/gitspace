@@ -10,6 +10,7 @@ defmodule Gitspace.CLI do
     Doctor,
     Inventory,
     Keep,
+    Label,
     Log,
     Output,
     Project,
@@ -158,6 +159,9 @@ defmodule Gitspace.CLI do
         "workspace" ->
           Workspace.run(global, command_args)
 
+        "label" ->
+          Label.run(global, command_args)
+
         "project" ->
           Project.run(global, command_args)
 
@@ -268,8 +272,9 @@ defmodule Gitspace.CLI do
       push <target>                push the checked-out branch
       rebase [target]              rebase worktrees onto their upstream
       co <project>[@<ref>]         check out a project topic
-      workspace new|ls|status|rm   explicit workspace creation, inspection and removal
-      project new|ls|show|add|remove|rm  project definitions
+      workspace new|ls|status|edit|rm  explicit workspace creation, inspection and removal
+      label add|rm|set|ls <workspace>  add, remove or replace workspace labels
+      project new|ls|show|edit|add|remove|rm  project definitions
       status [target]              inbox, or one workspace/checkout/repository
       show <target>                details and provenance
       path <target>                print a checkout path
@@ -403,6 +408,9 @@ defmodule Gitspace.CLI do
 
       "workspace" ->
         Workspace.help()
+
+      "label" ->
+        Label.help()
 
       "show" ->
         """

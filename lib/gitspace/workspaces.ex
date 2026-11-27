@@ -145,6 +145,154 @@ defmodule Gitspace.Workspaces do
     end
   end
 
+  @doc """
+  Updates a workspace's description.
+
+  The marker is the durable record, so it is written first; the SQLite row is
+  then updated to match. Labels are managed by `label/4`.
+  """
+  @spec edit(Config.t(), String.t(), keyword()) :: {:ok, map()} | {:error, Error.t()}
+  def edit(%Config{} = config, name, opts \\ []) do
+    with {:ok, workspace} <- get(config, name),
+         {:ok, dir, marker} <- marker_for(workspace),
+         {:ok, description} <- edit_description(marker["description"], opts),
+         :ok <- write_marker(dir, marker, marker["labels"] || [], description),
+         :ok <- save_metadata(workspace, marker["labels"] || [], description) do
+      {:ok,
+       %{
+         workspace: workspace.name,
+         labels: marker["labels"] || [],
+         description: description,
+         marker_path: workspace.marker_path
+       }}
+    end
+  end
+
+  @doc """
+  Adds, removes or replaces the labels of a workspace.
+
+  `:add` is a union, `:remove` drops the given labels, `:set` replaces the whole
+  set (`[]` clears it). The marker is written first; the label rows follow.
+  """
+  @spec label(Config.t(), String.t(), :add | :remove | :set, [String.t()]) ::
+          {:ok, map()} | {:error, Error.t()}
+  def label(%Config{} = config, name, action, labels)
+      when action in [:add, :remove, :set] do
+    with {:ok, workspace} <- get(config, name),
+         {:ok, dir, marker} <- marker_for(workspace),
+         {:ok, changes} <- normalize_labels(labels),
+         current = marker["labels"] || [],
+         next = apply_labels(current, changes, action),
+         :ok <- write_marker(dir, marker, next, marker["description"]),
+         :ok <- save_metadata(workspace, next, marker["description"]) do
+      {:ok,
+       %{
+         workspace: workspace.name,
+         labels: next,
+         description: marker["description"],
+         marker_path: workspace.marker_path
+       }}
+    end
+  end
+
+  defp apply_labels(current, changes, :add), do: Enum.uniq(current ++ changes)
+  defp apply_labels(current, changes, :remove), do: current -- changes
+  defp apply_labels(_current, changes, :set), do: changes
+
+  defp marker_for(%Workspace{marker_path: nil}) do
+    {:error,
+     Error.new(:error, "workspace has no marker path", hint: "run `gitspace doctor --reindex`")}
+  end
+
+  defp marker_for(%Workspace{marker_path: marker_path}) do
+    dir = Path.dirname(marker_path)
+
+    case Marker.read(dir) do
+      {:ok, marker} ->
+        {:ok, dir, marker}
+
+      {:error, _reason} ->
+        {:error,
+         Error.new(:not_found, "workspace marker is missing or invalid: #{marker_path}",
+           hint: "run `gitspace doctor --reindex` or recreate the workspace"
+         )}
+    end
+  end
+
+  defp normalize_labels(labels) do
+    labels = Enum.map(labels, &String.trim/1)
+
+    if Enum.any?(labels, &(&1 == "")) do
+      {:error, Error.new(:usage, "labels cannot be empty")}
+    else
+      {:ok, Enum.uniq(labels)}
+    end
+  end
+
+  defp edit_description(existing, opts) do
+    cond do
+      opts[:clear_description] == true and Keyword.has_key?(opts, :description) ->
+        {:error,
+         Error.new(:usage, "--clear-description and --description are mutually exclusive")}
+
+      opts[:clear_description] ->
+        {:ok, nil}
+
+      Keyword.has_key?(opts, :description) ->
+        case String.trim(opts[:description]) do
+          "" -> {:ok, nil}
+          description -> {:ok, description}
+        end
+
+      true ->
+        {:ok, existing}
+    end
+  end
+
+  defp write_marker(dir, marker, labels, description) do
+    marker =
+      marker
+      |> Map.put("labels", labels)
+      |> Map.put("description", description)
+
+    try do
+      Marker.write!(dir, marker)
+      :ok
+    rescue
+      error ->
+        {:error,
+         Error.new(:error, "cannot write workspace marker: #{Exception.message(error)}",
+           hint: "nothing was changed"
+         )}
+    end
+  end
+
+  defp save_metadata(workspace, labels, description) do
+    case Repo.transaction(fn ->
+           workspace
+           |> Ecto.Changeset.change(%{description: description})
+           |> Repo.update!()
+
+           Repo.delete_all(from(l in WorkspaceLabel, where: l.workspace_id == ^workspace.id))
+
+           Enum.each(labels, fn label ->
+             %WorkspaceLabel{}
+             |> WorkspaceLabel.changeset(%{workspace_id: workspace.id, label: label})
+             |> Repo.insert!()
+           end)
+         end) do
+      {:ok, _} ->
+        :ok
+
+      {:error, reason} ->
+        {:error,
+         Error.new(:error, "cannot update workspace metadata",
+           hint: inspect(reason),
+           details: %{workspace: workspace.name}
+         )}
+    end
+  end
+
   @doc "Rebuilds one workspace from a marker. Used after creation writes the marker."
   @spec recover(Config.t(), Path.t(), map()) ::
           {:ok, non_neg_integer(), [map()]} | {:error, Error.t()}

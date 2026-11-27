@@ -1,7 +1,7 @@
 defmodule Gitspace.CLI.ProjectTest do
   use Gitspace.IndexCase, async: false
 
-  alias Gitspace.{Config, Fixtures, Repos}
+  alias Gitspace.{Config, Fixtures, Projects, Repos}
 
   setup %{config: config} do
     :ok = Config.save(config)
@@ -209,6 +209,28 @@ defmodule Gitspace.CLI.ProjectTest do
 
     {remove, 5} = cli(["repo", "rm", "new-repo", "--force", "--yes", "--json"])
     assert Jason.decode!(remove)["error"]["code"] == "refused"
+  end
+
+  test "project edit changes and clears the description", %{config: config} do
+    {_, 0} = cli(["project", "new", "vemags", "--description", "initial", "--json"])
+
+    {output, 0} = cli(["project", "edit", "vemags", "--description", "changed", "--json"])
+    data = Jason.decode!(output)["data"]
+    assert data["description"] == "changed"
+
+    {shown, 0} = cli(["project", "show", "vemags", "--json"])
+    assert Jason.decode!(shown)["data"]["description"] == "changed"
+
+    {output, 0} = cli(["project", "edit", "vemags", "--clear-description", "--json"])
+    assert Jason.decode!(output)["data"]["description"] == nil
+
+    assert {:ok, project} = Projects.get(config, "vemags")
+    assert is_nil(project.description)
+
+    {output, 2} =
+      cli(["project", "edit", "vemags", "--description", "x", "--clear-description", "--json"])
+
+    assert Jason.decode!(output)["error"]["code"] == "usage"
   end
 
   test "project rm refuses while workspaces exist" do

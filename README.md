@@ -280,6 +280,30 @@ directory, index rows, project members and markers all keep referring to the sam
 Only an address that already belongs to another repository is refused. A remote with several
 fetch or push URLs is also refused instead of guessing which one to replace.
 
+## Labels and descriptions
+
+Labels belong to **workspaces**; a description exists on workspaces and projects. Labels are
+free-form, trimmed and unique, and they live in the workspace marker, so they survive a
+reindex. There is no editor: everything is explicit parameters, which keeps it usable from
+scripts and agents.
+
+```sh
+gitspace label add vemags@4711 jira-123 review
+gitspace label rm vemags@4711 review
+gitspace label set vemags@4711 jira-123     # replace the whole set
+gitspace label set vemags@4711              # clear all labels
+gitspace label ls vemags@4711
+
+gitspace workspace edit vemags@4711 --description "move the deploy job"
+gitspace workspace edit vemags@4711 --clear-description
+
+gitspace project edit vemags --description "VEMAGS services"
+gitspace project edit vemags --clear-description
+```
+
+`gitspace ls --label review` filters by label. `workspace show`/`status` display labels and
+the description.
+
 ## Removing workspaces
 
 ```sh

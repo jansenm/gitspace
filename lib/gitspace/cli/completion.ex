@@ -17,11 +17,12 @@ defmodule Gitspace.CLI.Completion do
 
   @cache_version 3
 
-  @commands ~w(ls log push rebase keep co workspace project status show path repo scan link unlink doctor setup reindex config completion help)
+  @commands ~w(ls log push rebase keep co workspace project label status show path repo scan link unlink doctor setup reindex config completion help)
 
   @subcommands %{
     "workspace" => ~w(new ls status rm help),
-    "project" => ~w(new ls show add remove rm help),
+    "project" => ~w(new ls show add remove edit rm help),
+    "label" => ~w(add rm set ls help),
     "repo" => ~w(init import add ls fetch rm alias set-url help),
     "keep" => ~w(ls prune help),
     "config" => ~w(list get set help),
@@ -35,6 +36,7 @@ defmodule Gitspace.CLI.Completion do
       ~w(--repo --project --topic --workspace --label --state --kind --source --verbose --wide --refresh),
     "co" => ~w(--topic --only --exclude --as --as-is --branch --detach --label --fetch),
     "project:new" => ~w(--repo --at --description --branch-template --default-ref),
+    "project:edit" => ~w(--description --clear-description),
     "project:rm" => ~w(--force),
     "repo:init" => ~w(--branch --topic --path),
     "repo:import" => ~w(--name --no-link),
@@ -46,6 +48,8 @@ defmodule Gitspace.CLI.Completion do
       ~w(--own --borrow --as --branch --as-is --label --description --fetch --dry-run),
     "workspace:ls" => ~w(--project --label --all),
     "workspace:status" => ~w(--refresh),
+    "workspace:edit" =>
+      ~w(--label --remove-label --clear-labels --description --clear-description),
     "workspace:rm" => ~w(--force --dry-run),
     "status" => ~w(--refresh --long --diff --diff-lines),
     "log" => ~w(--outgoing --incoming --both --limit --all --fetch),
