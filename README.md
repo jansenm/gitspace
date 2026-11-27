@@ -31,7 +31,7 @@ Product scope, CLI contract and acceptance plan live in the planning repository:
 | Recovery | `reindex` — rediscover mirrors from disk, rebuild workspaces from markers |
 | Machine surface | `--json` on every command, exit codes 0–7, `--verbose` prints git argv |
 
-250 checks (246 tests, 3 properties, 1 doctest) in ~49 s.
+252 checks (248 tests, 3 properties, 1 doctest) in ~48 s.
 
 ## Commands
 
@@ -385,6 +385,13 @@ remote is the configured upstream's remote, otherwise `origin`, otherwise the on
 multiple candidates require `--remote`. Borrowed members are skipped, detached checkouts and
 checkouts without a remote are refused, and there is no force option. After a successful
 push the status cache is refreshed.
+
+New owned branches created by `co --topic` or `workspace new` are configured to push to the
+same-named remote branch (`branch.<name>.remote`/`merge`) at creation time, so a plain
+`git push` works with a normal `push.default` even before that remote branch exists. Until
+the first push or fetch, gitspace treats the not-yet-existing upstream as absent, so the
+unpushed count still includes every commit that exists nowhere else. Existing branches keep
+their tracking; the first `gitspace push` corrects a mismatched upstream.
 
 ## Decisions
 

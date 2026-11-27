@@ -151,11 +151,27 @@ defmodule Gitspace.Git.Refs do
     end
   end
 
-  @doc "The configured upstream of a checkout, or nil."
+  @doc """
+  The configured upstream of a checkout, or nil.
+
+  A branch can be configured to push to a same-named branch that does not
+  exist on the remote yet (done when a topic branch is created). `git status`
+  still reports that upstream, but `@{u}` and `upstream..HEAD` cannot be
+  resolved until the first push or fetch. Treat such an upstream as absent so
+  the unpushed count falls back to "not on any remote or tag".
+  """
   @spec upstream_ref(Path.t(), %Status{}) :: String.t() | nil
-  def upstream_ref(worktree, %Status{} = status) do
-    status.upstream || upstream_name(worktree)
+  def upstream_ref(worktree, %Status{upstream: upstream} = status) when is_binary(upstream) do
+    # A configured upstream whose remote-tracking ref does not exist yet has no
+    # ahead/behind line. Fall back to @{u}, which fails for the same reason.
+    if is_nil(status.ahead) and is_nil(status.behind) do
+      upstream_name(worktree)
+    else
+      upstream
+    end
   end
+
+  def upstream_ref(worktree, %Status{}), do: upstream_name(worktree)
 
   @doc """
   Revision arguments for commits that exist only here.

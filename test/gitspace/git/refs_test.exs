@@ -2,6 +2,7 @@ defmodule Gitspace.Git.RefsTest do
   use ExUnit.Case, async: true
 
   alias Gitspace.Fixtures
+  alias Gitspace.Git
   alias Gitspace.Git.{Refs, Status}
 
   setup do
@@ -25,6 +26,23 @@ defmodule Gitspace.Git.RefsTest do
     status = Status.read!(path)
 
     assert status.detached
+    assert Refs.unpushed(path, status) == 1
+  end
+
+  test "a configured but missing same-name upstream does not hide unpushed commits", %{
+    bare: bare
+  } do
+    path = Fixtures.worktree!(bare, "origin/main", detach: false, branch: "main")
+    Git.run!(["checkout", "-b", "topic"], cd: path)
+    Git.run!(["config", "branch.topic.remote", "origin"], cd: path)
+    Git.run!(["config", "branch.topic.merge", "refs/heads/topic"], cd: path)
+    Fixtures.write(path, "topic.txt", "topic\n")
+    Fixtures.commit!(path, "topic work")
+
+    status = Status.read!(path)
+
+    assert status.upstream == "origin/topic"
+    assert Refs.upstream_ref(path, status) == nil
     assert Refs.unpushed(path, status) == 1
   end
 

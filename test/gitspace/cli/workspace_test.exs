@@ -52,6 +52,27 @@ defmodule Gitspace.CLI.WorkspaceTest do
     assert Jason.decode!(again)["data"]["reused"] == true
   end
 
+  test "co configures a new topic branch to push to its same-named remote branch" do
+    {output, 0} = cli(["co", "a@main", "--topic", "tracked", "--json"])
+    member = Jason.decode!(output)["data"]["members"] |> hd()
+
+    path = member["path"]
+    branch = member["branch"]
+    assert branch == "feature/tracked"
+
+    assert Git.run!(["config", "--get", "branch.#{branch}.remote"], cd: path) |> String.trim() ==
+             "origin"
+
+    assert Git.run!(["config", "--get", "branch.#{branch}.merge"], cd: path) |> String.trim() ==
+             "refs/heads/#{branch}"
+
+    assert {:ok, _} = Git.run(["-c", "push.default=simple", "push"], cd: path)
+
+    status = Git.Status.read!(path)
+    assert status.upstream == "origin/feature/tracked"
+    assert status.ahead == 0
+  end
+
   test "workspace new dry-run writes nothing, then creates and reports status" do
     dry_args = [
       "workspace",

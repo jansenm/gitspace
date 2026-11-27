@@ -844,6 +844,7 @@ defmodule Gitspace.Create do
       unborn: false,
       action: :created,
       branch_exists?: false,
+      track_same_name?: false,
       existing_member: nil
     }
 
@@ -860,7 +861,8 @@ defmodule Gitspace.Create do
                start_sha: info.sha,
                head: info.sha,
                unborn: info.kind == :unborn,
-               branch_exists?: Refs.local_branch?(repo.bare_path, branch)
+               branch_exists?: Refs.local_branch?(repo.bare_path, branch),
+               track_same_name?: true
            }}
         end
 
@@ -904,7 +906,8 @@ defmodule Gitspace.Create do
                start_sha: info.sha,
                head: info.sha,
                unborn: info.kind == :unborn,
-               branch_exists?: Refs.local_branch?(repo.bare_path, branch)
+               branch_exists?: Refs.local_branch?(repo.bare_path, branch),
+               track_same_name?: true
            }}
         end
 
@@ -1571,8 +1574,76 @@ defmodule Gitspace.Create do
       end
 
     case result do
-      {:ok, _} -> import_owned(config, plan, opts)
-      {:error, git_result} -> {:error, worktree_error(plan, git_result)}
+      {:ok, _} ->
+        track_same_name(plan)
+        import_owned(config, plan, opts)
+
+      {:error, git_result} ->
+        {:error, worktree_error(plan, git_result)}
+    end
+  end
+
+  # Newly derived branches are configured to push to the same-named branch on
+  # the remote, so a plain `git push` (push.default=simple) works without the
+  # user setting an upstream first. Only new branches are touched; existing
+  # branches keep their own tracking.
+  defp track_same_name(plan) do
+    if plan[:track_same_name?] and not plan.branch_exists? and not plan.detached and
+         not plan.unborn do
+      branch = plan.desired_branch
+
+      with remote when is_binary(remote) <- tracking_remote(plan),
+           :ok <- set_tracking(plan.path, branch, remote) do
+        :ok
+      else
+        _ -> :ok
+      end
+    else
+      :ok
+    end
+  end
+
+  defp tracking_remote(plan) do
+    remotes = remotes(plan.repo.bare_path)
+
+    case plan.start_ref do
+      "refs/remotes/" <> rest ->
+        case String.split(rest, "/", parts: 2) do
+          [remote, _] when remote != "" ->
+            if remote in remotes, do: remote, else: default_remote(remotes)
+
+          _ ->
+            default_remote(remotes)
+        end
+
+      _ ->
+        default_remote(remotes)
+    end
+  end
+
+  defp default_remote(remotes) do
+    cond do
+      "origin" in remotes -> "origin"
+      length(remotes) == 1 -> hd(remotes)
+      true -> nil
+    end
+  end
+
+  defp remotes(bare) do
+    case Gitspace.Git.run(["remote"], cd: bare) do
+      {:ok, %{stdout: out}} -> out |> String.split("\n", trim: true) |> Enum.map(&String.trim/1)
+      {:error, _} -> []
+    end
+  end
+
+  defp set_tracking(path, branch, remote) do
+    with {:ok, _} <- Gitspace.Git.run(["config", "branch.#{branch}.remote", remote], cd: path),
+         {:ok, _} <-
+           Gitspace.Git.run(
+             ["config", "branch.#{branch}.merge", "refs/heads/#{branch}"],
+             cd: path
+           ) do
+      :ok
     end
   end
 
