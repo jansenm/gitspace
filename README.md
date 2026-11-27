@@ -32,7 +32,7 @@ Product scope, CLI contract and acceptance plan live in the planning repository:
 | Recovery | `reindex` — rediscover mirrors from disk, rebuild workspaces from markers |
 | Machine surface | `--json` on every command, exit codes 0–7, `--verbose` prints git argv |
 
-301 checks (297 tests, 3 properties, 1 doctest) in ~62 s.
+305 checks (301 tests, 3 properties, 1 doctest) in ~64 s.
 
 ## Commands
 
@@ -325,6 +325,8 @@ the description.
 ```sh
 gitspace workspace rm vemags@MT4711          # every member, then the workspace
 gitspace workspace rm vemags@MT4711:api      # one member
+gitspace workspace rm vemags@MT4711 --delete-branch
+gitspace workspace rm vemags@MT4711 --delete-branch --force   # anchor local-only commits first
 gitspace workspace rm vemags@MT4711 --dry-run
 ```
 
@@ -334,8 +336,13 @@ gitspace workspace rm vemags@MT4711 --dry-run
   directory is removed too when nothing but the gitspace project marker is left in it.
 - Risky owned members (dirty, untracked, or unpushed work) are refused. `--force` anchors
   HEAD and saves the tracked diff plus untracked files under `<data>/trash` before removal.
-- Branches are never deleted. Branches of removed owned members are reported as
-  `branches kept`, in `--dry-run` and after removal, so nothing disappears silently.
+- Branches are kept by default and reported as `branches kept`, in `--dry-run` and after
+  removal, so nothing disappears silently. `--delete-branch` deletes each owned local branch
+  whose tip is already reachable from a remote-tracking ref, a tag or another local branch.
+  The default branch and branches checked out elsewhere are never deleted. With
+  `--force --delete-branch`, a branch with commits that exist only here is anchored under
+  `refs/gitspace/keep/branch/…` and then deleted. The remote branch and the push target are
+  never touched.
 - `--yes` is required without a terminal; `--dry-run` shows the plan without changing anything.
 
 ## Shell completion

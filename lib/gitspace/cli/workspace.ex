@@ -251,7 +251,12 @@ defmodule Gitspace.CLI.Workspace do
          {:ok, config} <- Helpers.load_config(),
          :ok <- Helpers.start_index(config),
          {:ok, workspace} <- Workspaces.get(config, workspace_name),
-         {:ok, plan} <- Teardown.plan(config, workspace, member: member_name),
+         {:ok, plan} <-
+           Teardown.plan(config, workspace,
+             member: member_name,
+             delete_branch: opts[:delete_branch],
+             force: opts[:force]
+           ),
          :ok <- precheck_risky(plan, opts) do
       if opts[:dry_run] do
         case Teardown.execute(config, plan, dry_run: true) do
@@ -266,7 +271,7 @@ defmodule Gitspace.CLI.Workspace do
             member -> "remove member #{workspace.name}:#{member}?"
           end
 
-        question = question <> branch_suffix(plan.branches)
+        question = question <> branch_suffix(plan)
 
         with :ok <- Helpers.require_confirmation(global, opts, question) do
           case Teardown.execute(config, plan, force: opts[:force]) do
@@ -280,18 +285,29 @@ defmodule Gitspace.CLI.Workspace do
   end
 
   defp rm_strict do
-    [force: :boolean, dry_run: :boolean] ++ Helpers.global_strict()
+    [force: :boolean, dry_run: :boolean, delete_branch: :boolean] ++ Helpers.global_strict()
   end
 
-  defp branch_suffix([]), do: ""
+  defp branch_suffix(plan) do
+    deleted = Map.get(plan, :delete_branches, [])
+    kept = Map.get(plan, :branches, [])
 
-  defp branch_suffix([branch]), do: " (keeps branch #{branch_label(branch)})"
-
-  defp branch_suffix([first, second]) do
-    " (keeps branches #{branch_label(first)}, #{branch_label(second)})"
+    [branch_verb(deleted, "deletes"), branch_verb(kept, "keeps")]
+    |> Enum.reject(&is_nil/1)
+    |> case do
+      [] -> ""
+      parts -> " (" <> Enum.join(parts, "; ") <> ")"
+    end
   end
 
-  defp branch_suffix(branches), do: " (keeps #{length(branches)} branches)"
+  defp branch_verb([], _verb), do: nil
+  defp branch_verb([branch], verb), do: "#{verb} branch #{branch_label(branch)}"
+
+  defp branch_verb([first, second], verb) do
+    "#{verb} branches #{branch_label(first)}, #{branch_label(second)}"
+  end
+
+  defp branch_verb(branches, verb), do: "#{verb} #{length(branches)} branches"
 
   defp branch_label(%{repo: repo, name: name}), do: "#{repo}:#{name}"
 
@@ -452,12 +468,30 @@ defmodule Gitspace.CLI.Workspace do
       end)
     end
 
+    if result[:deleted_branches] not in [nil, []] do
+      IO.puts("")
+      IO.puts(if result.dry_run, do: "branches to delete", else: "branches deleted")
+
+      Enum.each(result.deleted_branches, fn branch ->
+        notes =
+          [
+            if(branch[:forced], do: "forced"),
+            if(branch[:keep_ref], do: "head kept at #{branch.keep_ref}")
+          ]
+          |> Enum.reject(&is_nil/1)
+
+        suffix = if notes == [], do: "", else: " (" <> Enum.join(notes, "; ") <> ")"
+        IO.puts("  #{branch.repo}:#{branch.name}#{suffix}")
+      end)
+    end
+
     if result.branches != [] do
       IO.puts("")
       IO.puts("branches kept")
 
       Enum.each(result.branches, fn branch ->
-        IO.puts("  #{branch.repo}:#{branch.name}")
+        suffix = if branch[:reason], do: " (#{branch.reason})", else: ""
+        IO.puts("  #{branch.repo}:#{branch.name}#{suffix}")
       end)
     end
 
@@ -492,7 +526,13 @@ defmodule Gitspace.CLI.Workspace do
       one tombstones the workspace. Borrowed checkouts are unlinked, never deleted.
       Risky owned members are refused unless --force archives their work under
       <data>/trash first. Branches are kept and listed as `branches kept`, in
-      --dry-run and after removal. The project directory is removed with its
+      --dry-run and after removal. --delete-branch also deletes each owned local
+      branch whose commits are already reachable from a remote, a tag or another
+      local branch. The default branch and branches checked out elsewhere are
+      never deleted. Combined with --force, a branch with commits that exist
+      only here is anchored under refs/gitspace/keep/branch/... and then deleted.
+      The push target and the remote branch are never touched. The project
+      directory is removed with its
       last workspace when only the gitspace project marker is left; the
       project definition stays.
 
@@ -504,7 +544,8 @@ defmodule Gitspace.CLI.Workspace do
       gitspace workspace ls [--project P] [--label L] [--all] [--json]
       gitspace workspace status <workspace> [--refresh] [--json]
       gitspace workspace edit <workspace> [--description D] [--clear-description]
-      gitspace workspace rm <workspace>[:<member>] [--force] [--dry-run] [--yes] [--json]
+      gitspace workspace rm <workspace>[:<member>] [--force] [--delete-branch]
+                                  [--dry-run] [--yes] [--json]
 
     TARGET
       `vemags@4711` names project and topic; `4711` is a topic whose project is

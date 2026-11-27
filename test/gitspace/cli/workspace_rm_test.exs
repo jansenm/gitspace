@@ -54,6 +54,90 @@ defmodule Gitspace.CLI.WorkspaceRmTest do
     end
   end
 
+  test "--delete-branch deletes branches whose commits are reachable elsewhere", %{config: config} do
+    {dry, 0} = cli(["workspace", "rm", "vemags@dev", "--delete-branch", "--dry-run", "--json"])
+    planned = Jason.decode!(dry)["data"]
+
+    assert Enum.sort_by(planned["deleted_branches"], & &1["repo"]) == [
+             %{"repo" => "a", "name" => "feature/dev", "forced" => false},
+             %{"repo" => "b", "name" => "feature/dev", "forced" => false}
+           ]
+
+    assert planned["branches"] == []
+
+    {output, 0} = cli(["workspace", "rm", "vemags@dev", "--delete-branch", "--yes"])
+    assert output =~ "branches deleted"
+    assert output =~ "a:feature/dev"
+    assert output =~ "b:feature/dev"
+
+    for name <- ["a", "b"] do
+      assert {:ok, repo} = Repos.get(config, name)
+
+      assert {:error, _} =
+               Git.run(["rev-parse", "--verify", "refs/heads/feature/dev"], cd: repo.bare_path)
+    end
+  end
+
+  test "--delete-branch keeps a branch with commits that exist only here", %{config: config} do
+    {:ok, workspace} = Workspaces.get(config, "vemags@dev")
+    member = Enum.find(workspace.members, &(&1.name == "a"))
+    Fixtures.configure_user(member.checkout.path)
+    Fixtures.write(member.checkout.path, "local.txt", "local\n")
+    Fixtures.commit!(member.checkout.path, "left behind")
+
+    assert {:ok, plan} = Gitspace.Teardown.plan(config, workspace, delete_branch: true)
+
+    assert Enum.map(plan.delete_branches, & &1.repo) == ["b"]
+
+    assert Enum.find(plan.branches, &(&1.repo == "a")).reason ==
+             "has commits that exist only here"
+  end
+
+  test "--delete-branch --force anchors and deletes a branch with local-only commits", %{
+    config: config
+  } do
+    {:ok, workspace} = Workspaces.get(config, "vemags@dev")
+    member = Enum.find(workspace.members, &(&1.name == "a"))
+    path = member.checkout.path
+    Fixtures.configure_user(path)
+    Fixtures.write(path, "local.txt", "local\n")
+    Fixtures.commit!(path, "left behind")
+    sha = Git.run!(["rev-parse", "HEAD"], cd: path) |> String.trim()
+
+    {:ok, repo} = Repos.get(config, "a")
+
+    {output, 0} =
+      cli(["workspace", "rm", "vemags@dev", "--delete-branch", "--force", "--yes", "--json"])
+
+    data = Jason.decode!(output)["data"]
+    branch = Enum.find(data["deleted_branches"], &(&1["repo"] == "a"))
+
+    assert branch["forced"]
+    assert branch["keep_ref"] =~ "refs/gitspace/keep/branch/"
+
+    assert {:error, _} =
+             Git.run(["rev-parse", "--verify", "refs/heads/feature/dev"], cd: repo.bare_path)
+
+    assert Git.run!(["rev-parse", branch["keep_ref"]], cd: repo.bare_path) |> String.trim() == sha
+  end
+
+  test "--delete-branch never deletes the default branch", %{config: config} do
+    {_, 0} = cli(["co", "a@main", "--json"])
+
+    {output, 0} = cli(["workspace", "rm", "a@main", "--delete-branch", "--yes", "--json"])
+    data = Jason.decode!(output)["data"]
+
+    assert data["deleted_branches"] == []
+
+    kept = Enum.find(data["branches"], &(&1["repo"] == "a" and &1["name"] == "main"))
+    assert kept["reason"] == "default branch"
+
+    {:ok, repo} = Repos.get(config, "a")
+
+    assert Git.run!(["rev-parse", "--verify", "refs/heads/main"], cd: repo.bare_path)
+           |> String.trim() != ""
+  end
+
   test "dry-run reports the plan without changing anything", %{config: config} do
     {output, 0} = cli(["workspace", "rm", "vemags@dev", "--dry-run", "--json"])
     data = Jason.decode!(output)["data"]

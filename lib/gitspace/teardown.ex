@@ -5,8 +5,11 @@ defmodule Gitspace.Teardown do
   Owned members are removed as git worktrees. Borrowed members are only
   unlinked. Risky owned members are refused unless `--force` is given; force
   anchors HEAD, saves the tracked diff and untracked files under `<data>/trash`,
-  and only then removes the worktree. Branches are never deleted here; the
-  branches of removed owned members are reported so the user knows what stays.
+  and only then removes the worktree. Branches are kept unless `delete_branch`
+  is requested; deletion is limited to branches whose commits are reachable
+  elsewhere, never the default branch and never a branch checked out in another
+  worktree. With `force`, a branch with commits that exist only here is anchored
+  under `refs/gitspace/keep/branch/…` before it is deleted.
   """
 
   import Ecto.Query
@@ -21,7 +24,8 @@ defmodule Gitspace.Teardown do
           workspace_dir: Path.t(),
           targets: [target()],
           risky: [target()],
-          branches: [%{repo: String.t(), name: String.t()}],
+          branches: [%{repo: String.t(), name: String.t(), reason: String.t() | nil}],
+          delete_branches: [%{repo: String.t(), name: String.t(), forced: boolean()}],
           member: String.t() | nil
         }
 
@@ -30,6 +34,8 @@ defmodule Gitspace.Teardown do
     with {:ok, members} <- select_members(workspace, opts[:member]),
          {:ok, workspace_dir} <- workspace_dir(workspace),
          {:ok, targets} <- plan_targets(config, workspace, workspace_dir, members) do
+      targets = Enum.map(targets, &decide_branch(&1, opts))
+
       {:ok,
        %{
          workspace: workspace,
@@ -37,6 +43,7 @@ defmodule Gitspace.Teardown do
          targets: targets,
          risky: Enum.filter(targets, &risky?/1),
          branches: branch_hints(targets),
+         delete_branches: branch_deletions(targets),
          member: opts[:member]
        }}
     end
@@ -58,12 +65,12 @@ defmodule Gitspace.Teardown do
           )
         end)
 
-      {:ok, result(plan, planned, [], true, false, false)}
+      {:ok, result(plan, planned, [], true, false, false, plan.delete_branches)}
     else
       with :ok <- refuse_risky(plan, force),
            {:ok, archives} <- archive_risky(config, plan, force) do
-        {removed, failures} = remove_targets(config, plan, force, archives)
-        finalize(config, plan, removed, failures)
+        {removed, failures, deleted} = remove_targets(config, plan, force, archives)
+        finalize(config, plan, removed, failures, deleted)
       end
     end
   end
@@ -173,7 +180,9 @@ defmodule Gitspace.Teardown do
       risk: nil,
       risk_error: nil,
       action: if(member.ownership == "borrowed", do: :unlink, else: :remove),
-      archive: nil
+      archive: nil,
+      branch_action: :keep,
+      branch_reason: nil
     }
 
     cond do
@@ -221,17 +230,18 @@ defmodule Gitspace.Teardown do
     targets
     |> Enum.map(&branch_hint/1)
     |> Enum.reject(&is_nil/1)
-    |> Enum.uniq()
+    |> Enum.uniq_by(&{&1.repo, &1.name})
     |> Enum.sort_by(&{&1.repo, &1.name})
   end
 
-  defp branch_hint(%{ownership: "owned"} = target) do
+  defp branch_hint(%{ownership: "owned", branch_action: :keep} = target) do
     cond do
       detached?(target) ->
         nil
 
       branch = live_branch(target) ->
-        %{repo: target.repo.slug, name: branch}
+        base = %{repo: target.repo.slug, name: branch}
+        if target.branch_reason, do: Map.put(base, :reason, target.branch_reason), else: base
 
       true ->
         nil
@@ -247,6 +257,120 @@ defmodule Gitspace.Teardown do
     case target.risk do
       %{branch: branch} when is_binary(branch) -> branch
       _ -> target.checkout.branch
+    end
+  end
+
+  defp branch_deletions(targets) do
+    targets
+    |> Enum.flat_map(fn
+      %{branch_action: action} = target when action in [:delete, :force_delete] ->
+        [
+          %{
+            repo: target.repo.slug,
+            name: live_branch(target),
+            forced: action == :force_delete
+          }
+        ]
+
+      _ ->
+        []
+    end)
+    |> Enum.uniq_by(&{&1.repo, &1.name})
+    |> Enum.sort_by(&{&1.repo, &1.name})
+  end
+
+  defp decide_branch(%{ownership: "owned"} = target, opts) do
+    branch = live_branch(target)
+
+    cond do
+      detached?(target) or is_nil(branch) ->
+        target
+
+      !opts[:delete_branch] ->
+        target
+
+      branch == target.repo.default_branch ->
+        keep_branch(target, "default branch")
+
+      path = other_worktree(target) ->
+        keep_branch(target, "checked out in #{path}")
+
+      is_nil(target.repo.bare_path) or not File.dir?(target.repo.bare_path) ->
+        keep_branch(target, "no mirror to inspect")
+
+      reachable_elsewhere?(target) ->
+        %{target | branch_action: :delete, branch_reason: nil}
+
+      opts[:force] ->
+        %{target | branch_action: :force_delete, branch_reason: "forced"}
+
+      true ->
+        keep_branch(target, "has commits that exist only here")
+    end
+  end
+
+  defp decide_branch(target, _opts), do: target
+
+  defp keep_branch(target, reason), do: %{target | branch_action: :keep, branch_reason: reason}
+
+  defp other_worktree(%{repo: %{bare_path: bare}, branch: branch, path: path})
+       when is_binary(bare) and is_binary(branch) do
+    case Worktree.list(bare) do
+      {:ok, entries} ->
+        expected = Path.expand(path)
+
+        Enum.find_value(entries, fn entry ->
+          if entry.branch == "refs/heads/#{branch}" and Path.expand(entry.path) != expected,
+            do: entry.path
+        end)
+
+      {:error, _} ->
+        nil
+    end
+  end
+
+  defp other_worktree(_target), do: nil
+
+  # Deleting a branch is only safe when its tip is already reachable from a
+  # remote-tracking ref, a tag, or another local branch. Otherwise the branch
+  # is the only copy and is kept.
+  defp reachable_elsewhere?(target) do
+    bare = target.repo.bare_path
+
+    with true <- is_binary(bare) and File.dir?(bare),
+         sha when is_binary(sha) <- branch_sha(bare, live_branch(target)),
+         {:ok, %{stdout: out}} <-
+           Gitspace.Git.run(["rev-list", "--count", sha, "--not", "--remotes", "--tags"],
+             cd: bare
+           ) do
+      String.trim(out) == "0" or other_local_branch?(bare, live_branch(target), sha)
+    else
+      _ -> false
+    end
+  end
+
+  defp other_local_branch?(bare, branch, sha) do
+    case Gitspace.Git.run(["branch", "--contains", sha, "--format=%(refname:short)"], cd: bare) do
+      {:ok, %{stdout: out}} ->
+        out
+        |> String.split("\n", trim: true)
+        |> Enum.any?(&(&1 != branch))
+
+      {:error, _} ->
+        false
+    end
+  end
+
+  defp branch_sha(bare, branch) do
+    case Gitspace.Git.run(["rev-parse", "--verify", "--quiet", "refs/heads/#{branch}"], cd: bare) do
+      {:ok, %{stdout: out}} ->
+        case String.trim(out) do
+          "" -> nil
+          sha -> sha
+        end
+
+      {:error, _} ->
+        nil
     end
   end
 
@@ -374,7 +498,7 @@ defmodule Gitspace.Teardown do
   end
 
   defp remove_targets(config, plan, force, archives) do
-    Enum.reduce(plan.targets, {[], []}, fn target, {removed, failures} ->
+    Enum.reduce(plan.targets, {[], [], []}, fn target, {removed, failures, deleted} ->
       case remove_target(
              config,
              plan,
@@ -382,17 +506,25 @@ defmodule Gitspace.Teardown do
              force,
              Map.get(archives, target.member.id)
            ) do
-        {:ok, result} -> {[result | removed], failures}
-        {:error, error} -> {removed, [failure(target, error) | failures]}
+        {:ok, result, branch} ->
+          {[result | removed], failures, prepend_branch(branch, deleted)}
+
+        {:error, error} ->
+          {removed, [failure(target, error) | failures], deleted}
       end
     end)
-    |> then(fn {removed, failures} -> {Enum.reverse(removed), Enum.reverse(failures)} end)
+    |> then(fn {removed, failures, deleted} ->
+      {Enum.reverse(removed), Enum.reverse(failures), Enum.reverse(deleted)}
+    end)
   end
+
+  defp prepend_branch(nil, deleted), do: deleted
+  defp prepend_branch(branch, deleted), do: [branch | deleted]
 
   defp remove_target(_config, plan, %{ownership: "borrowed"} = target, _force, _archive) do
     with :ok <- remove_borrowed_link(plan.workspace_dir, target),
          :ok <- delete_membership(target.member) do
-      {:ok, target_result(target, "unlinked", nil)}
+      {:ok, target_result(target, "unlinked", nil), nil}
     end
   end
 
@@ -409,8 +541,82 @@ defmodule Gitspace.Teardown do
 
     with :ok <- result,
          :ok <- delete_membership(target.member),
-         :ok <- delete_checkout(target) do
-      {:ok, target_result(target, "removed", archive)}
+         :ok <- delete_checkout(target),
+         {:ok, deleted} <- delete_target_branch(target) do
+      {:ok, target_result(target, "removed", archive), deleted}
+    end
+  end
+
+  defp delete_target_branch(%{branch_action: action} = target)
+       when action in [:delete, :force_delete] do
+    branch = live_branch(target)
+    bare = target.repo.bare_path
+
+    cond do
+      is_nil(branch) or is_nil(bare) or not File.dir?(bare) ->
+        {:ok, nil}
+
+      path = other_worktree(target) ->
+        {:error,
+         Error.new(:conflict, "branch #{branch} is checked out in #{path}",
+           hint: "remove that worktree before deleting the branch"
+         )}
+
+      is_nil(branch_sha(bare, branch)) ->
+        {:ok, nil}
+
+      true ->
+        with {:ok, keep_ref} <- maybe_anchor(action, bare, target) do
+          case Gitspace.Git.run(["branch", "-D", branch], cd: bare) do
+            {:ok, _} ->
+              {:ok,
+               %{
+                 repo: target.repo.slug,
+                 name: branch,
+                 forced: action == :force_delete,
+                 keep_ref: keep_ref
+               }}
+
+            {:error, result} ->
+              {:error,
+               Error.new(:error, "cannot delete branch #{target.repo.slug}:#{branch}",
+                 hint: String.trim(result.stderr),
+                 details: %{path: bare, branch: branch}
+               )}
+          end
+        end
+    end
+  end
+
+  defp delete_target_branch(_target), do: {:ok, nil}
+
+  defp maybe_anchor(:force_delete, bare, target), do: anchor_branch(bare, target)
+  defp maybe_anchor(_action, _bare, _target), do: {:ok, nil}
+
+  defp anchor_branch(bare, target) do
+    branch = live_branch(target)
+
+    case branch_sha(bare, branch) do
+      nil ->
+        {:ok, nil}
+
+      sha ->
+        ref =
+          "refs/gitspace/keep/branch/" <>
+            sanitize(target.repo.slug) <>
+            "/" <> sanitize(branch) <> "/" <> Integer.to_string(System.system_time(:second))
+
+        try do
+          :ok = Safety.anchor!(bare, ref, sha)
+          {:ok, ref}
+        rescue
+          error ->
+            {:error,
+             Error.new(:error, "cannot anchor #{target.repo.slug}:#{branch} before deleting it",
+               hint: Exception.message(error),
+               details: %{path: bare, branch: branch}
+             )}
+        end
     end
   end
 
@@ -477,7 +683,7 @@ defmodule Gitspace.Teardown do
 
   defp delete_checkout(_target), do: :ok
 
-  defp finalize(config, plan, removed, failures) do
+  defp finalize(config, plan, removed, failures, deleted) do
     workspace = plan.workspace
 
     remaining =
@@ -495,7 +701,8 @@ defmodule Gitspace.Teardown do
           plan.workspace_dir,
           removed,
           failures,
-          plan.branches
+          plan.branches,
+          deleted
         )
       else
         rewrite_workspace(
@@ -505,7 +712,8 @@ defmodule Gitspace.Teardown do
           remaining,
           removed,
           failures,
-          plan.branches
+          plan.branches,
+          deleted
         )
       end
 
@@ -520,12 +728,12 @@ defmodule Gitspace.Teardown do
         {:error, error}
 
       {:error, error} ->
-        {:partial, result(plan, removed, failures, false, false, false),
+        {:partial, result(plan, removed, failures, false, false, false, deleted),
          failures ++ [failure(%{repo: workspace.name, ownership: "workspace"}, error)]}
     end
   end
 
-  defp tombstone_workspace(config, workspace, dir, removed, failures, branches) do
+  defp tombstone_workspace(config, workspace, dir, removed, failures, branches, deleted) do
     _ = File.rm(Path.join(dir, Marker.marker_filename()))
 
     workspace
@@ -543,7 +751,8 @@ defmodule Gitspace.Teardown do
            failures,
            false,
            true,
-           directory_removed
+           directory_removed,
+           deleted
          )
          |> Map.merge(%{
            project_directory_removed: project_removed,
@@ -558,7 +767,7 @@ defmodule Gitspace.Teardown do
     end
   end
 
-  defp rewrite_workspace(config, workspace, dir, remaining, removed, failures, branches) do
+  defp rewrite_workspace(config, workspace, dir, remaining, removed, failures, branches, deleted) do
     marker = marker(workspace, dir, remaining)
 
     try do
@@ -573,7 +782,8 @@ defmodule Gitspace.Teardown do
              failures,
              false,
              false,
-             false
+             false,
+             deleted
            )}
 
         {:ok, _members, issues} ->
@@ -639,12 +849,13 @@ defmodule Gitspace.Teardown do
       targets: [],
       risky: [],
       branches: branches,
+      delete_branches: [],
       member: nil
     }
   end
 
-  @spec result(plan(), list(), list(), boolean(), boolean(), boolean()) :: map()
-  defp result(plan, removed, failures, dry_run, tombstoned, directory_removed) do
+  @spec result(plan(), list(), list(), boolean(), boolean(), boolean(), list()) :: map()
+  defp result(plan, removed, failures, dry_run, tombstoned, directory_removed, deleted) do
     workspace = plan.workspace
     {project, topic} = Workspaces.parts(workspace)
     dir = plan.workspace_dir
@@ -663,6 +874,7 @@ defmodule Gitspace.Teardown do
       removed: Enum.map(removed, &public_target/1),
       risky: Enum.map(plan.risky, &public_risky/1),
       branches: Map.get(plan, :branches, []),
+      deleted_branches: Enum.map(deleted, &public_branch/1),
       project_path: nil,
       project_directory_removed: false,
       failures: Enum.map(failures, &Map.drop(&1, [:error]))
@@ -683,6 +895,16 @@ defmodule Gitspace.Teardown do
   end
 
   defp public_target(target), do: target
+
+  defp public_branch(branch) when is_map(branch) do
+    branch
+    |> Map.take([:repo, :name, :forced])
+    |> then(fn base ->
+      if branch[:keep_ref], do: Map.put(base, :keep_ref, branch.keep_ref), else: base
+    end)
+  end
+
+  defp public_branch(branch), do: branch
 
   defp public_risky(target) do
     %{
