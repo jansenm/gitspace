@@ -1,7 +1,7 @@
 defmodule Gitspace.CLI.Repo do
   @moduledoc false
 
-  alias Gitspace.{Create, Error, Projects, Repos}
+  alias Gitspace.{Branches, Create, Error, Projects, Repos}
   alias Gitspace.CLI.{Helpers, Output}
 
   defp add_strict,
@@ -15,6 +15,9 @@ defmodule Gitspace.CLI.Repo do
   defp import_strict,
     do: [name: :string, no_link: :boolean] ++ Helpers.global_strict()
 
+  defp branches_strict,
+    do: [tags: :boolean, match: :string, regex: :string] ++ Helpers.global_strict()
+
   defp list_strict, do: Helpers.global_strict()
   defp fetch_strict, do: [all: :boolean, prune: :boolean] ++ Helpers.global_strict()
   defp rm_strict, do: [force: :boolean, dry_run: :boolean] ++ Helpers.global_strict()
@@ -23,6 +26,7 @@ defmodule Gitspace.CLI.Repo do
     case args do
       ["init" | rest] -> init(global, rest)
       ["import" | rest] -> import_local(global, rest)
+      ["branches" | rest] -> branches(global, rest)
       ["add" | rest] -> add(global, rest)
       ["ls" | rest] -> list(global, rest)
       ["fetch" | rest] -> fetch(global, rest)
@@ -81,6 +85,22 @@ defmodule Gitspace.CLI.Repo do
          branch: result.branch,
          linked: result.linked
        }, &render_import/1}
+    end
+  end
+
+  defp branches(_global, args) do
+    with {:ok, opts, rest} <- Helpers.parse(args, branches_strict()),
+         {:ok, name} <-
+           one_arg(rest, "gitspace repo branches <repo> [--match GLOB|--regex RE] [--tags]"),
+         {:ok, config} <- Helpers.load_config(),
+         :ok <- Helpers.start_index(config),
+         {:ok, result} <-
+           Branches.list(config, name,
+             tags: opts[:tags],
+             match: opts[:match],
+             regex: opts[:regex]
+           ) do
+      {:ok, result, &render_branches/1}
     end
   end
 
@@ -296,6 +316,29 @@ defmodule Gitspace.CLI.Repo do
     IO.puts("  linked:    #{if data.linked, do: "yes (external)", else: "no"}")
   end
 
+  defp render_branches(data) do
+    IO.puts("branches #{data.repo}")
+
+    if data.branches == [] do
+      IO.puts("  (none)")
+    else
+      rows =
+        Enum.map(data.branches, fn branch ->
+          notes =
+            [
+              if(branch.default, do: "default"),
+              if(branch.checked_out, do: "checked out: #{branch.checked_out}")
+            ]
+            |> Enum.reject(&is_nil/1)
+            |> Enum.join(", ")
+
+          [Atom.to_string(branch.kind), branch.name, branch.sha, branch.date, notes]
+        end)
+
+      Output.table(["KIND", "BRANCH", "COMMIT", "DATE", "NOTE"], rows)
+    end
+  end
+
   defp remote_label(%{origin_kind: "local"}), do: "LOCAL"
   defp remote_label(repo), do: repo.remote_url
 
@@ -385,6 +428,7 @@ defmodule Gitspace.CLI.Repo do
     USAGE
       gitspace repo init <name> [--branch B] [--topic T] [--path P]
       gitspace repo import <path> [--name N] [--no-link]
+      gitspace repo branches <repo> [--match GLOB|--regex RE] [--tags]
       gitspace repo add <url-or-path> [--name N] [--remote NAME] [--project P] [--no-fetch]
       gitspace repo ls [--verbose]
       gitspace repo fetch [<repo>|--all] [--prune]
@@ -395,6 +439,11 @@ defmodule Gitspace.CLI.Repo do
     LISTING
       `repo ls` is compact by default: slug, projects, remote, state, default
       branch and checkout count. `--verbose` adds the mirror hash and path.
+
+    BRANCHES
+      `repo branches` lists local branches, remote branches (as plain names, so
+      `co repo@feature/x` works) and opt-in tags. --match takes a glob (* and ?),
+      --regex an Elixir regex. Default and checked-out branches are marked.
 
     LOCAL REPOSITORIES
       `repo init` creates an empty managed repository with no upstream and its

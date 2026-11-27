@@ -732,6 +732,31 @@ defmodule Gitspace.CLITest do
     assert output =~ "pruned keep refs"
   end
 
+  test "repo branches lists refs, marks checkouts and filters", %{config: _config} do
+    {output, 0} = cli(["repo", "branches", "demo"])
+    assert output =~ "branches demo"
+    assert output =~ "feature_JENKINS-123"
+    assert output =~ "checked out:"
+    assert output =~ "default"
+
+    {glob, 0} = cli(["repo", "branches", "demo", "--match", "feature_*"])
+    assert glob =~ "feature_JENKINS-123"
+    refute glob =~ " main "
+
+    {regex, 0} = cli(["repo", "branches", "demo", "--regex", "^feature_"])
+    assert regex =~ "feature_JENKINS-123"
+
+    {none, 0} = cli(["repo", "branches", "demo", "--match", "nope*"])
+    assert none =~ "(none)"
+
+    {2, error} =
+      ExUnit.CaptureIO.with_io(:stderr, fn ->
+        Gitspace.CLI.run(["repo", "branches", "demo", "--match", "*", "--regex", "."])
+      end)
+
+    assert error =~ "--match and --regex are mutually exclusive"
+  end
+
   test "doctor warns on mirror index drift and --fix reconciles it", %{config: config} do
     File.rm!(Gitspace.MirrorIndex.path(config))
 

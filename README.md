@@ -24,7 +24,7 @@ Product scope, CLI contract and acceptance plan live in the planning repository:
 | Creation | `project new|ls|show|add|remove|rm`, `co`, `workspace new|ls|status|rm` |
 | Setup, config and health | `setup`, `config [list|get|set]`, `doctor`, `doctor --fix`, `doctor --reindex` |
 | Completion | `completion bash|zsh|fish` |
-| Mirrors | `repo init`, `repo import`, `repo add`, `repo ls`, `repo fetch`, `repo alias`, `repo set-url`, `repo rm` |
+| Mirrors | `repo init`, `repo import`, `repo add`, `repo ls`, `repo branches`, `repo fetch`, `repo alias`, `repo set-url`, `repo rm` |
 | Discovery | `scan` (read-only), `link`, `unlink` |
 | Inventory | `gitspace`, `ls`, `log`, `status`, `show`, `path` |
 | Publishing | `push`, `rebase` |
@@ -262,6 +262,22 @@ matched by its canonical address and is not duplicated, even after its fetch URL
 Default ports are omitted; other ports remain part of the address. `gitspace repo ls` is compact
 by default and shows the remote behind each repository; `--verbose` adds the mirror hash and
 path.
+
+## Browsing branches
+
+`repo branches` shows what a repository can check out before you create a workspace. It lists
+local branches, remote branches (plain names, so `co repo@feature/x` works) and, with `--tags`,
+tags. The default branch and every branch already checked out in a worktree are marked.
+
+```sh
+gitspace repo branches vemags
+gitspace repo branches vemags --match 'feature/*'   # glob: * and ?
+gitspace repo branches vemags --regex '^JENKINS-'
+gitspace repo branches vemags --tags
+```
+
+`--match` and `--regex` are mutually exclusive and filter by branch name. Filters apply to
+local and remote branches as well as tags.
 
 ## Changing remote URLs
 
