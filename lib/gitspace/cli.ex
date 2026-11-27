@@ -297,7 +297,7 @@ defmodule Gitspace.CLI do
       link <path>                  index an external checkout
       unlink <path>                forget an external checkout
       doctor [--fix] [--reindex]   health checks
-      config [list|get|set]        show or change the active configuration
+      config list|get|set|export|import  settings, projects and repos
       completion bash|zsh|fish     print a shell completion script
       setup                        choose data and projects directories
       reindex                      rebuild the index from git and markers

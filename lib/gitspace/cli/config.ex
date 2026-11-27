@@ -1,17 +1,19 @@
 defmodule Gitspace.CLI.Config do
   @moduledoc false
 
-  alias Gitspace.{Config, Error, Layout}
+  alias Gitspace.{Bundle, Config, Error, Layout}
   alias Gitspace.CLI.{Helpers, Output}
 
   @keys ~w(paths.data projects.root branch.template git.minimum_version status.max_age_seconds log.max_commits)
 
-  def run(_global, args) do
+  def run(global, args) do
     case args do
       [] -> list([])
       ["list" | rest] -> list(rest)
       ["get" | rest] -> get(rest)
       ["set" | rest] -> set(rest)
+      ["export" | rest] -> export_bundle(global, rest)
+      ["import" | rest] -> import_bundle(global, rest)
       ["help"] -> {:ok, %{help: help()}, &IO.puts/1}
       [other | _] -> {:error, Error.new(:usage, "unknown config command: #{other}")}
     end
@@ -67,6 +69,120 @@ defmodule Gitspace.CLI.Config do
   end
 
   defp strict_set, do: [force: :boolean] ++ Helpers.global_strict()
+
+  defp export_bundle(global, args) do
+    with {:ok, opts, rest} <- Helpers.parse(args, [output: :string] ++ Helpers.global_strict()),
+         :ok <- Helpers.no_extra_args(rest),
+         :ok <- reject_export_json(global),
+         {:ok, config} <- Helpers.load_config(),
+         :ok <- Helpers.start_index(config) do
+      bundle = Bundle.export(config)
+      body = Jason.encode!(bundle, pretty: true) <> "\n"
+
+      case opts[:output] do
+        nil ->
+          {:ok, %{bundle: bundle, body: body}, &render_export/1}
+
+        path ->
+          case File.write(path, body) do
+            :ok ->
+              {:ok,
+               %{
+                 path: path,
+                 projects: length(bundle["projects"]),
+                 repos: length(bundle["repos"]),
+                 skipped: length(bundle["skipped"])
+               }, &render_export_file/1}
+
+            {:error, reason} ->
+              {:error,
+               Error.new(:error, "cannot write bundle: #{path}",
+                 hint: :file.format_error(reason) |> to_string()
+               )}
+          end
+      end
+    end
+  end
+
+  defp reject_export_json(%{json: true}) do
+    {:error,
+     Error.new(:usage, "--json is not supported for config export",
+       hint: "use --output FILE or redirect stdout"
+     )}
+  end
+
+  defp reject_export_json(_global), do: :ok
+
+  defp import_bundle(global, args) do
+    with {:ok, opts, rest} <- Helpers.parse(args, import_strict()),
+         {:ok, source} <- one_arg(rest, "gitspace config import <file|->"),
+         {:ok, config} <- Helpers.load_config(),
+         :ok <- Helpers.start_index(config),
+         :ok <- confirm_import(global, opts, source),
+         {:ok, data} <- read_bundle(source) do
+      case Bundle.import_bundle(config, data,
+             dry_run: !!opts[:dry_run],
+             no_fetch: !!opts[:no_fetch]
+           ) do
+        {:ok, summary} ->
+          {:ok, summary, &render_import/1}
+
+        {:partial, summary, warnings} ->
+          {:partial, summary, &render_import/1,
+           Error.new(:partial, "import was partial",
+             hint: Enum.join(warnings, "; "),
+             details: %{warnings: warnings}
+           )}
+
+        {:error, error} ->
+          {:error, error}
+      end
+    end
+  end
+
+  defp import_strict, do: [dry_run: :boolean, no_fetch: :boolean] ++ Helpers.global_strict()
+
+  defp confirm_import(global, opts, source) do
+    if opts[:dry_run] do
+      :ok
+    else
+      Helpers.require_confirmation(
+        global,
+        opts,
+        "import projects and repositories from #{source}?"
+      )
+    end
+  end
+
+  defp read_bundle("-") do
+    case IO.read(:stdio, :all) do
+      {:error, reason} -> {:error, Error.new(:error, "cannot read stdin: #{inspect(reason)}")}
+      body -> decode_bundle(body)
+    end
+  end
+
+  defp read_bundle(path) do
+    case File.read(path) do
+      {:ok, body} ->
+        decode_bundle(body)
+
+      {:error, reason} ->
+        {:error,
+         Error.new(:not_found, "cannot read bundle: #{path}",
+           hint: :file.format_error(reason) |> to_string()
+         )}
+    end
+  end
+
+  defp decode_bundle(body) do
+    case Jason.decode(body) do
+      {:ok, data} ->
+        {:ok, data}
+
+      {:error, error} ->
+        {:error, Error.new(:invalid_config, "invalid bundle JSON: #{Exception.message(error)}")}
+    end
+  end
 
   defp load_any do
     case Config.load_optional() do
@@ -272,6 +388,54 @@ defmodule Gitspace.CLI.Config do
     end
   end
 
+  defp render_export(%{body: body}), do: IO.write(body)
+
+  defp render_export_file(data) do
+    IO.puts(
+      "exported #{data.projects} project(s) and #{data.repos} repositor#{if data.repos == 1, do: "y", else: "ies"}"
+    )
+
+    if data.skipped > 0, do: IO.puts("  skipped: #{data.skipped}")
+    IO.puts("  file:    #{data.path}")
+  end
+
+  defp render_import(data) do
+    prefix = if data.dry_run, do: "would ", else: ""
+
+    IO.puts(if data.dry_run, do: "import plan", else: "imported")
+    IO.puts("")
+
+    if data.repos != [] do
+      Output.table(
+        ["REPO", "ACTION"],
+        Enum.map(data.repos, fn repo -> [repo.alias, prefix <> Atom.to_string(repo.action)] end)
+      )
+    end
+
+    if data.projects != [] do
+      IO.puts("")
+
+      Output.table(
+        ["PROJECT", "ACTION", "MEMBERS"],
+        Enum.map(data.projects, fn project ->
+          [
+            project.name,
+            prefix <> Atom.to_string(project.action),
+            Enum.join(project.members, ", ")
+          ]
+        end)
+      )
+    end
+
+    if data.warnings != [] do
+      IO.puts("")
+
+      Enum.each(data.warnings, fn warning ->
+        IO.puts(:stderr, "warning: #{warning}")
+      end)
+    end
+  end
+
   defp help do
     """
     USAGE
@@ -279,6 +443,16 @@ defmodule Gitspace.CLI.Config do
       gitspace config list
       gitspace config get <key>
       gitspace config set <key> <value> [--force]
+      gitspace config export [--output FILE]
+      gitspace config import <FILE|-> [--dry-run] [--no-fetch] [--yes]
+
+    EXPORT AND IMPORT
+      A bundle contains projects and their remote-backed repositories only.
+      Workspaces, checkouts, labels, absolute paths and credentials are not
+      included. Local repositories are skipped. Import creates only missing
+      repositories and projects; existing entries are left untouched. A project
+      whose member was skipped is created without that member and reported as
+      partial.
 
     KEYS
       paths.data

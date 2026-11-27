@@ -166,7 +166,7 @@ defmodule Gitspace.CLI.ConfigTest do
 
   test "top-level help lists config", _context do
     {output, 0} = cli(["--help"])
-    assert output =~ "config [list|get|set]"
+    assert output =~ "config list|get|set|export|import"
   end
 
   defp cli(args) do

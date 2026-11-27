@@ -22,7 +22,7 @@ Product scope, CLI contract and acceptance plan live in the planning repository:
 | Area | Commands |
 |---|---|
 | Creation | `project new|ls|show|add|remove|rm`, `co`, `workspace new|ls|status|rm` |
-| Setup, config and health | `setup`, `config [list|get|set]`, `doctor`, `doctor --fix`, `doctor --reindex` |
+| Setup, config and health | `setup`, `config list|get|set|export|import`, `doctor`, `doctor --fix`, `doctor --reindex` |
 | Completion | `completion bash|zsh|fish` |
 | Mirrors | `repo init`, `repo import`, `repo add`, `repo ls`, `repo branches`, `repo fetch`, `repo alias`, `repo set-url`, `repo rm` |
 | Discovery | `scan` (read-only), `link`, `unlink` |
@@ -32,7 +32,7 @@ Product scope, CLI contract and acceptance plan live in the planning repository:
 | Recovery | `reindex` — rediscover mirrors from disk, rebuild workspaces from markers |
 | Machine surface | `--json` on every command, exit codes 0–7, `--verbose` prints git argv |
 
-312 checks (308 tests, 3 properties, 1 doctest) in ~67 s.
+322 checks (318 tests, 3 properties, 1 doctest) in ~69 s.
 
 ## Commands
 
@@ -83,6 +83,13 @@ Configuration is TOML at `$XDG_CONFIG_HOME/gitspace/config.toml` (or `GITSPACE_C
 `gitspace config` shows the effective values and whether each comes from the file, the
 environment or a default. `config set` rewrites the file only; an environment override still
 wins at runtime and is reported after the write.
+
+`gitspace config export [--output FILE]` writes a versioned JSON bundle of **projects and
+remote-backed repositories**. Workspaces, checkouts, labels, absolute paths and credentials are
+not included; local repositories are skipped. `gitspace config import <FILE|->` only creates
+missing repositories and projects. Existing entries are left untouched. A project whose member
+was skipped is created without that member and the import is reported as partial. Import is
+idempotent and needs `--yes` without a terminal; `--dry-run` and `--no-fetch` are available.
 
 ## Projects, topics and workspaces
 

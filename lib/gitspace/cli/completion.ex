@@ -25,7 +25,7 @@ defmodule Gitspace.CLI.Completion do
     "label" => ~w(add rm set ls help),
     "repo" => ~w(init import branches add ls fetch rm alias set-url help),
     "keep" => ~w(ls prune help),
-    "config" => ~w(list get set help),
+    "config" => ~w(list get set export import help),
     "completion" => ~w(bash zsh fish)
   }
 
@@ -61,13 +61,15 @@ defmodule Gitspace.CLI.Completion do
     "base" => ~w(--clear),
     "keep:prune" => ~w(--older-than --dry-run --gc),
     "config:set" => ~w(--force),
+    "config:export" => ~w(--output),
+    "config:import" => ~w(--dry-run --no-fetch),
     "setup" => ~w(--data --projects --checkouts --force),
     "doctor" => ~w(--fix --reindex),
     "scan" => ~w(--max-depth --exclude),
     "link" => ~w(--repo)
   }
 
-  @value_flags ~w(--repo --project --topic --workspace --label --state --kind --source --only --exclude --as --branch --at --description --branch-template --default-ref --name --remote --own --borrow --data --projects --checkouts --max-depth --ide --shell --limit --diff-lines --older-than)
+  @value_flags ~w(--repo --project --topic --workspace --label --state --kind --source --only --exclude --as --branch --at --description --branch-template --default-ref --name --remote --own --borrow --data --projects --checkouts --max-depth --ide --shell --limit --diff-lines --older-than --output)
 
   @config_keys ~w(paths.data projects.root branch.template git.minimum_version status.max_age_seconds log.max_commits)
 
