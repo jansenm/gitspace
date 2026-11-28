@@ -29,6 +29,7 @@ defmodule Gitspace.Env do
           context: %{String.t() => String.t()},
           entries: [entry()],
           files: [Path.t()],
+          watch: [Path.t()],
           warnings: [String.t()]
         }
 
@@ -63,6 +64,7 @@ defmodule Gitspace.Env do
            context: context,
            entries: entries,
            files: files,
+           watch: watch_files(ctx, project_files, checkout_files),
            warnings: []
          }}
       end
@@ -257,6 +259,29 @@ defmodule Gitspace.Env do
 
   defp checkout_files(%Checkout{path: path}) when is_binary(path) do
     %{env: Path.join(path, ".env"), local: Path.join(path, ".env.local")}
+  end
+
+  defp watch_files(ctx, project_files, checkout_files) do
+    project = Map.values(project_files)
+
+    repo =
+      cond do
+        map_size(checkout_files) > 0 ->
+          Map.values(checkout_files)
+
+        match?(%Workspace{}, ctx.workspace) ->
+          Enum.flat_map(ctx.workspace.members, fn member ->
+            member.checkout |> checkout_files() |> Map.values()
+          end)
+
+        true ->
+          []
+      end
+
+    (project ++ repo)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+    |> Enum.sort()
   end
 
   defp gitspace_vars(ctx) do

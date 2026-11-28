@@ -8,6 +8,7 @@ defmodule Gitspace.CLI do
     Completion,
     Config,
     Co,
+    DirenvCommand,
     Doctor,
     EnvCommand,
     Inventory,
@@ -75,7 +76,7 @@ defmodule Gitspace.CLI do
         true
 
       command
-      when command in ~w(ls log status show path env help completion __complete version) ->
+      when command in ~w(ls log status show path env direnv help completion __complete version) ->
         true
 
       "config" ->
@@ -181,6 +182,9 @@ defmodule Gitspace.CLI do
 
         "shell" ->
           ShellCommand.run(global, command_args)
+
+        "direnv" ->
+          DirenvCommand.run(global, command_args)
 
         "path" ->
           Inventory.path(global, command_args)
@@ -380,6 +384,24 @@ defmodule Gitspace.CLI do
         environment, or run COMMAND with -c. Without a target the current
         checkout is used. --no-env skips dotenv files but still sets the
         GITSPACE_* context variables. --shell chooses the shell executable.
+        Interactive shells use script(1) so job control works.
+        """
+
+      "direnv" ->
+        """
+        USAGE
+          gitspace direnv [target]
+          gitspace direnv [target] --write [--force] [--dry-run]
+          gitspace direnv <workspace> --write --members
+          gitspace direnv --write --all [--force] [--dry-run]
+
+        Print or write an .envrc for a project, workspace, workspace:member,
+        checkout or repo target. The file evaluates `gitspace env --shell`, so
+        resolved values and secrets stay in the existing dotenv files. --write
+        installs it in the target root; --members also writes each member
+        checkout; --all writes every project, workspace and checkout. Generated
+        files are marked and can be refreshed; use --force for a hand-written
+        .envrc. Run `direnv allow <directory>` after writing.
         """
 
       "log" ->

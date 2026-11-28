@@ -210,7 +210,7 @@ defmodule Gitspace.CLI.Completion do
     do: {:data, [:projects]}
 
   defp positional_values(command, nil, [])
-       when command in ~w(log push rebase base status show path env shell),
+       when command in ~w(log push rebase base status show path env shell direnv),
        do: {:data, [:targets]}
 
   defp positional_values("help", nil, []), do: {:static, Spec.completion_commands()}

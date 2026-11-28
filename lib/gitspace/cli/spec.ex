@@ -40,6 +40,7 @@ defmodule Gitspace.CLI.Spec do
     "log" => "log <target>",
     "env" => "env [target]",
     "shell" => "shell [target] [-c CMD]",
+    "direnv" => "direnv [target] [--write]",
     "checkout" => "checkout <project>[@<ref>]",
     "push" => "push <target>",
     "rebase" => "rebase [target]",
@@ -137,6 +138,27 @@ defmodule Gitspace.CLI.Spec do
         "gitspace shell [target] [--shell PATH] [--no-env]"
       ],
       flags: [c: :string, shell: :string, no_env: :boolean],
+      subcommands: [],
+      hidden: false
+    },
+    %{
+      name: "direnv",
+      aliases: [],
+      group: :work,
+      summary: "generate .envrc files for direnv",
+      usage: [
+        "gitspace direnv [target]",
+        "gitspace direnv [target] --write [--force] [--dry-run]",
+        "gitspace direnv <workspace> --write --members",
+        "gitspace direnv --write --all [--force] [--dry-run]"
+      ],
+      flags: [
+        write: :boolean,
+        force: :boolean,
+        members: :boolean,
+        all: :boolean,
+        dry_run: :boolean
+      ],
       subcommands: [],
       hidden: false
     },

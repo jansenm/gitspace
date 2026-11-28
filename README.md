@@ -26,13 +26,13 @@ Product scope, CLI contract and acceptance plan live in the planning repository:
 | Completion | `completion bash|zsh|fish` |
 | Mirrors | `repo init`, `repo import`, `repo add`, `repo ls`, `repo branches`, `repo fetch <repo>|--all`, `repo alias`, `repo set-url`, `repo rm` |
 | Discovery | `scan` (read-only), `link`, `unlink` |
-| Inventory | `gitspace`, `ls`, `show`, `status`, `path`, `env`, `shell`, `log` |
+| Inventory | `gitspace`, `ls`, `show`, `status`, `path`, `env`, `shell`, `direnv`, `log` |
 | Publishing | `push`, `rebase`, `base` |
 | Maintenance | `doctor keep ls|prune` |
 | Recovery | `doctor reindex` — rediscover mirrors from disk, rebuild workspaces from markers |
 | Machine surface | `--json` on every command, exit codes 0–7, `--verbose` prints git argv |
 
-336 checks (332 tests, 3 properties, 1 doctest) in ~65 s.
+341 checks (337 tests, 3 properties, 1 doctest) in ~67 s.
 
 ## Commands
 
@@ -334,7 +334,9 @@ gitspace shell demo@4711:api -c "mix test"
 
 `env` and `shell` use the same resolver; no shell is needed to inspect the
 resolved values. `${VAR}` interpolation uses the process environment and the
-`GITSPACE_*` context. Command substitution is rejected.
+`GITSPACE_*` context. Command substitution is rejected. Interactive shells run
+through `script(1)` so job control works; `-c` runs directly and returns the
+command's exit status.
 
 `GITSPACE_*` values set for children: `PROJECT`, `TOPIC`, `WORKSPACE`, `MEMBER`,
 `REPO`, `BRANCH`, `PATH`, `IDENTITY`.
@@ -350,6 +352,27 @@ line, ready for fzf:
 gitspace shell "$(gitspace ls --paths | fzf)"
 cd "$(gitspace path demo@4711:api)"
 ```
+
+## direnv
+
+`gitspace direnv` turns the resolver into an `.envrc` for direnv. The generated
+file evaluates `gitspace env --shell`, so values stay in the dotenv files and
+secrets keep their existing permissions. It also watches the project and repo
+files that feed the environment.
+
+```sh
+gitspace direnv demo@4711:api                  # print the .envrc
+gitspace direnv demo@4711:api --write          # install in the checkout
+gitspace direnv demo@4711 --write --members    # workspace + every checkout
+gitspace direnv --write --all                  # projects, workspaces, checkouts
+direnv allow /path/to/checkout
+```
+
+Generated files start with a marker and are refreshed by later `--write` runs.
+`--force` replaces a hand-written `.envrc`; `--dry-run` only reports paths.
+Direnv uses the nearest `.envrc`, so `--members` writes one per checkout to get
+that checkout's repository layers. Gitspace does not add `.envrc` to
+`.gitignore`; add it to your global ignore if you do not want to commit it.
 
 ## Changing remote URLs
 

@@ -142,7 +142,40 @@ skips dotenv files but still sets the
 .B GITSPACE_*
 context variables.
 .B \-\-shell
-chooses the shell executable.
+chooses the shell executable. Interactive shells run through
+.BR script (1)
+so job control works.
+.TP
+.B gitspace direnv [TARGET]
+Print an
+.I .envrc
+that evaluates
+.BR "gitspace env \-\-shell" .
+The file also watches the project and repository dotenv files.
+.TP
+.B gitspace direnv [TARGET] \-\-write [\-\-force] [\-\-dry\-run]
+Write the generated
+.I .envrc
+in the target root.
+.B \-\-dry\-run
+only reports the path.
+.B \-\-force
+replaces a hand-written
+.I .envrc ;
+files marked as generated are refreshed without it.
+.TP
+.B gitspace direnv WORKSPACE \-\-write \-\-members
+Write one
+.I .envrc
+for the workspace and one in each member checkout, so direnv sees the
+repository layers when you enter a checkout.
+.TP
+.B gitspace direnv \-\-write \-\-all [\-\-force] [\-\-dry\-run]
+Write an
+.I .envrc
+for every project, workspace and indexed checkout. Run
+.B direnv allow
+in each directory before direnv loads it.
 .SS Create and change
 .TP
 .B gitspace checkout PROJECT[@REF] [\-\-topic T]

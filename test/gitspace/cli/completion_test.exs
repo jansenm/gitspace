@@ -74,6 +74,12 @@ defmodule Gitspace.CLI.CompletionTest do
 
     {env_projects, 0} = cli(["__complete", "3", "project", "env", "edit", ""])
     assert "vemags" in lines(env_projects)
+
+    {direnv_targets, 0} = cli(["__complete", "1", "direnv", ""])
+    assert "vemags@dev" in lines(direnv_targets)
+
+    {direnv_flags, 0} = cli(["__complete", "1", "direnv", "--w"])
+    assert "--write" in lines(direnv_flags)
   end
 
   test "completes dynamic projects, workspaces and members" do
